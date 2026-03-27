@@ -561,7 +561,8 @@ with tab1:
         st.metric("今日待修房數", f"{repairs} 間", delta="🔴 需處理" if repairs>0 else "🟢 正常", delta_color="off")
     with col3:
         st.error("🍽️ **餐廳狀況**")
-        st.metric("今日早餐來客數", f"{st.session_state.get('input_breakfast', 0)} 人")
+        bf_total_act = st.session_state.get('input_bf_total_act', 0)
+        st.metric("今日雙館早餐總來客", f"{int(bf_total_act)} 人")
 
 with tab3:
     st.header("🧹 房務數據")
