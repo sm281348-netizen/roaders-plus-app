@@ -15,6 +15,24 @@ from webdriver_manager.chrome import ChromeDriverManager
 # 設定頁面資訊
 st.set_page_config(page_title="路徒行旅 Plus 站前館營運日誌", layout="wide")
 
+# --- 安全防護：全站密碼攔截 ---
+if "authenticated" not in st.session_state:
+    st.markdown("<h2 style='text-align: center;'>🔒 歡迎登入 路徒行旅 Plus 營運日誌</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #666;'>為了保護營業機密，請輸入管理員通行碼進入系統。</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        pwd = st.text_input("管理員通行碼", type="password")
+        if pwd:
+            correct_password = st.secrets.get("admin_password", "roaders123")
+            if pwd == correct_password:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ 密碼錯誤，請重新輸入。")
+    st.stop()
+# -----------------------------
+
 # -- 資料庫初始化 --
 def init_db():
     conn = sqlite3.connect('roaders_plus.db')
@@ -90,7 +108,7 @@ date_str = str(selected_date)
 # -- 資料庫讀寫函數 --
 def get_daily_data(d_str):
     conn = sqlite3.connect('roaders_plus.db')
-    df = pd.read_sql_query(f"SELECT * FROM daily_data WHERE date='{d_str}'", conn)
+    df = pd.read_sql_query("SELECT * FROM daily_data WHERE date=?", conn, params=(d_str,))
     conn.close()
     if not df.empty:
         return df.iloc[0].to_dict()
@@ -429,7 +447,7 @@ with tab1:
     st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
     start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
     conn = sqlite3.connect('roaders_plus.db')
-    df_mtd = pd.read_sql_query(f"SELECT * FROM daily_data WHERE date >= '{start_of_month}' AND date <= '{date_str}'", conn)
+    df_mtd = pd.read_sql_query("SELECT * FROM daily_data WHERE date >= ? AND date <= ?", conn, params=(start_of_month, date_str))
     conn.close()
 
     if not df_mtd.empty:
