@@ -873,7 +873,7 @@ with tab7:
 
         st.markdown(f"""
         <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
-            <p style="margin: 0; font-size: 14px; color: #666;">💰 非 PT 員工薪資總計 (月額)</p>
+            <p style="margin: 0; font-size: 14px; color: #666;">💰 正職員工薪資總計</p>
             <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
             <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
         </div>
