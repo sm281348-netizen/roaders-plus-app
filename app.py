@@ -105,6 +105,20 @@ col2.button("後一天 ➡️", on_click=next_day)
 selected_date = st.sidebar.date_input("選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
 date_str = str(selected_date)
 
+# --- 新增：週次預覽選擇器 (提前定義以供載入邏輯使用) ---
+import calendar
+_, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
+weekly_options = [
+    "--- 關閉週預覽 ---",
+    "第1週 (1號 - 7號)",
+    "第2週 (8號 - 14號)",
+    "第3週 (15-21號)",
+    "第4週 (22-28號)",
+    f"第5週 (29號 - {last_day_of_month}號)"
+]
+selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
+# --------------------------------------------------
+
 # -- 資料庫讀寫函數 --
 def get_daily_data(d_str):
     conn = sqlite3.connect('roaders_plus.db')
@@ -170,7 +184,7 @@ field_mapping = {
     'input_daily_log': ('daily_work_log', "")
 }
 
-if st.session_state.get('_last_loaded_date') != date_str:
+if st.session_state.get('_last_loaded_date') != date_str or st.session_state.get('_last_week_view') != selected_week:
     for ss_key, (db_col, default_val) in field_mapping.items():
         val = day_data.get(db_col)
         # Handle nan/null from Pandas/SQLite gracefully
@@ -181,6 +195,7 @@ if st.session_state.get('_last_loaded_date') != date_str:
             elif isinstance(default_val, float): st.session_state[ss_key] = float(val)
             else: st.session_state[ss_key] = str(val)
     st.session_state['_last_loaded_date'] = date_str
+    st.session_state['_last_week_view'] = selected_week
 
 # 新增：自動儲存函數，避免切換日期時資料遺失
 def sync_st_to_db():
@@ -270,19 +285,8 @@ else:
         st.rerun()
 
 st.sidebar.divider()
-st.sidebar.subheader("📅 週次紀錄快速審視")
-import calendar
-_, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
-
-weekly_options = [
-    "--- 關閉週預覽 ---",
-    "第1週 (1號 - 7號)",
-    "第2週 (8號 - 14號)",
-    "第3週 (15-21號)",
-    "第4週 (22-28號)",
-    f"第5週 (29號 - {last_day_of_month}號)"
-]
-selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, index=0)
+st.sidebar.subheader("📅 週次紀錄快速審視 (已於上方選擇)")
+st.sidebar.info(f"當前模式：{selected_week}")
 
 st.sidebar.divider()
 if st.sidebar.button("💾 強制儲存今日所有變更", use_container_width=True):
