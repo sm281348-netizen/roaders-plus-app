@@ -182,11 +182,97 @@ if st.session_state.get('_last_loaded_date') != date_str:
             else: st.session_state[ss_key] = str(val)
     st.session_state['_last_loaded_date'] = date_str
 
-st.sidebar.divider()
-if st.sidebar.button("💾 儲存今日所有手動輸入", use_container_width=True):
+# 新增：自動儲存函數，避免切換日期時資料遺失
+def sync_st_to_db():
     update_dict = {db_col: st.session_state[ss_key] for ss_key, (db_col, _) in field_mapping.items() if ss_key in st.session_state}
-    save_daily_data(date_str, update_dict)
-    st.sidebar.success("✅ 今日資料已安全寫入 SQLite 資料庫！")
+    if update_dict:
+        save_daily_data(date_str, update_dict)
+
+def on_input_change():
+    sync_st_to_db()
+
+st.sidebar.divider()
+st.sidebar.subheader("📤 數據匯出與備份")
+
+def generate_report_text(d_str):
+    data = get_daily_data(d_str)
+    if not data: return f"--- {d_str} 無紀錄 ---"
+    
+    report = []
+    report.append(f"========================================")
+    report.append(f"🏨 路徒行旅 Plus 站前館 - 營運日誌 ({d_str})")
+    report.append(f"========================================\n")
+    
+    report.append(f"【📊 營運指標】")
+    report.append(f"- 住房率: {data.get('occ_rate', 0)}%")
+    report.append(f"- ADR: NT$ {int(data.get('adr', 0)):,}")
+    report.append(f"- 總營收: NT$ {int(data.get('revenue', 0)):,}")
+    report.append(f"- 總住房數: {data.get('total_rooms', 0)} 間\n")
+    
+    report.append(f"【💼 櫃台與房務】")
+    report.append(f"- 負評客訴: {data.get('counter_complaints', '無')}")
+    report.append(f"- 櫃台請購: {data.get('counter_expense', 0)} 元")
+    report.append(f"- 總清消房數: {data.get('cleaned_rooms', 0)} 間")
+    report.append(f"- 房務請購: {data.get('hk_expense', 0)} 元\n")
+    
+    report.append(f"【🍽️ 餐廳數據 (兩館實際來客)】")
+    report.append(f"- 早餐總計: {int(data.get('bf_total_act', 0))} 人")
+    report.append(f"- 下午茶總計: {int(data.get('af_total_act', 0))} 人")
+    report.append(f"- 餐廳營收(全月): {data.get('rest_month_rev', 0)} 元\n")
+    
+    report.append(f"【🔧 工務紀錄】")
+    report.append(f"- 待修房數: {data.get('maint_repair_rooms', 0)} 間")
+    report.append(f"- 修繕細節: {data.get('maint_records', '無')}\n")
+    
+    report.append(f"【📝 每日營運紀錄細節】")
+    report.append(f"{data.get('daily_work_log', '無紀錄内容')}")
+    report.append(f"\n" + "-"*40 + "\n")
+    
+    return "\n".join(report)
+
+# 1. 單日匯出
+single_report = generate_report_text(date_str)
+st.sidebar.download_button(
+    label="📄 匯出當日紀錄 (.txt)",
+    data=single_report,
+    file_name=f"Roaders_Plus_Daily_{date_str}.txt",
+    mime="text/plain",
+    use_container_width=True
+)
+
+# 2. 全月匯出
+month_str = selected_date.strftime('%Y-%m')
+if f"monthly_report_{month_str}" not in st.session_state:
+    if st.sidebar.button(f"📅 準備 {month_str} 紀錄匯出", use_container_width=True):
+        conn = sqlite3.connect('roaders_plus.db')
+        df_all = pd.read_sql_query("SELECT date FROM daily_data WHERE date LIKE ? ORDER BY date ASC", conn, params=(f"{month_str}%",))
+        conn.close()
+        
+        if df_all.empty:
+            st.sidebar.warning(f"⚠️ {month_str} 尚無任何資料。")
+        else:
+            with st.sidebar.status("正在產生報表...", expanded=False):
+                full_month_text = f"【路徒行旅 Plus 站前館 {month_str} 全月營運紀錄匯總】\n\n"
+                for d in df_all['date']:
+                    full_month_text += generate_report_text(d) + "\n\n"
+                st.session_state[f"monthly_report_{month_str}"] = full_month_text
+            st.rerun()
+else:
+    st.sidebar.download_button(
+        label=f"⬇️ 下載 {month_str} 紀錄 (.txt)",
+        data=st.session_state[f"monthly_report_{month_str}"],
+        file_name=f"Roaders_Plus_Monthly_{month_str}.txt",
+        mime="text/plain",
+        use_container_width=True,
+    )
+    if st.sidebar.button("🔄 重新產生", key="clear_monthly"):
+        del st.session_state[f"monthly_report_{month_str}"]
+        st.rerun()
+
+st.sidebar.divider()
+if st.sidebar.button("💾 強制儲存今日所有變更", use_container_width=True):
+    sync_st_to_db()
+    st.sidebar.success("✅ 今日資料已安全寫入資料庫！")
 
 # -- 報表解析與寫入資料庫 --
 def parse_and_save_jinxu(file):
@@ -380,12 +466,12 @@ with tab2:
 
     st.divider()
     st.subheader(f"櫃台手動確認區 ({date_str})")
-    st.number_input("訂房率 (%)", min_value=0.0, max_value=100.0, step=0.1, key="input_occ")
-    st.number_input("總營收", min_value=0, step=100, key="input_rev")
-    st.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr")
-    st.number_input("總住房數", min_value=0, step=1, key="input_rooms")
-    st.text_area("負評客訴", key="input_complaints")
-    st.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp")
+    st.number_input("訂房率 (%)", min_value=0.0, max_value=100.0, step=0.1, key="input_occ", on_change=on_input_change)
+    st.number_input("總營收", min_value=0, step=100, key="input_rev", on_change=on_input_change)
+    st.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr", on_change=on_input_change)
+    st.number_input("總住房數", min_value=0, step=1, key="input_rooms", on_change=on_input_change)
+    st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
+    st.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp", on_change=on_input_change)
 
 with tab1:
     st.header("📊 營運總覽")
@@ -584,10 +670,10 @@ with tab1:
 
 with tab3:
     st.header("🧹 房務數據")
-    st.number_input("今日總清消房數", min_value=0, step=1, key="input_cleaned")
-    st.number_input("退/續數量", min_value=0, step=1, key="input_hk_co")
-    st.number_input("每人平均掃房數", min_value=0.0, step=0.1, key="input_hk_avg")
-    st.number_input("房務請購費用", min_value=0, step=100, key="input_hk_exp")
+    st.number_input("今日總清消房數", min_value=0, step=1, key="input_cleaned", on_change=on_input_change)
+    st.number_input("退/續數量", min_value=0, step=1, key="input_hk_co", on_change=on_input_change)
+    st.number_input("每人平均掃房數", min_value=0.0, step=0.1, key="input_hk_avg", on_change=on_input_change)
+    st.number_input("房務請購費用", min_value=0, step=100, key="input_hk_exp", on_change=on_input_change)
 
 with tab4:
     st.header("🍽️ 餐廳數據")
@@ -607,41 +693,41 @@ with tab4:
     
     st.markdown("#### 🌞 早餐數據")
     b1, b2, b3 = st.columns(3)
-    b1.number_input("【主題】預估來客", min_value=0, step=1, key="input_bf_theme_est")
-    b1.number_input("【主題】實際來客", min_value=0, step=1, key="input_bf_theme_act")
+    b1.number_input("【主題】預估來客", min_value=0, step=1, key="input_bf_theme_est", on_change=on_input_change)
+    b1.number_input("【主題】實際來客", min_value=0, step=1, key="input_bf_theme_act", on_change=on_input_change)
     
-    b2.number_input("【站前】預估來客", min_value=0, step=1, key="input_bf_zq_est")
-    b2.number_input("【站前】實際來客", min_value=0, step=1, key="input_bf_zq_act")
+    b2.number_input("【站前】預估來客", min_value=0, step=1, key="input_bf_zq_est", on_change=on_input_change)
+    b2.number_input("【站前】實際來客", min_value=0, step=1, key="input_bf_zq_act", on_change=on_input_change)
     
-    b3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_bf_total_est")
-    b3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_bf_total_act")
+    b3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_bf_total_est", on_change=on_input_change)
+    b3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_bf_total_act", on_change=on_input_change)
 
     st.markdown("#### 🍰 下午茶數據")
     a1, a2, a3 = st.columns(3)
-    a1.number_input("【主題】預估來客", min_value=0, step=1, key="input_af_theme_est")
-    a1.number_input("【主題】實際來客", min_value=0, step=1, key="input_af_theme_act")
+    a1.number_input("【主題】預估來客", min_value=0, step=1, key="input_af_theme_est", on_change=on_input_change)
+    a1.number_input("【主題】實際來客", min_value=0, step=1, key="input_af_theme_act", on_change=on_input_change)
     
-    a2.number_input("【站前】預估來客", min_value=0, step=1, key="input_af_zq_est")
-    a2.number_input("【站前】實際來客", min_value=0, step=1, key="input_af_zq_act")
+    a2.number_input("【站前】預估來客", min_value=0, step=1, key="input_af_zq_est", on_change=on_input_change)
+    a2.number_input("【站前】實際來客", min_value=0, step=1, key="input_af_zq_act", on_change=on_input_change)
     
-    a3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_af_total_est")
-    a3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_af_total_act")
+    a3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_af_total_est", on_change=on_input_change)
+    a3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_af_total_act", on_change=on_input_change)
 
     st.markdown("#### 📊 月報結算總數與雜項")
     c1, c2, c3 = st.columns(3)
-    c1.number_input("已結算營收 (全月)", min_value=0, step=100, key="input_rest_mrev")
-    c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent")
-    c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp")
-    st.text_area("4樓餐車數據", key="input_rest_car")
+    c1.number_input("已結算營收 (全月)", min_value=0, step=100, key="input_rest_mrev", on_change=on_input_change)
+    c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent", on_change=on_input_change)
+    c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp", on_change=on_input_change)
+    st.text_area("4樓餐車數據", key="input_rest_car", on_change=on_input_change)
 
 with tab5:
     st.header("🔧 工務數據")
-    st.number_input("今日待修房數", min_value=0, step=1, key="input_repair")
-    st.text_area("修繕紀錄", key="input_maint_rec")
-    st.number_input("工務請購費用", min_value=0, step=100, key="input_maint_exp")
+    st.number_input("今日待修房數", min_value=0, step=1, key="input_repair", on_change=on_input_change)
+    st.text_area("修繕紀錄", key="input_maint_rec", on_change=on_input_change)
+    st.number_input("工務請購費用", min_value=0, step=100, key="input_maint_exp", on_change=on_input_change)
 
 with tab6:
     st.header("📝 每日營運紀錄")
-    st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會獨立保存，方便日後回溯每一天的重要事件。")
-    st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等")
+    st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
+    st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
 
