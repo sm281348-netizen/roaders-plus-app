@@ -863,6 +863,22 @@ with tab7:
     if df_emp.empty:
         st.info("💡 目前資料庫中尚無員工資訊。")
     else:
+        # 計算總薪資 (排除職位為 PT 的人)
+        # 確保 position 欄位存在且處理大小寫
+        if 'position' in df_emp.columns:
+            non_pt_df = df_emp[df_emp['position'].fillna('').str.upper() != 'PT']
+            total_salary = non_pt_df['salary'].sum()
+        else:
+            total_salary = df_emp['salary'].sum()
+
+        st.markdown(f"""
+        <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
+            <p style="margin: 0; font-size: 14px; color: #666;">💰 非 PT 員工薪資總計 (月額)</p>
+            <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
+            <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
+        </div>
+        """, unsafe_allow_html=True)
+
         col_sort, col_search = st.columns([1, 1])
         sort_opt = col_sort.selectbox("排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
         search_query = col_search.text_input("🔍 搜尋姓名或編號")
