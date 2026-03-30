@@ -270,6 +270,21 @@ else:
         st.rerun()
 
 st.sidebar.divider()
+st.sidebar.subheader("📅 週次紀錄快速審視")
+import calendar
+_, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
+
+weekly_options = [
+    "--- 關閉週預覽 ---",
+    "第1週 (1號 - 7號)",
+    "第2週 (8號 - 14號)",
+    "第3週 (15-21號)",
+    "第4週 (22-28號)",
+    f"第5週 (29號 - {last_day_of_month}號)"
+]
+selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, index=0)
+
+st.sidebar.divider()
 if st.sidebar.button("💾 強制儲存今日所有變更", use_container_width=True):
     sync_st_to_db()
     st.sidebar.success("✅ 今日資料已安全寫入資料庫！")
@@ -728,6 +743,43 @@ with tab5:
 
 with tab6:
     st.header("📝 每日營運紀錄")
-    st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
-    st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
+    
+    if selected_week != "--- 關閉週預覽 ---":
+        # 解析選擇的區間
+        week_idx = weekly_options.index(selected_week)
+        start_d = (week_idx - 1) * 7 + 1
+        if week_idx == 5:
+            end_d = last_day_of_month
+        else:
+            end_d = start_d + 6
+            
+        st.subheader(f"📋 {selected_week} 快速審視模式")
+        st.info(f"正在查看 {selected_date.year}年{selected_date.month}月 {start_d}號 至 {end_d}號 的完整紀錄。")
+        
+        # 獲取該區間所有資料
+        conn = sqlite3.connect('roaders_plus.db')
+        c_month_str = selected_date.strftime('%Y-%m')
+        
+        for day in range(start_d, end_d + 1):
+            target_date = f"{c_month_str}-{day:02d}"
+            # 這裡我們呼叫 get_daily_data
+            d_data = get_daily_data(target_date)
+            
+            with st.expander(f"📅 {target_date} 營運紀錄", expanded=True):
+                if d_data and d_data.get('daily_work_log'):
+                    st.markdown(f"**【當日日誌細節】**\n\n{d_data['daily_work_log']}")
+                    st.divider()
+                    col_a, colb, colc = st.columns(3)
+                    col_a.metric("住房率", f"{d_data.get('occ_rate', 0)}%")
+                    colb.metric("ADR", f"NT$ {int(d_data.get('adr', 0)):,}")
+                    colc.metric("營收", f"NT$ {int(d_data.get('revenue', 0)):,}")
+                else:
+                    st.write("🌑 此日期尚無任何日誌紀錄。")
+        conn.close()
+        
+        if st.button("⬅️ 返回今日編輯模式"):
+            st.rerun()
 
+    else:
+        st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
+        st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
