@@ -85,6 +85,17 @@ def init_db():
         except sqlite3.OperationalError:
             pass # column already exists
             
+    # --- 新增人事管理資料表 ---
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS employees (
+            employee_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            dept TEXT NOT NULL,
+            position TEXT,
+            salary INTEGER
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -468,7 +479,7 @@ def parse_and_save_restaurant(file, current_year):
 st.title("路徒行旅 Plus 站前館營運日誌")
 
 # 主畫面
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 營運總覽", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "📝 每日營運紀錄"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 營運總覽", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "📝 每日營運紀錄", "👥 人事概況"])
 
 with tab2:
     st.header("💼 櫃台數據")
@@ -787,3 +798,113 @@ with tab6:
     else:
         st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
         st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
+
+with tab7:
+    st.header("👥 人事概況")
+    
+    # -- 人事管理函數 --
+    def get_all_employees():
+        conn = sqlite3.connect('roaders_plus.db')
+        df = pd.read_sql_query("SELECT * FROM employees", conn)
+        conn.close()
+        return df
+
+    def add_employee(e_id, name, dept, pos, salary):
+        try:
+            conn = sqlite3.connect('roaders_plus.db')
+            c = conn.cursor()
+            c.execute("INSERT INTO employees (employee_id, name, dept, position, salary) VALUES (?, ?, ?, ?, ?)",
+                      (e_id, name, dept, pos, salary))
+            conn.commit()
+            conn.close()
+            return True
+        except sqlite3.IntegrityError:
+            return "ID_EXISTS"
+        except Exception as e:
+            return str(e)
+
+    def delete_employee(e_id):
+        conn = sqlite3.connect('roaders_plus.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM employees WHERE employee_id = ?", (e_id,))
+        conn.commit()
+        conn.close()
+
+    # -- UI: 新增員工區 --
+    with st.expander("➕ 新增新進員工資訊", expanded=False):
+        with st.form("add_employee_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            new_id = col1.text_input("員工編號 (必填)")
+            new_name = col2.text_input("姓名 (必填)")
+            
+            new_dept = st.selectbox("所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
+            new_pos = st.text_input("職位")
+            new_salary = st.number_input("薪資", min_value=0, step=1000)
+            
+            submit_btn = st.form_submit_button("✅ 確認新增")
+            if submit_btn:
+                if not new_id or not new_name:
+                    st.error("❌ 請填寫員工編號與姓名！")
+                else:
+                    res = add_employee(new_id, new_name, new_dept, new_pos, new_salary)
+                    if res == True:
+                        st.success(f"✅ 成功新增員工：{new_name}")
+                        st.rerun()
+                    elif res == "ID_EXISTS":
+                        st.error("❌ 員工編號已存在，請檢查是否重覆。")
+                    else:
+                        st.error(f"❌ 新增失敗：{res}")
+
+    st.divider()
+
+    # -- UI: 員工列表與排序 --
+    df_emp = get_all_employees()
+    
+    if df_emp.empty:
+        st.info("💡 目前資料庫中尚無員工資訊。")
+    else:
+        col_sort, col_search = st.columns([1, 1])
+        sort_opt = col_sort.selectbox("排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
+        search_query = col_search.text_input("🔍 搜尋姓名或編號")
+
+        # 搜尋過濾
+        if search_query:
+            df_emp = df_emp[df_emp['name'].str.contains(search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
+
+        # 排序邏輯
+        if sort_opt == "員工編號順序":
+            df_emp = df_emp.sort_values("employee_id")
+        elif sort_opt == "薪資 (由高到低)":
+            df_emp = df_emp.sort_values("salary", ascending=False)
+        elif sort_opt == "薪資 (由低到高)":
+            df_emp = df_emp.sort_values("salary", ascending=True)
+        elif sort_opt == "按部門排序":
+            df_emp = df_emp.sort_values(["dept", "employee_id"])
+
+        # 自定義表格顯示
+        st.write(f"📊 目前共有 {len(df_emp)} 位員工")
+        
+        # 標題列
+        header_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+        header_cols[0].markdown("**員工編號**")
+        header_cols[1].markdown("**姓名**")
+        header_cols[2].markdown("**部門**")
+        header_cols[3].markdown("**職位**")
+        header_cols[4].markdown("**薪資**")
+        header_cols[5].markdown("**操作**")
+        
+        st.divider()
+        
+        for idx, row in df_emp.iterrows():
+            row_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+            row_cols[0].write(row['employee_id'])
+            row_cols[1].write(row['name'])
+            row_cols[2].write(row['dept'])
+            row_cols[3].write(row['position'])
+            row_cols[4].write(f"NT$ {int(row['salary']):,}")
+            
+            if row_cols[5].button("🗑️", key=f"del_{row['employee_id']}", help="刪除此員工"):
+                delete_employee(row['employee_id'])
+                st.toast(f"已刪除員工: {row['name']}")
+                time.sleep(0.5)
+                st.rerun()
