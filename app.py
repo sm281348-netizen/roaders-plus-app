@@ -134,7 +134,21 @@ def get_daily_data(d_str):
     df = pd.read_sql_query("SELECT * FROM daily_data WHERE date=?", conn, params=(d_str,))
     conn.close()
     if not df.empty:
-        return df.iloc[0].to_dict()
+        data_dict = df.iloc[0].to_dict()
+        # 確保數值欄位不會是 None，避免 UI 計算或格式化時崩潰
+        numeric_cols = [
+            'occ_rate', 'adr', 'revenue', 'total_rooms', 'counter_expense', 
+            'cleaned_rooms', 'hk_checkout_extend', 'hk_avg_clean', 'hk_expense',
+            'rest_breakfast', 'rest_month_guests', 'rest_day_guests', 'rest_avg_guests',
+            'rest_month_rev', 'rest_avg_spent', 'rest_peak_expense',
+            'maint_repair_rooms', 'maint_expense',
+            'bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act',
+            'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act'
+        ]
+        for col in numeric_cols:
+            if col in data_dict and (pd.isna(data_dict[col]) or data_dict[col] is None):
+                data_dict[col] = 0
+        return data_dict
     return {}
 
 def save_daily_data(d_str, data_dict):
@@ -227,22 +241,28 @@ def generate_report_text(d_str):
     report.append(f"🏨 路徒行旅 Plus 站前館 - 營運日誌 ({d_str})")
     report.append(f"========================================\n")
     
+    def safe_int_val(v):
+        try:
+            if pd.isna(v) or v is None: return 0
+            return int(float(v))
+        except: return 0
+
     report.append(f"【📊 營運指標】")
     report.append(f"- 住房率: {data.get('occ_rate', 0)}%")
-    report.append(f"- ADR: NT$ {int(data.get('adr', 0)):,}")
-    report.append(f"- 總營收: NT$ {int(data.get('revenue', 0)):,}")
-    report.append(f"- 總住房數: {data.get('total_rooms', 0)} 間\n")
+    report.append(f"- ADR: NT$ {safe_int_val(data.get('adr', 0)):,}")
+    report.append(f"- 總營收: NT$ {safe_int_val(data.get('revenue', 0)):,}")
+    report.append(f"- 總住房數: {safe_int_val(data.get('total_rooms', 0))} 間\n")
     
     report.append(f"【💼 櫃台與房務】")
     report.append(f"- 負評客訴: {data.get('counter_complaints', '無')}")
-    report.append(f"- 櫃台請購: {data.get('counter_expense', 0)} 元")
-    report.append(f"- 總清消房數: {data.get('cleaned_rooms', 0)} 間")
-    report.append(f"- 房務請購: {data.get('hk_expense', 0)} 元\n")
+    report.append(f"- 櫃台請購: {safe_int_val(data.get('counter_expense', 0))} 元")
+    report.append(f"- 總清消房數: {safe_int_val(data.get('cleaned_rooms', 0))} 間")
+    report.append(f"- 房務請購: {safe_int_val(data.get('hk_expense', 0))} 元\n")
     
     report.append(f"【🍽️ 餐廳數據 (兩館實際來客)】")
-    report.append(f"- 早餐總計: {int(data.get('bf_total_act', 0))} 人")
-    report.append(f"- 下午茶總計: {int(data.get('af_total_act', 0))} 人")
-    report.append(f"- 餐廳營收(全月): {data.get('rest_month_rev', 0)} 元\n")
+    report.append(f"- 早餐總計: {safe_int_val(data.get('bf_total_act', 0))} 人")
+    report.append(f"- 下午茶總計: {safe_int_val(data.get('af_total_act', 0))} 人")
+    report.append(f"- 餐廳營收(全月): {safe_int_val(data.get('rest_month_rev', 0))} 元\n")
     
     report.append(f"【🔧 工務紀錄】")
     report.append(f"- 待修房數: {data.get('maint_repair_rooms', 0)} 間")
@@ -691,6 +711,12 @@ with tab1:
     adr_val = st.session_state.get('input_adr', 0)
     rev_val = st.session_state.get('input_rev', 0)
     
+    def safe_format_int(v):
+        try:
+            if pd.isna(v) or v is None: return 0
+            return int(float(v))
+        except: return 0
+
     kpi_html = f"""
     <style>
     .kpi-container {{ display: flex; justify-content: space-around; flex-wrap: wrap; margin-bottom: 30px; }}
@@ -700,8 +726,8 @@ with tab1:
     </style>
     <div class="kpi-container">
         <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
-        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {adr_val:,}</div></div>
-        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {rev_val:,}</div></div>
+        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
+        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
     </div>
     """
     st.markdown(kpi_html, unsafe_allow_html=True)
@@ -720,7 +746,7 @@ with tab1:
     with col3:
         st.error("🍽️ **餐廳狀況**")
         bf_total_act = st.session_state.get('input_bf_total_act', 0)
-        st.metric("今日雙館早餐總來客", f"{int(bf_total_act)} 人")
+        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
 
 with tab3:
     st.header("🧹 房務數據")
