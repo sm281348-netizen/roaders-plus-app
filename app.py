@@ -116,16 +116,14 @@ col2.button("後一天 ➡️", on_click=next_day)
 selected_date = st.sidebar.date_input("選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
 date_str = str(selected_date)
 
-# --- 新增：週次預覽選擇器 (提前定義以供載入邏輯使用) ---
-import calendar
-_, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
+# --- 新增：週次預覽選擇器 (使用固定標籤以避免月份長度不同導致當機) ---
 weekly_options = [
     "--- 關閉週預覽 ---",
-    "第1週 (1號 - 7號)",
-    "第2週 (8號 - 14號)",
+    "第1週 (1-7號)",
+    "第2週 (8-14號)",
     "第3週 (15-21號)",
     "第4週 (22-28號)",
-    f"第5週 (29號 - {last_day_of_month}號)"
+    "第5週 (29號起)"
 ]
 selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
 # --------------------------------------------------
@@ -786,16 +784,19 @@ with tab6:
     st.header("📝 每日營運紀錄")
     
     if selected_week != "--- 關閉週預覽 ---":
+        import calendar
+        _, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
+        
         # 解析選擇的區間
         week_idx = weekly_options.index(selected_week)
         start_d = (week_idx - 1) * 7 + 1
         if week_idx == 5:
             end_d = last_day_of_month
         else:
-            end_d = start_d + 6
+            end_d = min(start_d + 6, last_day_of_month)
             
         st.subheader(f"📋 {selected_week} 快速審視模式")
-        st.info(f"正在查看 {selected_date.year}年{selected_date.month}月 {start_d}號 至 {end_d}號 的完整紀錄。")
+        st.info(f"正在查看 {selected_date.year}年度 {selected_date.month}月份 ({start_d}號 至 {end_d}號) 的完整紀錄。")
         
         # 獲取該區間所有資料
         conn = sqlite3.connect('roaders_plus.db')
