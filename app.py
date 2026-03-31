@@ -322,39 +322,60 @@ def parse_and_save_jinxu(file):
                 break
                 
         file.seek(0)
-        df = pd.read_csv(file, skiprows=header_idx) if is_csv else pd.read_excel(file, skiprows=header_idx)
+        try:
+            df = pd.read_csv(file, skiprows=header_idx) if is_csv else pd.read_excel(file, skiprows=header_idx)
+        except Exception as e:
+            # 嘗試不同的 engine
+            file.seek(0)
+            df = pd.read_excel(file, skiprows=header_idx, engine='openpyxl')
+            
         df.columns = df.columns.astype(str).str.replace(r'[\s\n\r]', '', regex=True)
         
         date_col = next((c for c in df.columns if '日期' in c), None)
         occ_col = next((c for c in df.columns if '住房率' in c or '訂房率' in c or '出租率' in c or 'OCC' in c.upper()), None)
         adr_col = next((c for c in df.columns if '平均房價' in c or 'ADR' in c.upper()), None)
         
-        # 營收：優先抓客房收入或總營收，避開「可售總金額」
         rev_col = next((c for c in df.columns if '客房收入' in c or '客房營收' in c or '總營收' in c or '營業額' in c or '實際營收' in c), None)
-        # 房數：優先找出租/住房，避開「可售」
         rooms_col = next((c for c in df.columns if ('住房數' in c or '出租' in c or '售出' in c or '實住' in c) and '可售' not in c), None)
         if not rooms_col:
             rooms_col = next((c for c in df.columns if ('房間數' in c or '客房數' in c) and '可售' not in c), None)
 
         if not date_col:
-            st.error("⚠️ 解析失敗：找不到『日期』欄位")
+            st.error("⚠️ 解析失敗：找不到『日期』欄位，請檢查報表格式。")
             return False
 
-        df[date_col] = df[date_col].astype(str).str.replace(r'\.0$', '', regex=True)
-        df['標準日期'] = pd.to_datetime(df[date_col], format='%Y%m%d', errors='coerce').dt.date
-        null_mask = df['標準日期'].isnull()
-        if null_mask.any():
-            df.loc[null_mask, '標準日期'] = pd.to_datetime(df.loc[null_mask, date_col], errors='coerce').dt.date
-            
+        # --- 強化日期解析邏輯 ---
+        def robust_parse_date(val):
+            if pd.isna(val) or str(val).strip() == '': return None
+            s = str(val).strip().split('.')[0] # 移除 .0
+            # 嘗試 YYYYMMDD
+            try:
+                if len(s) == 8 and s.isdigit():
+                    return pd.to_datetime(s, format='%Y%m%d').date()
+            except: pass
+            # 嘗試一般解析 (YYYY-MM-DD, YYYY/MM/DD 等)
+            try:
+                return pd.to_datetime(s).date()
+            except: pass
+            return None
+
+        df['標準日期'] = df[date_col].apply(robust_parse_date)
+        
         conn = sqlite3.connect('roaders_plus.db')
         c = conn.cursor()
         
         records_saved = 0
-        for _, row in df.iterrows():
-            d_str = str(row['標準日期'])
-            if d_str == 'NaT' or d_str == 'None': continue
+        errors = []
+        for index, row in df.iterrows():
+            d_obj = row['標準日期']
+            if not d_obj: 
+                if pd.notna(row.get(date_col)) and str(row.get(date_col)).strip() != '':
+                    errors.append(f"第 {index+header_idx+2} 行日期無法辨識: {row.get(date_col)}")
+                continue
             
-            # 處理訂房率 (可能為 '92%', '92.5' 字串，或 0.925 浮點數)
+            d_str = str(d_obj)
+            
+            # 處理訂房率
             occ = 0.0
             if occ_col and pd.notna(row.get(occ_col)):
                 raw_occ_str = str(row.get(occ_col)).strip()
@@ -363,9 +384,8 @@ def parse_and_save_jinxu(file):
                 try:
                     occ = float(clean_occ)
                     if 0 < occ <= 1.0 and not has_percent:
-                        occ = occ * 100.0  # 把 0.92 轉成 92.0
-                except ValueError:
-                    occ = 0.0
+                        occ = occ * 100.0
+                except: occ = 0.0
 
             adr = int(float(str(row.get(adr_col, '0')).replace(',', ''))) if adr_col and pd.notna(row.get(adr_col)) else 0
             rev = int(float(str(row.get(rev_col, '0')).replace(',', ''))) if rev_col and pd.notna(row.get(rev_col)) else 0
@@ -382,7 +402,9 @@ def parse_and_save_jinxu(file):
         conn.commit()
         conn.close()
         
-        # 強制立刻更新畫面的狀態
+        if errors:
+            st.warning("⚠️ 部分資料跳過：\n" + "\n".join(errors[:5]) + (f"\n...等 {len(errors)} 筆" if len(errors) > 5 else ""))
+            
         st.session_state['_last_loaded_date'] = None
         return records_saved
     except Exception as e:
@@ -415,14 +437,18 @@ def parse_and_save_restaurant(file, current_year):
         parsed_days = []
         for i, row in df.iterrows():
             col0 = str(row[0]).strip()
-            # 判斷是否為「3/1週日」格式
+            # 判斷是否為「3/1週日」或「3/1」格式
             m = re.match(r'^(\d{1,2})/(\d{1,2})', col0)
             if m:
-                month, day = m.groups()
-                d_str = f"{current_year}-{int(month):02d}-{int(day):02d}"
+                month_val, day_val = m.groups()
+                # 智慧年份判斷：如果報表月份比當前選定日期大太多 (例如在1月看12月報表)，可能跨年
+                # 這裡簡化處理：先用傳進來的年份，若格式正確則維持
+                d_str = f"{current_year}-{int(month_val):02d}-{int(day_val):02d}"
                 
                 def safe_int(val):
-                    try: return int(float(val))
+                    try: 
+                        if pd.isna(val): return 0
+                        return int(float(str(val).replace(',', '').strip()))
                     except: return 0
                         
                 bf_theme_est = safe_int(row[1]) if len(row) > 1 else 0
