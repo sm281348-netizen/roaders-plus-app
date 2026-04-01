@@ -523,7 +523,7 @@ def parse_and_save_restaurant(file, current_year):
 st.title("路徒行旅 Plus 站前館營運日誌")
 
 # 主畫面
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 營運總覽", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "📝 每日營運紀錄", "👥 人事概況"])
+tab1, tab_m, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "📝 每日營運紀錄", "👥 人事概況"])
 
 with tab2:
     st.header("💼 櫃台數據")
@@ -703,6 +703,70 @@ with tab1:
         
     else:
         st.info("💡 資料庫中目前尚未有這個月的記錄。")
+
+with tab_m:
+    st.header("📈 月分析專區")
+    
+    # 獲取整月數據
+    import calendar
+    month_start = selected_date.replace(day=1).strftime('%Y-%m-%d')
+    _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
+    month_end = selected_date.replace(day=last_day).strftime('%Y-%m-%d')
+    
+    conn = sqlite3.connect('roaders_plus.db')
+    df_month = pd.read_sql_query("SELECT date, occ_rate, revenue, adr, total_rooms FROM daily_data WHERE date >= ? AND date <= ? ORDER BY date ASC", conn, params=(month_start, month_end))
+    conn.close()
+    
+    if not df_month.empty:
+        # --- 1. 住房率長條圖 ---
+        st.subheader(f"📊 {selected_date.strftime('%Y-%m')} 每日住房率概況")
+        
+        # 準備圖表數據
+        chart_df = df_month.copy()
+        chart_df['日期'] = pd.to_datetime(chart_df['date']).dt.day.astype(str) + "號"
+        chart_df = chart_df.set_index('日期')
+        
+        # 顯示長條圖
+        st.bar_chart(chart_df['occ_rate'], color="#3498db")
+        
+        st.divider()
+        
+        # --- 2. 當月核心數據小卡 ---
+        st.subheader("📌 月度營運指標")
+        
+        m_rev = 0.0
+        m_rooms = 0.0
+        m_sellable = 0.0
+        
+        for _, r in df_month.iterrows():
+            rev = float(r['revenue']) if pd.notna(r['revenue']) else 0.0
+            rm = float(r['total_rooms']) if pd.notna(r['total_rooms']) else 0.0
+            occ = float(r['occ_rate']) if pd.notna(r['occ_rate']) else 0.0
+            adr = float(r['adr']) if pd.notna(r['adr']) else 0.0
+            
+            # 容錯回推
+            if rev == 0 and adr > 0 and rm > 0: rev = adr * rm
+            if rm == 0 and rev > 0 and adr > 0: rm = rev / adr
+            
+            if rm > 0 or rev > 0:
+                m_rev += rev
+                m_rooms += rm
+                if occ > 0:
+                    m_sellable += (rm / (occ / 100.0))
+        
+        avg_occ = (m_rooms / m_sellable * 100.0) if m_sellable > 0 else 0.0
+        avg_adr = (m_rev / m_rooms) if m_rooms > 0 else 0.0
+        revpar = (avg_occ / 100.0) * avg_adr
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(make_card("當月總營收", f"NT$ {int(m_rev):,}", "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
+        c2.markdown(make_card("當月平均房價", f"NT$ {int(avg_adr):,}", "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
+        c3.markdown(make_card("當月住房率", f"{avg_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
+        c4.markdown(make_card("當月 RevPAR", f"NT$ {int(revpar):,}", "card-theme-purple", "card-bg-dark", "📈"), unsafe_allow_html=True)
+        
+        st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」")
+    else:
+        st.info(f"💡 資料庫中目前尚未有 {selected_date.strftime('%Y-%m')} 的任何資料。")
 
     st.divider()
 
