@@ -96,6 +96,13 @@ def init_db():
             salary INTEGER
         )
     ''')
+    # --- 新增月度目標資料表 ---
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS monthly_targets (
+            month TEXT PRIMARY KEY,
+            target_revenue INTEGER
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -130,6 +137,28 @@ selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, in
 # --------------------------------------------------
 
 # -- 資料庫讀寫函數 --
+def get_monthly_target(month_str):
+    try:
+        conn = sqlite3.connect('roaders_plus.db')
+        df = pd.read_sql_query("SELECT target_revenue FROM monthly_targets WHERE month = ?", conn, params=(month_str,))
+        conn.close()
+        if not df.empty:
+            return int(df.iloc[0]['target_revenue'])
+        return 0
+    except:
+        return 0
+
+def save_monthly_target(month_str, target):
+    try:
+        conn = sqlite3.connect('roaders_plus.db')
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO monthly_targets (month, target_revenue) VALUES (?, ?)", (month_str, target))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        return False
+
 def get_daily_data(d_str):
     conn = sqlite3.connect('roaders_plus.db')
     df = pd.read_sql_query("SELECT * FROM daily_data WHERE date=?", conn, params=(d_str,))
@@ -790,6 +819,57 @@ with tab_m:
         c4.markdown(make_card("當月 RevPAR", f"NT$ {int(revpar):,}", "card-theme-purple", "card-bg-dark", "📈"), unsafe_allow_html=True)
         
         st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」")
+
+        st.divider()
+
+        # --- 3. 達標分析指數 ---
+        st.subheader("🎯 達標分析指數")
+        
+        # 獲取與保存目標
+        month_key = selected_date.strftime('%Y-%m')
+        current_target = get_monthly_target(month_key)
+        
+        # 使用 columns 來排版輸入框與說明
+        t_col1, t_col2 = st.columns([1, 2])
+        with t_col1:
+            new_target = st.number_input(f"設定 {month_key} 目標業績 (NT$)", min_value=0, step=10000, value=current_target, key=f"target_input_{month_key}")
+            if new_target != current_target:
+                save_monthly_target(month_key, new_target)
+                st.toast(f"已更新 {month_key} 目標業績！")
+                time.sleep(0.5)
+                st.rerun()
+        
+        if new_target > 0:
+            gap = new_target - m_rev
+            stretch_goal = new_target * 1.1
+            stretch_gap = stretch_goal - m_rev
+            
+            # 進度條顯示
+            progress = min(1.0, m_rev / new_target)
+            st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
+            
+            a_col1, a_col2, a_col3 = st.columns(3)
+            
+            # 目標差距卡片
+            if gap <= 0:
+                t_card = make_card("目標達成狀況", "🎉 已達標！", "card-theme-green", "", "✅")
+            else:
+                t_card = make_card("距離目標還差", f"NT$ {int(gap):,}", "card-theme-red", "", "🎯")
+            a_col1.markdown(t_card, unsafe_allow_html=True)
+            
+            # 超標目標卡片
+            a_col2.markdown(make_card("超標目標 (+10%)", f"NT$ {int(stretch_goal):,}", "card-theme-orange", "", "🚀"), unsafe_allow_html=True)
+            
+            # 超標差距卡片
+            if stretch_gap <= 0:
+                s_card = make_card("超標達成狀況", "🔥 已超標達成！", "card-theme-green", "card-bg-dark", "🏆")
+            else:
+                s_card = make_card("距離超標還差", f"NT$ {int(stretch_gap):,}", "card-theme-purple", "", "⚡")
+            a_col3.markdown(s_card, unsafe_allow_html=True)
+            
+        else:
+            st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
+            
     else:
         st.info(f"💡 資料庫中目前尚未有 {selected_date.strftime('%Y-%m')} 的任何資料。")
 
