@@ -6,6 +6,7 @@ import random
 import sqlite3
 import os
 import re
+import altair as alt
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -718,16 +719,40 @@ with tab_m:
     conn.close()
     
     if not df_month.empty:
-        # --- 1. 住房率長條圖 ---
+        # --- 1. 住房率長條圖 (使用 Altair 製作帶標籤與條件顏色的圖表) ---
         st.subheader(f"📊 {selected_date.strftime('%Y-%m')} 每日住房率概況")
         
-        # 準備圖表數據
+        # 準備數據：確保日期為整數(天)，並排序
         chart_df = df_month.copy()
-        chart_df['日期'] = pd.to_datetime(chart_df['date']).dt.day.astype(str) + "號"
-        chart_df = chart_df.set_index('日期')
+        chart_df['day'] = pd.to_datetime(chart_df['date']).dt.day
+        chart_df = chart_df.sort_values('day')
         
-        # 顯示長條圖
-        st.bar_chart(chart_df['occ_rate'], color="#3498db")
+        # 建立 Altair 圖表
+        # 1. 長條圖層 (條件顏色：>= 90 為紅色)
+        bars = alt.Chart(chart_df).mark_bar().encode(
+            x=alt.X('day:O', title='日期', sort='ascending'),
+            y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
+            color=alt.condition(
+                alt.datum.occ_rate >= 90,
+                alt.value('#e74c3c'), # 紅色
+                alt.value('#3498db')  # 藍色
+            ),
+            tooltip=['date', 'occ_rate']
+        )
+        
+        # 2. 文字標籤層 (顯示在長條上方)
+        text = bars.mark_text(
+            align='center',
+            baseline='bottom',
+            dy=-5,  # 向上偏移 5 像素
+            fontSize=12,
+            fontWeight='bold'
+        ).encode(
+            text=alt.Text('occ_rate:Q', format='.1f')
+        )
+        
+        # 組合圖層並顯示
+        st.altair_chart((bars + text).properties(height=400), use_container_width=True)
         
         st.divider()
         
