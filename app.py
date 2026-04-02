@@ -114,8 +114,28 @@ st.sidebar.header("📅 日期導覽")
 if 'sidebar_date' not in st.session_state:
     st.session_state['sidebar_date'] = datetime.date.today()
 
-def prev_day(): st.session_state['sidebar_date'] -= datetime.timedelta(days=1)
-def next_day(): st.session_state['sidebar_date'] += datetime.timedelta(days=1)
+# 定義欄位映射 (必須在儲存與載入函數之前)
+field_mapping = {
+    'input_occ': ('occ_rate', 0.0), 'input_adr': ('adr', 0), 'input_rev': ('revenue', 0), 'input_rooms': ('total_rooms', 0),
+    'input_complaints': ('counter_complaints', ""), 'input_counter_exp': ('counter_expense', 0),
+    'input_cleaned': ('cleaned_rooms', 0), 'input_hk_co': ('hk_checkout_extend', 0), 'input_hk_avg': ('hk_avg_clean', 0.0), 'input_hk_exp': ('hk_expense', 0),
+    'input_bf_theme_est': ('bf_theme_est', 0), 'input_bf_theme_act': ('bf_theme_act', 0), 'input_bf_zq_est': ('bf_zq_est', 0), 'input_bf_zq_act': ('bf_zq_act', 0), 'input_bf_total_est': ('bf_total_est', 0), 'input_bf_total_act': ('bf_total_act', 0),
+    'input_af_theme_est': ('af_theme_est', 0), 'input_af_theme_act': ('af_theme_act', 0), 'input_af_zq_est': ('af_zq_est', 0), 'input_af_zq_act': ('af_zq_act', 0), 'input_af_total_est': ('af_total_est', 0), 'input_af_total_act': ('af_total_act', 0),
+    'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_rest_car': ('rest_car_data', ""),
+    'input_repair': ('maint_repair_rooms', 0), 'input_maint_rec': ('maint_records', ""), 'input_maint_exp': ('maint_expense', 0),
+    'input_daily_log': ('daily_work_log', "")
+}
+
+def sync_st_to_db(target_d_str):
+    update_dict = {db_col: st.session_state[ss_key] for ss_key, (db_col, _) in field_mapping.items() if ss_key in st.session_state}
+    if update_dict:
+        save_daily_data(target_d_str, update_dict)
+
+def prev_day():
+    st.session_state['sidebar_date'] -= datetime.timedelta(days=1)
+
+def next_day():
+    st.session_state['sidebar_date'] += datetime.timedelta(days=1)
 
 col1, col2 = st.sidebar.columns(2)
 col1.button("⬅️ 前一天", on_click=prev_day)
@@ -124,15 +144,18 @@ col2.button("後一天 ➡️", on_click=next_day)
 selected_date = st.sidebar.date_input("選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
 date_str = str(selected_date)
 
-# --- 新增：週次預覽選擇器 (使用固定標籤以避免月份長度不同導致當機) ---
-weekly_options = [
-    "--- 關閉週預覽 ---",
-    "第1週 (1-7號)",
-    "第2週 (8-14號)",
-    "第3週 (15-21號)",
-    "第4週 (22-28號)",
-    "第5週 (29號起)"
-]
+# --- 核心修復：檢測日期切換並自動強制存檔舊日期 ---
+if '_actual_current_date' not in st.session_state:
+    st.session_state['_actual_current_date'] = date_str
+
+if st.session_state['_actual_current_date'] != date_str:
+    # 發生換日！先把當前 session_state 的內容存到「剛離開的那個日期」
+    sync_st_to_db(st.session_state['_actual_current_date'])
+    # 更新追蹤器
+    st.session_state['_actual_current_date'] = date_str
+
+# --- 新增：週次預覽選擇器 ---
+weekly_options = ["--- 關閉週預覽 ---", "第1週 (1-7號)", "第2週 (8-14號)", "第3週 (15-21號)", "第4週 (22-28號)", "第5週 (29號起)"]
 selected_week = st.sidebar.selectbox("快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
 # --------------------------------------------------
 
@@ -194,49 +217,8 @@ def save_daily_data(d_str, data_dict):
     conn.commit()
     conn.close()
 
-# 自動載入當日資料到 session_state
+
 day_data = get_daily_data(date_str)
-
-field_mapping = {
-    'input_occ': ('occ_rate', 0.0),
-    'input_adr': ('adr', 0),
-    'input_rev': ('revenue', 0),
-    'input_rooms': ('total_rooms', 0),
-    
-    'input_complaints': ('counter_complaints', ""),
-    'input_counter_exp': ('counter_expense', 0),
-    
-    'input_cleaned': ('cleaned_rooms', 0),
-    'input_hk_co': ('hk_checkout_extend', 0),
-    'input_hk_avg': ('hk_avg_clean', 0.0),
-    'input_hk_exp': ('hk_expense', 0),
-    
-    'input_bf_theme_est': ('bf_theme_est', 0),
-    'input_bf_theme_act': ('bf_theme_act', 0),
-    'input_bf_zq_est': ('bf_zq_est', 0),
-    'input_bf_zq_act': ('bf_zq_act', 0),
-    'input_bf_total_est': ('bf_total_est', 0),
-    'input_bf_total_act': ('bf_total_act', 0),
-    
-    'input_af_theme_est': ('af_theme_est', 0),
-    'input_af_theme_act': ('af_theme_act', 0),
-    'input_af_zq_est': ('af_zq_est', 0),
-    'input_af_zq_act': ('af_zq_act', 0),
-    'input_af_total_est': ('af_total_est', 0),
-    'input_af_total_act': ('af_total_act', 0),
-    
-    'input_rest_mrev': ('rest_month_rev', 0),
-    'input_rest_aspent': ('rest_avg_spent', 0),
-    'input_rest_exp': ('rest_peak_expense', 0),
-    'input_rest_car': ('rest_car_data', ""),
-    
-    'input_repair': ('maint_repair_rooms', 0),
-    'input_maint_rec': ('maint_records', ""),
-    'input_maint_exp': ('maint_expense', 0),
-    
-    'input_daily_log': ('daily_work_log', "")
-}
-
 if st.session_state.get('_last_loaded_date') != date_str or st.session_state.get('_last_week_view') != selected_week:
     for ss_key, (db_col, default_val) in field_mapping.items():
         val = day_data.get(db_col)
@@ -250,14 +232,9 @@ if st.session_state.get('_last_loaded_date') != date_str or st.session_state.get
     st.session_state['_last_loaded_date'] = date_str
     st.session_state['_last_week_view'] = selected_week
 
-# 新增：自動儲存函數，避免切換日期時資料遺失
-def sync_st_to_db():
-    update_dict = {db_col: st.session_state[ss_key] for ss_key, (db_col, _) in field_mapping.items() if ss_key in st.session_state}
-    if update_dict:
-        save_daily_data(date_str, update_dict)
-
 def on_input_change():
-    sync_st_to_db()
+    # widget callback 觸發時，使用當前腳本環境中的 date_str
+    sync_st_to_db(date_str)
 
 st.sidebar.divider()
 st.sidebar.subheader("📤 數據匯出與備份")
@@ -349,7 +326,7 @@ st.sidebar.info(f"當前模式：{selected_week}")
 
 st.sidebar.divider()
 if st.sidebar.button("💾 強制儲存今日所有變更", use_container_width=True):
-    sync_st_to_db()
+    sync_st_to_db(date_str)
     st.sidebar.success("✅ 今日資料已安全寫入資料庫！")
 
 # -- 報表解析與寫入資料庫 --
