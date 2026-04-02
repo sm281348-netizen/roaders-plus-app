@@ -196,14 +196,21 @@ selected_date = st.sidebar.date_input("選擇日期", value=st.session_state['si
 date_str = str(selected_date)
 
 # --- 核心修復：檢測日期切換並自動強制存檔舊日期 ---
+# 追蹤當前正在編輯的日期
 if '_actual_current_date' not in st.session_state:
     st.session_state['_actual_current_date'] = date_str
+# 追蹤當前 session_state 內容是否已經從資料庫載入完成 (防止存入預設的 0)
+if '_data_is_loaded' not in st.session_state:
+    st.session_state['_data_is_loaded'] = False
 
 if st.session_state['_actual_current_date'] != date_str:
-    # 發生換日！先把當前 session_state 的內容存到「剛離開的那個日期」
-    sync_st_to_db(st.session_state['_actual_current_date'])
-    # 更新追蹤器
+    # 只有在「確定已經載入過舊日期資料」的情況下，才在切換時存檔
+    if st.session_state.get('_data_is_loaded', False):
+        sync_st_to_db(st.session_state['_actual_current_date'])
+    
+    # 切換日期標記，並重設載入狀態（因為新日期的資料還沒讀取）
     st.session_state['_actual_current_date'] = date_str
+    st.session_state['_data_is_loaded'] = False
 
 # --- 新增：週次預覽選擇器 ---
 weekly_options = ["--- 關閉週預覽 ---", "第1週 (1-7號)", "第2週 (8-14號)", "第3週 (15-21號)", "第4週 (22-28號)", "第5週 (29號起)"]
@@ -226,6 +233,7 @@ if st.session_state.get('_last_loaded_date') != date_str or st.session_state.get
             else: st.session_state[ss_key] = str(val)
     st.session_state['_last_loaded_date'] = date_str
     st.session_state['_last_week_view'] = selected_week
+    st.session_state['_data_is_loaded'] = True # 標記為已載入，此後任何變動或換日才允許存檔
 
 def on_input_change():
     # widget callback 觸發時，使用當前腳本環境中的 date_str
