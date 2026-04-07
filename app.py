@@ -160,6 +160,57 @@ def save_monthly_target(month_str, target):
         return True
     except: return False
 
+def get_month_delta(d, delta):
+    year = d.year
+    month = d.month + delta
+    while month > 12:
+        month -= 12
+        year += 1
+    while month < 1:
+        month += 12
+        year -= 1
+    return datetime.date(year, month, 1)
+
+def fetch_month_summary(year, month):
+    import calendar
+    m_start = f"{year}-{month:02d}-01"
+    _, last_day = calendar.monthrange(year, month)
+    m_end = f"{year}-{month:02d}-{last_day:02d}"
+    
+    conn = sqlite3.connect('roaders_plus.db')
+    df = pd.read_sql_query("SELECT date, occ_rate, revenue, adr, total_rooms FROM daily_data WHERE date >= ? AND date <= ? ORDER BY date ASC", conn, params=(m_start, m_end))
+    conn.close()
+    
+    res = {
+        'rev': 0.0, 'rooms': 0.0, 'sellable': 0.0, 'occ90_days': 0,
+        'avg_occ': 0.0, 'avg_adr': 0.0, 'revpar': 0.0, 'df': df,
+        'month_label': f"{year}-{month:02d}"
+    }
+    
+    if not df.empty:
+        for _, r in df.iterrows():
+            rev = float(r['revenue']) if pd.notna(r['revenue']) else 0.0
+            rm = float(r['total_rooms']) if pd.notna(r['total_rooms']) else 0.0
+            occ = float(r['occ_rate']) if pd.notna(r['occ_rate']) else 0.0
+            adr = float(r['adr']) if pd.notna(r['adr']) else 0.0
+            
+            if rev == 0 and adr > 0 and rm > 0: rev = adr * rm
+            if rm == 0 and rev > 0 and adr > 0: rm = rev / adr
+            
+            if rm > 0 or rev > 0:
+                res['rev'] += rev
+                res['rooms'] += rm
+                if occ > 0:
+                    res['sellable'] += (rm / (occ / 100.0))
+                if occ >= 90.0:
+                    res['occ90_days'] += 1
+        
+        res['avg_occ'] = (res['rooms'] / res['sellable'] * 100.0) if res['sellable'] > 0 else 0.0
+        res['avg_adr'] = (res['rev'] / res['rooms']) if res['rooms'] > 0 else 0.0
+        res['revpar'] = (res['avg_occ'] / 100.0) * res['avg_adr']
+        
+    return res
+
 # -- 側邊欄：進階日期選擇器 --
 st.sidebar.header("📅 日期導覽")
 if 'sidebar_date' not in st.session_state:
@@ -717,141 +768,177 @@ with tab1:
 with tab_m:
     st.header("📈 月分析專區")
     
-    # 獲取整月數據
-    import calendar
-    month_start = selected_date.replace(day=1).strftime('%Y-%m-%d')
-    _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
-    month_end = selected_date.replace(day=last_day).strftime('%Y-%m-%d')
+    # 1. 取得三個月數據
+    prev_m_date = get_month_delta(selected_date, -1)
+    next_m_date = get_month_delta(selected_date, 1)
     
-    conn = sqlite3.connect('roaders_plus.db')
-    df_month = pd.read_sql_query("SELECT date, occ_rate, revenue, adr, total_rooms FROM daily_data WHERE date >= ? AND date <= ? ORDER BY date ASC", conn, params=(month_start, month_end))
-    conn.close()
+    m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
+    m_curr = fetch_month_summary(selected_date.year, selected_date.month)
+    m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
     
-    if not df_month.empty:
-        # --- 1. 住房率長條圖 (使用 Altair 製作帶標籤與條件顏色的圖表) ---
-        st.subheader(f"📊 {selected_date.strftime('%Y-%m')} 每日住房率概況")
-        
-        # 準備數據：確保日期為整數(天)，並排序
-        chart_df = df_month.copy()
-        chart_df['day'] = pd.to_datetime(chart_df['date']).dt.day
-        chart_df = chart_df.sort_values('day')
-        
-        # 建立 Altair 圖表
-        # 1. 長條圖層 (條件顏色：>= 90 為紅色)
-        bars = alt.Chart(chart_df).mark_bar().encode(
-            x=alt.X('day:O', title='日期', sort='ascending'),
+    # --- A. 每日住房率概況 (三個月對比) ---
+    st.subheader("📊 每日住房率概況比較 (上月 / 本月 / 下月)")
+    col_chart1, col_chart2, col_chart3 = st.columns(3)
+    
+    def render_occ_chart(month_data, title_suffix):
+        df = month_data['df'].copy()
+        if df.empty:
+            st.info(f"💡 {month_data['month_label']} 尚無數據。")
+            return
+        df['day'] = pd.to_datetime(df['date']).dt.day
+        bars = alt.Chart(df).mark_bar().encode(
+            x=alt.X('day:O', title='日期'),
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.condition(
-                alt.datum.occ_rate >= 90,
-                alt.value('#e74c3c'), # 紅色
-                alt.value('#3498db')  # 藍色
-            ),
+            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db')),
             tooltip=['date', 'occ_rate']
-        )
-        
-        # 2. 文字標籤層 (顯示在長條上方)
-        text = bars.mark_text(
-            align='center',
-            baseline='bottom',
-            dy=-5,  # 向上偏移 5 像素
-            fontSize=12,
-            fontWeight='bold'
-        ).encode(
-            text=alt.Text('occ_rate:Q', format='.1f')
-        )
-        
-        # 組合圖層並顯示
-        st.altair_chart((bars + text).properties(height=400), use_container_width=True)
-        
-        st.divider()
-        
-        # --- 2. 當月核心數據小卡 ---
-        st.subheader("📌 月度營運指標")
-        
-        m_rev = 0.0
-        m_rooms = 0.0
-        m_sellable = 0.0
-        
-        for _, r in df_month.iterrows():
-            rev = float(r['revenue']) if pd.notna(r['revenue']) else 0.0
-            rm = float(r['total_rooms']) if pd.notna(r['total_rooms']) else 0.0
-            occ = float(r['occ_rate']) if pd.notna(r['occ_rate']) else 0.0
-            adr = float(r['adr']) if pd.notna(r['adr']) else 0.0
-            
-            # 容錯回推
-            if rev == 0 and adr > 0 and rm > 0: rev = adr * rm
-            if rm == 0 and rev > 0 and adr > 0: rm = rev / adr
-            
-            if rm > 0 or rev > 0:
-                m_rev += rev
-                m_rooms += rm
-                if occ > 0:
-                    m_sellable += (rm / (occ / 100.0))
-        
-        avg_occ = (m_rooms / m_sellable * 100.0) if m_sellable > 0 else 0.0
-        avg_adr = (m_rev / m_rooms) if m_rooms > 0 else 0.0
-        revpar = (avg_occ / 100.0) * avg_adr
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.markdown(make_card("當月總營收", f"NT$ {int(m_rev):,}", "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
-        c2.markdown(make_card("當月平均房價", f"NT$ {int(avg_adr):,}", "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
-        c3.markdown(make_card("當月住房率", f"{avg_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
-        c4.markdown(make_card("當月 RevPAR", f"NT$ {int(revpar):,}", "card-theme-purple", "card-bg-dark", "📈"), unsafe_allow_html=True)
-        
-        st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」")
+        ).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
+        st.altair_chart(bars, use_container_width=True)
 
-        st.divider()
-
-        # --- 3. 達標分析指數 ---
-        st.subheader("🎯 達標分析指數")
-        
-        # 獲取與保存目標
-        month_key = selected_date.strftime('%Y-%m')
-        current_target = get_monthly_target(month_key)
-        
-        # 使用 columns 來排版輸入框與說明
-        t_col1, t_col2 = st.columns([1, 2])
-        with t_col1:
-            new_target = st.number_input(f"設定 {month_key} 目標業績 (NT$)", min_value=0, step=10000, value=current_target, key=f"target_input_{month_key}")
-            if new_target != current_target:
-                save_monthly_target(month_key, new_target)
-                st.toast(f"已更新 {month_key} 目標業績！")
-                time.sleep(0.5)
-                st.rerun()
-        
-        if new_target > 0:
-            gap = new_target - m_rev
-            stretch_goal = new_target * 1.1
-            stretch_gap = stretch_goal - m_rev
-            
-            # 進度條顯示
-            progress = min(1.0, m_rev / new_target)
-            st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
-            
-            a_col1, a_col2, a_col3 = st.columns(3)
-            
-            # 目標差距卡片
-            if gap <= 0:
-                t_card = make_card("目標達成狀況", "🎉 已達標！", "card-theme-green", "", "✅")
-            else:
-                t_card = make_card("距離目標還差", f"NT$ {int(gap):,}", "card-theme-red", "", "🎯")
-            a_col1.markdown(t_card, unsafe_allow_html=True)
-            
-            # 超標目標卡片
-            a_col2.markdown(make_card("超標目標 (+10%)", f"NT$ {int(stretch_goal):,}", "card-theme-orange", "", "🚀"), unsafe_allow_html=True)
-            
-            # 超標差距卡片
-            if stretch_gap <= 0:
-                s_card = make_card("超標達成狀況", "🔥 已超標達成！", "card-theme-green", "card-bg-dark", "🏆")
-            else:
-                s_card = make_card("距離超標還差", f"NT$ {int(stretch_gap):,}", "card-theme-purple", "", "⚡")
-            a_col3.markdown(s_card, unsafe_allow_html=True)
-            
+    with col_chart1: render_occ_chart(m_prev, "(上月)")
+    with col_chart2: render_occ_chart(m_curr, "(本月)")
+    with col_chart3: render_occ_chart(m_next, "(下月)")
+    
+    # --- B. 每日住房率 - 關鍵差異 ---
+    st.markdown("#### 🔍 每日住房率：關鍵差異分析")
+    diff_90 = m_curr['occ90_days'] - m_next['occ90_days']
+    
+    st.markdown(f"""
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
+        <p style="margin:0; font-size:14px; color:#666;">📊 <strong>達 90% 住房率天數比對</strong></p>
+        <div style="display: flex; gap: 40px; margin-top: 10px; flex-wrap: wrap;">
+            <div><span style="color:#555;">本月 ({m_curr['month_label']}):</span> <strong style="font-size:18px;">{m_curr['occ90_days']} 天</strong></div>
+            <div><span style="color:#555;">下月 ({m_next['month_label']}):</span> <strong style="font-size:18px;">{m_next['occ90_days']} 天</strong></div>
+            <div><span style="color:#555;">關鍵差異:</span> <strong style="font-size:18px; color:{'#e74c3c' if diff_90 > 0 else '#2ecc71'};">{abs(diff_90)} 天</strong> 
+                 ({'本月較多' if diff_90 > 0 else '下月預期較多' if diff_90 < 0 else '持平'})</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+    
+    # --- C. 月度營運指標 (三個月對比) ---
+    st.subheader("📌 月度營運指標對比")
+    
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+        st.markdown(f"<p style='text-align:center; color:#777; margin-bottom:10px;'>◀️ 上月 ({m_prev['month_label']})</p>", unsafe_allow_html=True)
+        if not m_prev['df'].empty:
+            st.markdown(make_card("當月總營收", f"NT$ {int(m_prev['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月平均房價", f"NT$ {int(m_prev['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月住房率", f"{m_prev['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_prev['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
         else:
-            st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
-            
+            st.info("暫無數據")
+
+    with col_m2:
+        st.markdown(f"<p style='text-align:center; font-weight:bold; color:#1f2c56; margin-bottom:10px;'>✨ 本月 ({m_curr['month_label']})</p>", unsafe_allow_html=True)
+        if not m_curr['df'].empty:
+            st.markdown(make_card("當月總營收", f"NT$ {int(m_curr['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月平均房價", f"NT$ {int(m_curr['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月住房率", f"{m_curr['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_curr['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
+        else:
+            st.info("暫無數據")
+
+    with col_m3:
+        st.markdown(f"<p style='text-align:center; color:#777; margin-bottom:10px;'>▶️ 下月 ({m_next['month_label']})</p>", unsafe_allow_html=True)
+        if not m_next['df'].empty:
+            st.markdown(make_card("當月總營收", f"NT$ {int(m_next['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月平均房價", f"NT$ {int(m_next['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月住房率", f"{m_next['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_next['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
+        else:
+            st.info("暫無數據")
+    
+    # --- D. 月度營運指標 - 關鍵差異 ---
+    st.markdown("#### 🔍 月度營運指標：關鍵差異對比")
+    
+    def calculate_diff_row(current_val, compare_val, is_currency=True, is_percent=False):
+        if compare_val == 0: return "<span style='color:#777;'>-</span>"
+        diff = current_val - compare_val
+        if is_currency:
+            diff_str = f"{'▲' if diff >= 0 else '▼'} NT$ {abs(int(diff)):,}"
+        elif is_percent:
+            diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}%"
+        else:
+            diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}"
+        
+        color = "#2ecc71" if diff >= 0 else "#e74c3c" # 增加為綠色，減少為紅色
+        return f"<span style='color:{color}; font-weight:bold;'>{diff_str}</span>"
+
+    diff_table_html = f"""
+    <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 15px;">
+        <tr style="background-color: #f1f3f6; text-align: left;">
+            <th style="padding: 12px; border: 1px solid #ddd;">指標項目</th>
+            <th style="padding: 12px; border: 1px solid #ddd;">與上月 ({m_prev['month_label']}) 相比</th>
+            <th style="padding: 12px; border: 1px solid #ddd;">與下月 ({m_next['month_label']}) 相比</th>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月總營收</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev['rev'])}</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_next['rev'])}</td>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月平均房價 (ADR)</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev['avg_adr'])}</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_next['avg_adr'])}</td>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月住房率 (%)</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev['avg_occ'], False, True)}</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_next['avg_occ'], False, True)}</td>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月 RevPAR</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev['revpar'])}</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_next['revpar'])}</td>
+        </tr>
+    </table>
+    """
+    st.markdown(diff_table_html, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」；差異對比中 ▲ 代表本月較高，▼ 代表本月較低。")
+
+    st.divider()
+
+    # --- 3. 達標分析指數 ---
+    st.subheader("🎯 達標分析指數")
+    
+    # 獲取與保存目標 (針對所選月份)
+    month_key = selected_date.strftime('%Y-%m')
+    current_target = get_monthly_target(month_key)
+    m_rev = m_curr['rev'] # 使用剛剛計算好的本月營收
+    
+    t_col1, t_col2 = st.columns([1, 2])
+    with t_col1:
+        new_target = st.number_input(f"設定 {month_key} 目標業績 (NT$)", min_value=0, step=10000, value=current_target, key=f"target_input_{month_key}")
+        if new_target != current_target:
+            save_monthly_target(month_key, new_target)
+            st.toast(f"已更新 {month_key} 目標業績！")
+            time.sleep(0.5)
+            st.rerun()
+    
+    if new_target > 0:
+        gap = new_target - m_rev
+        stretch_goal = new_target * 1.1
+        stretch_gap = stretch_goal - m_rev
+        progress = min(1.0, m_rev / new_target)
+        st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
+        
+        a_col1, a_col2, a_col3 = st.columns(3)
+        if gap <= 0:
+            t_card = make_card("目標達成狀況", "🎉 已達標！", "card-theme-green", "", "✅")
+        else:
+            t_card = make_card("距離目標還差", f"NT$ {int(gap):,}", "card-theme-red", "", "🎯")
+        a_col1.markdown(t_card, unsafe_allow_html=True)
+        a_col2.markdown(make_card("超標目標 (+10%)", f"NT$ {int(stretch_goal):,}", "card-theme-orange", "", "🚀"), unsafe_allow_html=True)
+        if stretch_gap <= 0:
+            s_card = make_card("超標達成狀況", "🔥 已超標達成！", "card-theme-green", "card-bg-dark", "🏆")
+        else:
+            s_card = make_card("距離超標還差", f"NT$ {int(stretch_gap):,}", "card-theme-purple", "", "⚡")
+        a_col3.markdown(s_card, unsafe_allow_html=True)
     else:
-        st.info(f"💡 資料庫中目前尚未有 {selected_date.strftime('%Y-%m')} 的任何資料。")
+        st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
 
     st.divider()
 
