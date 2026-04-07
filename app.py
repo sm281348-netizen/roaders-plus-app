@@ -827,17 +827,11 @@ with tab_m:
     diff_curr_next = m_curr['occ90_days'] - m_next['occ90_days']
     
     def occ_diff_card(label, diff, target_label):
-        return f"""
-        <div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;">
-            <p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p>
-            <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;">
-                <strong style="font-size:18px; color:{'#2ecc71' if diff >= 0 else '#e74c3c'};">{abs(diff)} 天</strong>
-                <span style="font-size:11px; color:#666;">({'本月多' if diff > 0 else '較少' if diff < 0 else '持平'})</span>
-            </div>
-        </div>
-        """
+        color = '#2ecc71' if diff >= 0 else '#e74c3c'
+        status = '本月多' if diff > 0 else '較少' if diff < 0 else '持平'
+        return f'<div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;"><p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p><div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;"><strong style="font-size:18px; color:{color};">{abs(diff)} 天</strong><span style="font-size:11px; color:#666;">({status})</span></div></div>'
 
-    st.markdown(f"""
+    html_content = f"""
     <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
         <p style="margin:0; font-size:14px; color:#666;">📊 <strong>達 90% 住房率天數比對 (本月: {m_curr['occ90_days']} 天)</strong></p>
         <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
@@ -846,7 +840,8 @@ with tab_m:
             {occ_diff_card("下月預期", diff_curr_next, m_next['month_label'])}
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.write(html_content, unsafe_allow_html=True)
     
     st.divider()
     
@@ -920,7 +915,7 @@ with tab_m:
         </tr>
     </table>
     """
-    st.markdown(diff_table_html, unsafe_allow_html=True)
+    st.write(diff_table_html, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」；差異對比中 ▲ 代表本月較高，▼ 代表本月較低。")
 
