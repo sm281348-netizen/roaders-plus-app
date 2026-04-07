@@ -821,17 +821,29 @@ with tab_m:
     with col_chart4: render_occ_chart(m_next, "(下月)")
     
     # --- B. 每日住房率 - 關鍵差異 ---
-    st.markdown("#### 🔍 每日住房率：關鍵差異分析")
-    diff_90 = m_curr['occ90_days'] - m_next['occ90_days']
+    st.markdown("#### 🔍 每日住房率：關鍵差異分析 (與各月比對)")
+    diff_curr_prev_prev = m_curr['occ90_days'] - m_prev_prev['occ90_days']
+    diff_curr_prev = m_curr['occ90_days'] - m_prev['occ90_days']
+    diff_curr_next = m_curr['occ90_days'] - m_next['occ90_days']
     
+    def occ_diff_card(label, diff, target_label):
+        return f"""
+        <div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;">
+            <p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p>
+            <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;">
+                <strong style="font-size:18px; color:{'#2ecc71' if diff >= 0 else '#e74c3c'};">{abs(diff)} 天</strong>
+                <span style="font-size:11px; color:#666;">({'本月多' if diff > 0 else '較少' if diff < 0 else '持平'})</span>
+            </div>
+        </div>
+        """
+
     st.markdown(f"""
     <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
-        <p style="margin:0; font-size:14px; color:#666;">📊 <strong>達 90% 住房率天數比對</strong></p>
-        <div style="display: flex; gap: 40px; margin-top: 10px; flex-wrap: wrap;">
-            <div><span style="color:#555;">本月 ({m_curr['month_label']}):</span> <strong style="font-size:18px;">{m_curr['occ90_days']} 天</strong></div>
-            <div><span style="color:#555;">下月 ({m_next['month_label']}):</span> <strong style="font-size:18px;">{m_next['occ90_days']} 天</strong></div>
-            <div><span style="color:#555;">關鍵差異:</span> <strong style="font-size:18px; color:{'#e74c3c' if diff_90 > 0 else '#2ecc71'};">{abs(diff_90)} 天</strong> 
-                 ({'本月較多' if diff_90 > 0 else '下月預期較多' if diff_90 < 0 else '持平'})</div>
+        <p style="margin:0; font-size:14px; color:#666;">📊 <strong>達 90% 住房率天數比對 (本月: {m_curr['occ90_days']} 天)</strong></p>
+        <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+            {occ_diff_card("前前月", diff_curr_prev_prev, m_prev_prev['month_label'])}
+            {occ_diff_card("上月", diff_curr_prev, m_prev['month_label'])}
+            {occ_diff_card("下月預期", diff_curr_next, m_next['month_label'])}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -859,7 +871,7 @@ with tab_m:
     with col_m4: render_metric_col(m_next, "▶️ 下月")
     
     # --- D. 月度營運指標 - 關鍵差異 ---
-    st.markdown("#### 🔍 月度營運指標：關鍵差異對比")
+    st.markdown("#### 🔍 月度營運指標：關鍵差異對比 (本月 vs 其他月份)")
     
     def calculate_diff_row(current_val, compare_val, is_currency=True, is_percent=False):
         if compare_val == 0: return "<span style='color:#777;'>-</span>"
@@ -878,26 +890,31 @@ with tab_m:
     <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 15px;">
         <tr style="background-color: #f1f3f6; text-align: left;">
             <th style="padding: 12px; border: 1px solid #ddd;">指標項目</th>
+            <th style="padding: 12px; border: 1px solid #ddd;">與前前月 ({m_prev_prev['month_label']}) 相比</th>
             <th style="padding: 12px; border: 1px solid #ddd;">與上月 ({m_prev['month_label']}) 相比</th>
             <th style="padding: 12px; border: 1px solid #ddd;">與下月 ({m_next['month_label']}) 相比</th>
         </tr>
         <tr>
             <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月總營收</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev_prev['rev'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev['rev'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_next['rev'])}</td>
         </tr>
         <tr>
             <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月平均房價 (ADR)</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev_prev['avg_adr'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev['avg_adr'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_next['avg_adr'])}</td>
         </tr>
         <tr>
             <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月住房率 (%)</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev_prev['avg_occ'], False, True)}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev['avg_occ'], False, True)}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_next['avg_occ'], False, True)}</td>
         </tr>
         <tr>
             <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月 RevPAR</td>
+            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev_prev['revpar'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev['revpar'])}</td>
             <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_next['revpar'])}</td>
         </tr>
