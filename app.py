@@ -768,17 +768,19 @@ with tab1:
 with tab_m:
     st.header("📈 月分析專區")
     
-    # 1. 取得三個月數據
+    # 1. 取得四個月數據 (M-2, M-1, M, M+1)
+    prev_prev_m_date = get_month_delta(selected_date, -2)
     prev_m_date = get_month_delta(selected_date, -1)
     next_m_date = get_month_delta(selected_date, 1)
     
+    m_prev_prev = fetch_month_summary(prev_prev_m_date.year, prev_prev_m_date.month)
     m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
     m_curr = fetch_month_summary(selected_date.year, selected_date.month)
     m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
     
-    # --- A. 每日住房率概況 (三個月對比) ---
-    st.subheader("📊 每日住房率概況比較 (上月 / 本月 / 下月)")
-    col_chart1, col_chart2, col_chart3 = st.columns(3)
+    # --- A. 每日住房率概況 (四個月對比) ---
+    st.subheader("📊 每日住房率概況比較 (四個月)")
+    col_chart1, col_chart2, col_chart3, col_chart4 = st.columns(4)
     
     def render_occ_chart(month_data, title_suffix):
         df = month_data['df'].copy()
@@ -786,17 +788,37 @@ with tab_m:
             st.info(f"💡 {month_data['month_label']} 尚無數據。")
             return
         df['day'] = pd.to_datetime(df['date']).dt.day
-        bars = alt.Chart(df).mark_bar().encode(
-            x=alt.X('day:O', title='日期'),
-            y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db')),
+        
+        # 建立 Altair 圖表
+        base = alt.Chart(df).encode(
+            x=alt.X('day:O', title='日期', axis=alt.Axis(labelAngle=-90)),
             tooltip=['date', 'occ_rate']
-        ).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
-        st.altair_chart(bars, use_container_width=True)
+        )
+        
+        bars = base.mark_bar().encode(
+            y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
+            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db'))
+        )
+        
+        # 新增文字標籤 (固定顯示在長條上方)
+        text = base.mark_text(
+            align='center',
+            baseline='bottom',
+            dy=-5,
+            fontSize=10,
+            fontWeight='bold'
+        ).encode(
+            y=alt.Y('occ_rate:Q'),
+            text=alt.Text('occ_rate:Q', format='.1f')
+        )
+        
+        chart = (bars + text).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
+        st.altair_chart(chart, use_container_width=True)
 
-    with col_chart1: render_occ_chart(m_prev, "(上月)")
-    with col_chart2: render_occ_chart(m_curr, "(本月)")
-    with col_chart3: render_occ_chart(m_next, "(下月)")
+    with col_chart1: render_occ_chart(m_prev_prev, "(前前月)")
+    with col_chart2: render_occ_chart(m_prev, "(上月)")
+    with col_chart3: render_occ_chart(m_curr, "(本月)")
+    with col_chart4: render_occ_chart(m_next, "(下月)")
     
     # --- B. 每日住房率 - 關鍵差異 ---
     st.markdown("#### 🔍 每日住房率：關鍵差異分析")
@@ -816,39 +838,25 @@ with tab_m:
     
     st.divider()
     
-    # --- C. 月度營運指標 (三個月對比) ---
+    # --- C. 月度營運指標 (四個月對比) ---
     st.subheader("📌 月度營運指標對比")
     
-    col_m1, col_m2, col_m3 = st.columns(3)
-    with col_m1:
-        st.markdown(f"<p style='text-align:center; color:#777; margin-bottom:10px;'>◀️ 上月 ({m_prev['month_label']})</p>", unsafe_allow_html=True)
-        if not m_prev['df'].empty:
-            st.markdown(make_card("當月總營收", f"NT$ {int(m_prev['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月平均房價", f"NT$ {int(m_prev['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月住房率", f"{m_prev['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_prev['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    
+    def render_metric_col(month_data, label):
+        st.markdown(f"<p style='text-align:center; color:#777; margin-bottom:10px;'>{label} ({month_data['month_label']})</p>", unsafe_allow_html=True)
+        if not month_data['df'].empty:
+            st.markdown(make_card("當月總營收", f"NT$ {int(month_data['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月平均房價", f"NT$ {int(month_data['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月住房率", f"{month_data['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
+            st.markdown(make_card("當月 RevPAR", f"NT$ {int(month_data['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
         else:
             st.info("暫無數據")
 
-    with col_m2:
-        st.markdown(f"<p style='text-align:center; font-weight:bold; color:#1f2c56; margin-bottom:10px;'>✨ 本月 ({m_curr['month_label']})</p>", unsafe_allow_html=True)
-        if not m_curr['df'].empty:
-            st.markdown(make_card("當月總營收", f"NT$ {int(m_curr['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月平均房價", f"NT$ {int(m_curr['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月住房率", f"{m_curr['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_curr['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
-        else:
-            st.info("暫無數據")
-
-    with col_m3:
-        st.markdown(f"<p style='text-align:center; color:#777; margin-bottom:10px;'>▶️ 下月 ({m_next['month_label']})</p>", unsafe_allow_html=True)
-        if not m_next['df'].empty:
-            st.markdown(make_card("當月總營收", f"NT$ {int(m_next['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月平均房價", f"NT$ {int(m_next['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月住房率", f"{m_next['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card("當月 RevPAR", f"NT$ {int(m_next['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
-        else:
-            st.info("暫無數據")
+    with col_m1: render_metric_col(m_prev_prev, "⏪ 前前月")
+    with col_m2: render_metric_col(m_prev, "◀️ 上月")
+    with col_m3: render_metric_col(m_curr, "✨ 本月")
+    with col_m4: render_metric_col(m_next, "▶️ 下月")
     
     # --- D. 月度營運指標 - 關鍵差異 ---
     st.markdown("#### 🔍 月度營運指標：關鍵差異對比")
