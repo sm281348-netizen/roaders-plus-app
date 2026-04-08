@@ -14,11 +14,11 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 # 設定頁面資訊
-st.set_page_config(page_title="路徒行旅 Plus 站前館營運日誌", layout="wide")
+st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="wide")
 
 # --- 安全防護：全站密碼攔截 ---
 if "authenticated" not in st.session_state:
-    st.markdown("<h2 style='text-align: center;'>🔒 歡迎登入 路徒行旅 Plus 營運日誌</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>🔒 歡迎登入 路徒Plus行旅 營運日誌</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #666;'>為了保護營業機密，請輸入管理員通行碼進入系統。</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -212,7 +212,7 @@ def fetch_month_summary(year, month):
     return res
 
 # -- 側邊欄：進階日期選擇器 --
-st.sidebar.header("📅 日期導覽")
+st.sidebar.header("📅 日期選擇")
 if 'sidebar_date' not in st.session_state:
     st.session_state['sidebar_date'] = datetime.date.today()
 
@@ -338,7 +338,7 @@ def generate_report_text(d_str):
 # 1. 單日匯出
 single_report = generate_report_text(date_str)
 st.sidebar.download_button(
-    label="📄 匯出當日紀錄 (.txt)",
+    label="📄 當日營運紀錄匯出",
     data=single_report,
     file_name=f"Roaders_Plus_Daily_{date_str}.txt",
     mime="text/plain",
@@ -348,7 +348,7 @@ st.sidebar.download_button(
 # 2. 全月匯出
 month_str = selected_date.strftime('%Y-%m')
 if f"monthly_report_{month_str}" not in st.session_state:
-    if st.sidebar.button(f"📅 準備 {month_str} 紀錄匯出", use_container_width=True):
+    if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
         conn = sqlite3.connect('roaders_plus.db')
         df_all = pd.read_sql_query("SELECT date FROM daily_data WHERE date LIKE ? ORDER BY date ASC", conn, params=(f"{month_str}%",))
         conn.close()
@@ -374,14 +374,7 @@ else:
         del st.session_state[f"monthly_report_{month_str}"]
         st.rerun()
 
-st.sidebar.divider()
-st.sidebar.subheader("📅 週次紀錄快速審視 (已於上方選擇)")
-st.sidebar.info(f"當前模式：{selected_week}")
-
-st.sidebar.divider()
-if st.sidebar.button("💾 強制儲存今日所有變更", use_container_width=True):
-    sync_st_to_db(date_str)
-    st.sidebar.success("✅ 今日資料已安全寫入資料庫！")
+# 側邊欄底部移除多餘區塊
 
 # -- 報表解析與寫入資料庫 --
 def parse_and_save_jinxu(file):
@@ -581,14 +574,14 @@ def parse_and_save_restaurant(file, current_year):
         return False
 
 # 頁面標題
-st.title("路徒行旅 Plus 站前館營運日誌")
+st.title("路徒Plus行旅站前館營運日誌")
 
 # 主畫面
-tab1, tab_m, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "📝 每日營運紀錄", "👥 人事概況"])
+tab1, tab_m, tab6, tab2, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
 with tab2:
     st.header("💼 櫃台數據")
-    st.subheader("📁 金旭報表上傳區 (支援全月匯入)")
+    st.subheader("📁 數據報表上傳")
     jinxu_file = st.file_uploader("上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
     
     if jinxu_file:
@@ -1013,7 +1006,7 @@ with tab3:
 
 with tab4:
     st.header("🍽️ 餐廳數據")
-    st.subheader("📁 餐廳報表上傳區")
+    st.subheader("📁 數據報表上傳")
     rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=["xls", "xlsx"], key="rest_uploader")
     
     if rest_file:
