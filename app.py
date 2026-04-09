@@ -653,55 +653,9 @@ with tab1:
         </div>
         '''
     
-    # -- 今日看板 --
-    st.subheader(f"今日全館營運大看板 ({date_str})")
-    
-    # 確保基礎變數安全
     occ_val = st.session_state.get('input_occ', 0.0)
-    adr_val = st.session_state.get('input_adr', 0)
-    rev_val = st.session_state.get('input_rev', 0)
-    rooms_val = st.session_state.get('input_rooms', 0)
-    cleaned_val = st.session_state.get('input_cleaned', 0)
-    repair_val = st.session_state.get('input_repair', 0)
-    bf_act_val = st.session_state.get('input_bf_total_act', 0)
-    
-    def safe_format_int(v):
-        try:
-            if pd.isna(v) or v is None: return 0
-            return int(float(v))
-        except: return 0
-
-    kpi_html = f"""
-    <style>
-    .kpi-container {{ display: flex; justify-content: space-around; flex-wrap: wrap; margin-bottom: 30px; }}
-    .kpi-circle {{ width: 170px; height: 170px; border-radius: 50%; background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 8px 15px rgba(0,0,0,0.15); border: 4px solid #4CAF50; margin: 15px; }}
-    .kpi-title {{ font-size: 16px; margin-bottom: 8px; color: #d8e2fb; }}
-    .kpi-value {{ font-size: 26px; font-weight: bold; }}
-    </style>
-    <div class="kpi-container">
-        <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
-        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
-        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
-    </div>
-    """
-    st.markdown(kpi_html, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.success("🧹 **房務狀況**")
-        st.metric("目標清消總數 (來自金旭)", f"{rooms_val} 間")
-        st.caption(f"手動紀錄清消: {cleaned_val} 間 (差額: {cleaned_val - rooms_val})")
-    with col2:
-        st.warning("🔧 **工務狀況**")
-        st.metric("今日待修房數", f"{repair_val} 間", delta="🔴 需處理" if repair_val > 0 else "🟢 正常", delta_color="off")
-    with col3:
-        st.error("🍽️ **餐廳狀況**")
-        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_act_val)} 人")
-
     if occ_val >= 90.0:
         st.success("🎉 **滿房慶祝！今日住房率達到 90% 以上，全館辛苦了！** 🎉")
-    
-    st.divider()
 
     # -- 月度累計模式 (MTD Analysis) --
     st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
@@ -836,15 +790,7 @@ with tab_m:
         
         bars = base.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.condition(
-                "datum.occ_rate >= 90",
-                alt.value('#2ecc71'),  # 綠色
-                alt.condition(
-                    "datum.occ_rate < 70",
-                    alt.value('#e74c3c'),  # 紅色
-                    alt.value('#3498db')   # 藍色
-                )
-            )
+            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db'))
         )
         
         # 新增文字標籤 (固定顯示在長條上方)
@@ -1009,7 +955,47 @@ with tab_m:
 
     st.divider()
 
-    st.divider()
+    # -- 今日看板 --
+    st.subheader(f"今日全館營運大看板 ({date_str})")
+    adr_val = st.session_state.get('input_adr', 0)
+    rev_val = st.session_state.get('input_rev', 0)
+    
+    def safe_format_int(v):
+        try:
+            if pd.isna(v) or v is None: return 0
+            return int(float(v))
+        except: return 0
+
+    kpi_html = f"""
+    <style>
+    .kpi-container {{ display: flex; justify-content: space-around; flex-wrap: wrap; margin-bottom: 30px; }}
+    .kpi-circle {{ width: 170px; height: 170px; border-radius: 50%; background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 8px 15px rgba(0,0,0,0.15); border: 4px solid #4CAF50; margin: 15px; }}
+    .kpi-title {{ font-size: 16px; margin-bottom: 8px; color: #d8e2fb; }}
+    .kpi-value {{ font-size: 26px; font-weight: bold; }}
+    </style>
+    <div class="kpi-container">
+        <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
+        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
+        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
+    </div>
+    """
+    st.markdown(kpi_html, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.success("🧹 **房務狀況**")
+        total_occ = st.session_state.get('input_rooms', 0)
+        cleaned = st.session_state.get('input_cleaned', 0)
+        st.metric("目標清消總數 (來自金旭)", f"{total_occ} 間")
+        st.caption(f"手動紀錄清消: {cleaned} 間 (差額: {cleaned - total_occ})")
+    with col2:
+        st.warning("🔧 **工務狀況**")
+        repairs = st.session_state.get('input_repair', 0)
+        st.metric("今日待修房數", f"{repairs} 間", delta="🔴 需處理" if repairs>0 else "🟢 正常", delta_color="off")
+    with col3:
+        st.error("🍽️ **餐廳狀況**")
+        bf_total_act = st.session_state.get('input_bf_total_act', 0)
+        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
 
 with tab3:
     st.header("🧹 房務數據")
