@@ -653,11 +653,17 @@ with tab1:
         </div>
         '''
     
-    # -- 今日看板 (移至此處) --
+    # -- 今日看板 --
     st.subheader(f"今日全館營運大看板 ({date_str})")
+    
+    # 確保基礎變數安全
     occ_val = st.session_state.get('input_occ', 0.0)
     adr_val = st.session_state.get('input_adr', 0)
     rev_val = st.session_state.get('input_rev', 0)
+    rooms_val = st.session_state.get('input_rooms', 0)
+    cleaned_val = st.session_state.get('input_cleaned', 0)
+    repair_val = st.session_state.get('input_repair', 0)
+    bf_act_val = st.session_state.get('input_bf_total_act', 0)
     
     def safe_format_int(v):
         try:
@@ -683,18 +689,14 @@ with tab1:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.success("🧹 **房務狀況**")
-        total_occ = st.session_state.get('input_rooms', 0)
-        cleaned = st.session_state.get('input_cleaned', 0)
-        st.metric("目標清消總數 (來自金旭)", f"{total_occ} 間")
-        st.caption(f"手動紀錄清消: {cleaned} 間 (差額: {cleaned - total_occ})")
+        st.metric("目標清消總數 (來自金旭)", f"{rooms_val} 間")
+        st.caption(f"手動紀錄清消: {cleaned_val} 間 (差額: {cleaned_val - rooms_val})")
     with col2:
         st.warning("🔧 **工務狀況**")
-        repairs = st.session_state.get('input_repair', 0)
-        st.metric("今日待修房數", f"{repairs} 間", delta="🔴 需處理" if repairs>0 else "🟢 正常", delta_color="off")
+        st.metric("今日待修房數", f"{repair_val} 間", delta="🔴 需處理" if repair_val > 0 else "🟢 正常", delta_color="off")
     with col3:
         st.error("🍽️ **餐廳狀況**")
-        bf_total_act = st.session_state.get('input_bf_total_act', 0)
-        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
+        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_act_val)} 人")
 
     if occ_val >= 90.0:
         st.success("🎉 **滿房慶祝！今日住房率達到 90% 以上，全館辛苦了！** 🎉")
@@ -835,12 +837,12 @@ with tab_m:
         bars = base.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
             color=alt.condition(
-                alt.datum.occ_rate >= 90,
-                alt.value('#2ecc71'),  # 滿房/高住房率：綠色
+                "datum.occ_rate >= 90",
+                alt.value('#2ecc71'),  # 綠色
                 alt.condition(
-                    alt.datum.occ_rate < 70,
-                    alt.value('#e74c3c'),  # 低住房率：紅色
-                    alt.value('#3498db')   # 正常範圍：藍色
+                    "datum.occ_rate < 70",
+                    alt.value('#e74c3c'),  # 紅色
+                    alt.value('#3498db')   # 藍色
                 )
             )
         )
