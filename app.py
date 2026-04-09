@@ -834,7 +834,15 @@ with tab_m:
         
         bars = base.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db'))
+            color=alt.condition(
+                alt.datum.occ_rate >= 90,
+                alt.value('#2ecc71'),  # 滿房/高住房率：綠色
+                alt.condition(
+                    alt.datum.occ_rate < 70,
+                    alt.value('#e74c3c'),  # 低住房率：紅色
+                    alt.value('#3498db')   # 正常範圍：藍色
+                )
+            )
         )
         
         # 新增文字標籤 (固定顯示在長條上方)
