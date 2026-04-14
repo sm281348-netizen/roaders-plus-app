@@ -3,7 +3,6 @@ import datetime
 import pandas as pd
 import time
 import random
-import sqlite3
 import os
 import re
 import altair as alt
@@ -12,6 +11,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from streamlit_gsheets import GSheetsConnection
 
 # 設定頁面資訊
 st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="wide")
@@ -34,129 +34,85 @@ if "authenticated" not in st.session_state:
     st.stop()
 # -----------------------------
 
-# -- 資料庫初始化 --
-def init_db():
-    conn = sqlite3.connect('roaders_plus.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS daily_data (
-            date TEXT PRIMARY KEY,
-            occ_rate REAL,
-            adr INTEGER,
-            revenue INTEGER,
-            total_rooms INTEGER,
-            
-            counter_complaints TEXT,
-            counter_expense INTEGER,
-            
-            cleaned_rooms INTEGER,
-            hk_checkout_extend INTEGER,
-            hk_avg_clean REAL,
-            hk_expense INTEGER,
-            
-            rest_breakfast INTEGER,
-            rest_month_guests INTEGER,
-            rest_day_guests INTEGER,
-            rest_avg_guests REAL,
-            rest_month_rev INTEGER,
-            rest_avg_spent INTEGER,
-            rest_peak_expense INTEGER,
-            rest_car_data TEXT,
-            
-            maint_repair_rooms INTEGER,
-            maint_records TEXT,
-            maint_expense INTEGER
-        )
-    ''')
-    
-    # 動態新增餐廳分館欄位（為了相容舊有資料庫結構）
-    new_columns = [
-        "bf_theme_est INTEGER", "bf_theme_act INTEGER",
-        "bf_zq_est INTEGER", "bf_zq_act INTEGER",
-        "bf_total_est INTEGER", "bf_total_act INTEGER",
-        "af_theme_est INTEGER", "af_theme_act INTEGER",
-        "af_zq_est INTEGER", "af_zq_act INTEGER",
-        "af_total_est INTEGER", "af_total_act INTEGER",
-        "daily_work_log TEXT"
-    ]
-    for col_def in new_columns:
-        col_name = col_def.split()[0]
-        try:
-            c.execute(f"ALTER TABLE daily_data ADD COLUMN {col_def}")
-        except sqlite3.OperationalError:
-            pass # column already exists
-            
-    # --- 新增人事管理資料表 ---
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS employees (
-            employee_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            dept TEXT NOT NULL,
-            position TEXT,
-            salary INTEGER
-        )
-    ''')
-    # --- 新增月度目標資料表 ---
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS monthly_targets (
-            month TEXT PRIMARY KEY,
-            target_revenue INTEGER
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+# -- 資料庫連線初始化 (Google Sheets 版) --
+conn = st.connection("gsheets", type=GSheetsConnection)
 
+def init_db():
+    """
+    確保 Google Sheets 中有正確的分頁與標題行。
+    由於 st-gsheets-connection 的運作機制，初次使用時需確保 Sheets 存在。
+    """
+    # 這裡我們不撰寫複雜的初始化代碼，因為使用者需先建立 Sheet。
+    # 但我們可以預定義欄位給後續寫入使用。
+    pass
 init_db()
 
 # -- 基本資料庫讀寫函數 (需優先定義以供導航邏輯使用) --
 def get_daily_data(d_str):
-    conn = sqlite3.connect('roaders_plus.db')
-    df = pd.read_sql_query("SELECT * FROM daily_data WHERE date=?", conn, params=(d_str,))
-    conn.close()
-    if not df.empty:
-        data_dict = df.iloc[0].to_dict()
-        numeric_cols = [
-            'occ_rate', 'adr', 'revenue', 'total_rooms', 'counter_expense', 
-            'cleaned_rooms', 'hk_checkout_extend', 'hk_avg_clean', 'hk_expense',
-            'rest_breakfast', 'rest_month_guests', 'rest_day_guests', 'rest_avg_guests',
-            'rest_month_rev', 'rest_avg_spent', 'rest_peak_expense',
-            'maint_repair_rooms', 'maint_expense',
-            'bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act',
-            'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act'
-        ]
-        for col in numeric_cols:
-            if col in data_dict and (pd.isna(data_dict[col]) or data_dict[col] is None):
-                data_dict[col] = 0
-        return data_dict
+    try:
+        # 讀取完整表單 (快取設定為 1 分鐘)
+        df = conn.read(worksheet="daily_data", ttl="1m")
+        if df is not None and not df.empty:
+            res = df[df['date'] == d_str]
+            if not res.empty:
+                data_dict = res.iloc[0].to_dict()
+                numeric_cols = [
+                    'occ_rate', 'adr', 'revenue', 'total_rooms', 'counter_expense', 
+                    'cleaned_rooms', 'hk_checkout_extend', 'hk_avg_clean', 'hk_expense',
+                    'rest_breakfast', 'rest_month_guests', 'rest_day_guests', 'rest_avg_guests',
+                    'rest_month_rev', 'rest_avg_spent', 'rest_peak_expense',
+                    'maint_repair_rooms', 'maint_expense',
+                    'bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act',
+                    'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act'
+                ]
+                for col in numeric_cols:
+                    if col in data_dict and (pd.isna(data_dict[col]) or data_dict[col] is None):
+                        data_dict[col] = 0
+                return data_dict
+    except Exception:
+        pass
     return {}
 
 def save_daily_data(d_str, data_dict):
-    conn = sqlite3.connect('roaders_plus.db')
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO daily_data (date) VALUES (?)", (d_str,))
-    set_clause = ", ".join([f"{k} = ?" for k in data_dict.keys()])
-    values = list(data_dict.values()) + [d_str]
-    if set_clause:
-        c.execute(f"UPDATE daily_data SET {set_clause} WHERE date = ?", values)
-    conn.commit()
-    conn.close()
+    try:
+        df = conn.read(worksheet="daily_data", ttl="0")
+        if df is None: df = pd.DataFrame()
+        
+        data_dict['date'] = d_str
+        new_row = pd.DataFrame([data_dict])
+        
+        if 'date' in df.columns and d_str in df['date'].values:
+            df = df[df['date'] != d_str]
+        
+        df = pd.concat([df, new_row], ignore_index=True)
+        conn.update(worksheet="daily_data", data=df)
+    except Exception as e:
+        st.error(f"儲存失敗: {e}")
 
 def get_monthly_target(month_str):
     try:
-        conn = sqlite3.connect('roaders_plus.db')
-        df = pd.read_sql_query("SELECT target_revenue FROM monthly_targets WHERE month = ?", conn, params=(month_str,))
-        conn.close()
-        return int(df.iloc[0]['target_revenue']) if not df.empty else 0
-    except: return 0
+        df = conn.read(worksheet="targets", ttl="1m")
+        if df is not None and not df.empty:
+            res = df[df['month'] == month_str]
+            if not res.empty:
+                return int(res.iloc[0]['target_revenue'])
+    except Exception:
+        pass
+    return 0
 
 def save_monthly_target(month_str, target):
     try:
-        conn = sqlite3.connect('roaders_plus.db')
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO monthly_targets (month, target_revenue) VALUES (?, ?)", (month_str, target))
-        conn.commit()
-        conn.close()
+        df = conn.read(worksheet="targets", ttl="0")
+        if df is None or df.empty:
+            df = pd.DataFrame(columns=["month", "target_revenue"])
+        
+        if month_str in df['month'].values:
+            df.loc[df['month'] == month_str, 'target_revenue'] = target
+        else:
+            new_row = pd.DataFrame([{"month": month_str, "target_revenue": target}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            
+        conn.update(worksheet="targets", data=df)
         return True
     except: return False
 
@@ -177,9 +133,14 @@ def fetch_month_summary(year, month):
     _, last_day = calendar.monthrange(year, month)
     m_end = f"{year}-{month:02d}-{last_day:02d}"
     
-    conn = sqlite3.connect('roaders_plus.db')
-    df = pd.read_sql_query("SELECT date, occ_rate, revenue, adr, total_rooms FROM daily_data WHERE date >= ? AND date <= ? ORDER BY date ASC", conn, params=(m_start, m_end))
-    conn.close()
+    try:
+        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        if df_all is not None and not df_all.empty:
+            df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
+        else:
+            df = pd.DataFrame()
+    except Exception:
+        df = pd.DataFrame()
     
     res = {
         'rev': 0.0, 'rooms': 0.0, 'sellable': 0.0, 'occ90_days': 0,
@@ -188,11 +149,17 @@ def fetch_month_summary(year, month):
     }
     
     if not df.empty:
+        # 確保數值欄位為 float
+        num_cols = ['revenue', 'total_rooms', 'occ_rate', 'adr']
+        for c in num_cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+
         for _, r in df.iterrows():
-            rev = float(r['revenue']) if pd.notna(r['revenue']) else 0.0
-            rm = float(r['total_rooms']) if pd.notna(r['total_rooms']) else 0.0
-            occ = float(r['occ_rate']) if pd.notna(r['occ_rate']) else 0.0
-            adr = float(r['adr']) if pd.notna(r['adr']) else 0.0
+            rev = float(r['revenue'])
+            rm = float(r['total_rooms'])
+            occ = float(r['occ_rate'])
+            adr = float(r['adr'])
             
             if rev == 0 and adr > 0 and rm > 0: rev = adr * rm
             if rm == 0 and rev > 0 and adr > 0: rm = rev / adr
@@ -433,21 +400,13 @@ def parse_and_save_jinxu(file):
 
         df['標準日期'] = df[date_col].apply(robust_parse_date)
         
-        conn = sqlite3.connect('roaders_plus.db')
-        c = conn.cursor()
-        
-        records_saved = 0
-        errors = []
+        df_new_records = pd.DataFrame()
+        updates = []
         for index, row in df.iterrows():
             d_obj = row['標準日期']
-            if not d_obj: 
-                if pd.notna(row.get(date_col)) and str(row.get(date_col)).strip() != '':
-                    errors.append(f"第 {index+header_idx+2} 行日期無法辨識: {row.get(date_col)}")
-                continue
+            if not d_obj: continue
             
             d_str = str(d_obj)
-            
-            # 處理訂房率
             occ = 0.0
             if occ_col and pd.notna(row.get(occ_col)):
                 raw_occ_str = str(row.get(occ_col)).strip()
@@ -463,22 +422,24 @@ def parse_and_save_jinxu(file):
             rev = int(float(str(row.get(rev_col, '0')).replace(',', ''))) if rev_col and pd.notna(row.get(rev_col)) else 0
             rooms = int(float(str(row.get(rooms_col, '0')).replace(',', ''))) if rooms_col and pd.notna(row.get(rooms_col)) else 0
 
-            c.execute("INSERT OR IGNORE INTO daily_data (date) VALUES (?)", (d_str,))
-            c.execute("""
-                UPDATE daily_data 
-                SET occ_rate = ?, adr = ?, revenue = ?, total_rooms = ?
-                WHERE date = ?
-            """, (occ, adr, rev, rooms, d_str))
-            records_saved += 1
+            updates.append({'date': d_str, 'occ_rate': occ, 'adr': adr, 'revenue': rev, 'total_rooms': rooms})
             
-        conn.commit()
-        conn.close()
-        
-        if errors:
-            st.warning("⚠️ 部分資料跳過：\n" + "\n".join(errors[:5]) + (f"\n...等 {len(errors)} 筆" if len(errors) > 5 else ""))
+        if updates:
+            df_existing = conn.read(worksheet="daily_data", ttl="0")
+            if df_existing is None: df_existing = pd.DataFrame()
+            df_new = pd.DataFrame(updates)
             
-        st.session_state['_last_loaded_date'] = None
-        return records_saved
+            # 合併數據 (以日期為 key，後來的覆蓋原有的)
+            if not df_existing.empty:
+                df_final = pd.concat([df_existing, df_new], ignore_index=True)
+                df_final = df_final.drop_duplicates(subset=['date'], keep='last')
+            else:
+                df_final = df_new
+                
+            conn.update(worksheet="daily_data", data=df_final)
+            return len(updates)
+            
+        return 0
     except Exception as e:
         import traceback
         st.error(f"解析櫃台報表失敗: {e}\n{traceback.format_exc()}")
@@ -509,12 +470,9 @@ def parse_and_save_restaurant(file, current_year):
         parsed_days = []
         for i, row in df.iterrows():
             col0 = str(row[0]).strip()
-            # 判斷是否為「3/1週日」或「3/1」格式
             m = re.match(r'^(\d{1,2})/(\d{1,2})', col0)
             if m:
                 month_val, day_val = m.groups()
-                # 智慧年份判斷：如果報表月份比當前選定日期大太多 (例如在1月看12月報表)，可能跨年
-                # 這裡簡化處理：先用傳進來的年份，若格式正確則維持
                 d_str = f"{current_year}-{int(month_val):02d}-{int(day_val):02d}"
                 
                 def safe_int(val):
@@ -1104,33 +1062,37 @@ with tab6:
 with tab7:
     st.header("👥 人事概況")
     
-    # -- 人事管理函數 --
+    # -- 人事管理函數 (Google Sheets 版) --
     def get_all_employees():
-        conn = sqlite3.connect('roaders_plus.db')
-        df = pd.read_sql_query("SELECT * FROM employees", conn)
-        conn.close()
-        return df
+        try:
+            df = conn.read(worksheet="employees", ttl="1m")
+            return df if df is not None else pd.DataFrame()
+        except:
+            return pd.DataFrame()
 
     def add_employee(e_id, name, dept, pos, salary):
         try:
-            conn = sqlite3.connect('roaders_plus.db')
-            c = conn.cursor()
-            c.execute("INSERT INTO employees (employee_id, name, dept, position, salary) VALUES (?, ?, ?, ?, ?)",
-                      (e_id, name, dept, pos, salary))
-            conn.commit()
-            conn.close()
+            df = conn.read(worksheet="employees", ttl="0")
+            if df is None: df = pd.DataFrame(columns=["employee_id", "name", "dept", "position", "salary"])
+            
+            if e_id in df['employee_id'].values:
+                return "ID_EXISTS"
+                
+            new_emp = pd.DataFrame([{"employee_id": e_id, "name": name, "dept": dept, "position": pos, "salary": salary}])
+            df = pd.concat([df, new_emp], ignore_index=True)
+            conn.update(worksheet="employees", data=df)
             return True
-        except sqlite3.IntegrityError:
-            return "ID_EXISTS"
         except Exception as e:
             return str(e)
 
     def delete_employee(e_id):
-        conn = sqlite3.connect('roaders_plus.db')
-        c = conn.cursor()
-        c.execute("DELETE FROM employees WHERE employee_id = ?", (e_id,))
-        conn.commit()
-        conn.close()
+        try:
+            df = conn.read(worksheet="employees", ttl="0")
+            if df is not None:
+                df = df[df['employee_id'] != e_id]
+                conn.update(worksheet="employees", data=df)
+        except:
+            pass
 
     # -- UI: 新增員工區 --
     with st.expander("➕ 新增新進員工資訊", expanded=False):
