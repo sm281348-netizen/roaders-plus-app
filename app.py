@@ -127,6 +127,21 @@ def get_month_delta(d, delta):
         year -= 1
     return datetime.date(year, month, 1)
 
+def prepare_monthly_report(year, month):
+    try:
+        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        month_str = f"{year}-{month:02d}"
+        df = df_all[df_all['date'].str.startswith(month_str, na=False)].sort_values('date')
+    except:
+        return "--- 讀取失敗 ---"
+    
+    if df.empty: return "--- 當月無紀錄 ---"
+    
+    full_report = ""
+    for d in sorted(df['date'].unique()):
+        full_report += generate_report_text(d) + "\n\n"
+    return full_report
+
 def fetch_month_summary(year, month):
     import calendar
     m_start = f"{year}-{month:02d}-01"
@@ -316,11 +331,10 @@ st.sidebar.download_button(
 month_str = selected_date.strftime('%Y-%m')
 if f"monthly_report_{month_str}" not in st.session_state:
     if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
-        conn = sqlite3.connect('roaders_plus.db')
-        df_all = pd.read_sql_query("SELECT date FROM daily_data WHERE date LIKE ? ORDER BY date ASC", conn, params=(f"{month_str}%",))
-        conn.close()
+        df_all = conn.read(worksheet="daily_data", ttl="0")
+        df_month = df_all[df_all['date'].str.startswith(month_str, na=False)].sort_values('date')
         
-        if df_all.empty:
+        if df_month.empty:
             st.sidebar.warning(f"⚠️ {month_str} 尚無任何資料。")
         else:
             with st.sidebar.status("正在產生報表...", expanded=False):
@@ -497,6 +511,7 @@ def parse_and_save_restaurant(file, current_year):
                 
                 parsed_days.append({
                     'date': d_str,
+                    'rest_month_rev': month_rev, 'rest_avg_spent': avg_spent,
                     'bf_theme_est': bf_theme_est, 'bf_theme_act': bf_theme_act,
                     'bf_zq_est': bf_zq_est, 'bf_zq_act': bf_zq_act,
                     'bf_total_est': bf_total_est, 'bf_total_act': bf_total_act,
@@ -505,16 +520,6 @@ def parse_and_save_restaurant(file, current_year):
                     'af_total_est': af_total_est, 'af_total_act': af_total_act
                 })
 
-        conn = sqlite3.connect('roaders_plus.db')
-        c = conn.cursor()
-        
-        for r in parsed_days:
-            c.execute("INSERT OR IGNORE INTO daily_data (date) VALUES (?)", (r['date'],))
-            c.execute("""
-                UPDATE daily_data 
-                SET rest_month_rev = ?, rest_avg_spent = ?,
-                    bf_theme_est=?, bf_theme_act=?, bf_zq_est=?, bf_zq_act=?, bf_total_est=?, bf_total_act=?,
-                    af_theme_est=?, af_theme_act=?, af_zq_est=?, af_zq_act=?, af_total_est=?, af_total_act=?
                 WHERE date = ?
             """, (month_rev, avg_spent,
                   r['bf_theme_est'], r['bf_theme_act'], r['bf_zq_est'], r['bf_zq_act'], r['bf_total_est'], r['bf_total_act'],
@@ -618,9 +623,15 @@ with tab1:
     # -- 月度累計模式 (MTD Analysis) --
     st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
     start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
-    conn = sqlite3.connect('roaders_plus.db')
-    df_mtd = pd.read_sql_query("SELECT * FROM daily_data WHERE date >= ? AND date <= ?", conn, params=(start_of_month, date_str))
-    conn.close()
+    
+    try:
+        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        if df_all is not None and not df_all.empty:
+            df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
+        else:
+            df_mtd = pd.DataFrame()
+    except:
+        df_mtd = pd.DataFrame()
 
     if not df_mtd.empty:
         mtd_rooms = 0.0
