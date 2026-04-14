@@ -520,14 +520,8 @@ def parse_and_save_restaurant(file, current_year):
                     'af_total_est': af_total_est, 'af_total_act': af_total_act
                 })
 
-                WHERE date = ?
-            """, (month_rev, avg_spent,
-                  r['bf_theme_est'], r['bf_theme_act'], r['bf_zq_est'], r['bf_zq_act'], r['bf_total_est'], r['bf_total_act'],
-                  r['af_theme_est'], r['af_theme_act'], r['af_zq_est'], r['af_zq_act'], r['af_total_est'], r['af_total_act'],
-                  r['date']))
-            
-        conn.commit()
-        conn.close()
+        st.session_state['_last_loaded_date'] = None
+        return len(parsed_days)
         
         st.session_state['_last_loaded_date'] = None
         return len(parsed_days)
@@ -1043,7 +1037,6 @@ with tab6:
         st.info(f"正在查看 {selected_date.year}年度 {selected_date.month}月份 ({start_d}號 至 {end_d}號) 的完整紀錄。")
         
         # 獲取該區間所有資料
-        conn = sqlite3.connect('roaders_plus.db')
         c_month_str = selected_date.strftime('%Y-%m')
         
         for day in range(start_d, end_d + 1):
