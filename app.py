@@ -767,7 +767,7 @@ with tab_m:
         
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
-            x=alt.X('day:O', title='日期', axis=alt.Axis(labelAngle=-90)),
+            x=alt.X('day:O', title='日期', axis=alt.Axis(labelAngle=0)),
             tooltip=['date', 'occ_rate']
         )
         
@@ -781,7 +781,7 @@ with tab_m:
             align='center',
             baseline='bottom',
             dy=-5,
-            fontSize=10,
+            fontSize=14,
             fontWeight='bold'
         ).encode(
             y=alt.Y('occ_rate:Q'),
