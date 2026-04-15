@@ -519,7 +519,6 @@ def parse_and_save_restaurant(file, current_year):
                     'af_zq_est': af_zq_est, 'af_zq_act': af_zq_act,
                     'af_total_est': af_total_est, 'af_total_act': af_total_act
                 })
-                })
 
         if parsed_days:
             df_existing = conn.read(worksheet="daily_data", ttl="0")
