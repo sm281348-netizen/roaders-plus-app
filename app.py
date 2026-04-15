@@ -443,12 +443,13 @@ def parse_and_save_jinxu(file):
             if df_existing is None: df_existing = pd.DataFrame()
             df_new = pd.DataFrame(updates)
             
-            # 合併數據 (以日期為 key，後來的覆蓋原有的)
+            # 合併數據 (以日期為 key，部分更新)
+            df_new = df_new.set_index('date')
             if not df_existing.empty:
-                df_final = pd.concat([df_existing, df_new], ignore_index=True)
-                df_final = df_final.drop_duplicates(subset=['date'], keep='last')
+                df_existing = df_existing.set_index('date')
+                df_final = df_new.combine_first(df_existing).reset_index()
             else:
-                df_final = df_new
+                df_final = df_new.reset_index()
                 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
             return len(updates)
@@ -525,11 +526,13 @@ def parse_and_save_restaurant(file, current_year):
             if df_existing is None: df_existing = pd.DataFrame()
             df_new = pd.DataFrame(parsed_days)
             
+            # 合併數據 (以日期為 key，部分更新)
+            df_new = df_new.set_index('date')
             if not df_existing.empty:
-                df_final = pd.concat([df_existing, df_new], ignore_index=True)
-                df_final = df_final.drop_duplicates(subset=['date'], keep='last')
+                df_existing = df_existing.set_index('date')
+                df_final = df_new.combine_first(df_existing).reset_index()
             else:
-                df_final = df_new
+                df_final = df_new.reset_index()
                 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
             
