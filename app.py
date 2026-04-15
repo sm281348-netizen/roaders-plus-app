@@ -85,7 +85,7 @@ def save_daily_data(d_str, data_dict):
             df = df[df['date'] != d_str]
         
         df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(worksheet="daily_data", data=df)
+        conn.update(worksheet="daily_data", data=df.fillna(""))
     except Exception as e:
         st.error(f"儲存失敗: {e}")
 
@@ -112,7 +112,7 @@ def save_monthly_target(month_str, target):
             new_row = pd.DataFrame([{"month": month_str, "target_revenue": target}])
             df = pd.concat([df, new_row], ignore_index=True)
             
-        conn.update(worksheet="targets", data=df)
+        conn.update(worksheet="targets", data=df.fillna(""))
         return True
     except: return False
 
@@ -450,7 +450,7 @@ def parse_and_save_jinxu(file):
             else:
                 df_final = df_new
                 
-            conn.update(worksheet="daily_data", data=df_final)
+            conn.update(worksheet="daily_data", data=df_final.fillna(""))
             return len(updates)
             
         return 0
@@ -519,10 +519,21 @@ def parse_and_save_restaurant(file, current_year):
                     'af_zq_est': af_zq_est, 'af_zq_act': af_zq_act,
                     'af_total_est': af_total_est, 'af_total_act': af_total_act
                 })
+                })
 
-        st.session_state['_last_loaded_date'] = None
-        return len(parsed_days)
-        
+        if parsed_days:
+            df_existing = conn.read(worksheet="daily_data", ttl="0")
+            if df_existing is None: df_existing = pd.DataFrame()
+            df_new = pd.DataFrame(parsed_days)
+            
+            if not df_existing.empty:
+                df_final = pd.concat([df_existing, df_new], ignore_index=True)
+                df_final = df_final.drop_duplicates(subset=['date'], keep='last')
+            else:
+                df_final = df_new
+                
+            conn.update(worksheet="daily_data", data=df_final.fillna(""))
+            
         st.session_state['_last_loaded_date'] = None
         return len(parsed_days)
     except Exception as e:
@@ -1084,7 +1095,7 @@ with tab7:
                 
             new_emp = pd.DataFrame([{"employee_id": e_id, "name": name, "dept": dept, "position": pos, "salary": salary}])
             df = pd.concat([df, new_emp], ignore_index=True)
-            conn.update(worksheet="employees", data=df)
+            conn.update(worksheet="employees", data=df.fillna(""))
             return True
         except Exception as e:
             return str(e)
@@ -1094,7 +1105,7 @@ with tab7:
             df = conn.read(worksheet="employees", ttl="0")
             if df is not None:
                 df = df[df['employee_id'] != e_id]
-                conn.update(worksheet="employees", data=df)
+                conn.update(worksheet="employees", data=df.fillna(""))
         except:
             pass
 
