@@ -129,7 +129,7 @@ def get_month_delta(d, delta):
 
 def prepare_monthly_report(year, month):
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        df_all = conn.read(worksheet="daily_data", ttl=0)
         month_str = f"{year}-{month:02d}"
         df = df_all[df_all['date'].str.startswith(month_str, na=False)].sort_values('date')
     except:
@@ -149,7 +149,7 @@ def fetch_month_summary(year, month):
     m_end = f"{year}-{month:02d}-{last_day:02d}"
     
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        df_all = conn.read(worksheet="daily_data", ttl=0)
         if df_all is not None and not df_all.empty:
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
         else:
@@ -168,6 +168,7 @@ def fetch_month_summary(year, month):
         num_cols = ['revenue', 'total_rooms', 'occ_rate', 'adr']
         for c in num_cols:
             if c in df.columns:
+                df[c] = df[c].astype(str).str.replace(',', '').str.replace('%', '')
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
 
         for _, r in df.iterrows():
@@ -632,7 +633,7 @@ with tab1:
     start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
     
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="1m")
+        df_all = conn.read(worksheet="daily_data", ttl=0)
         if df_all is not None and not df_all.empty:
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
         else:
@@ -646,10 +647,16 @@ with tab1:
         total_sellable = 0.0
         
         for _, r in df_mtd.iterrows():
-            o = float(r['occ_rate']) if pd.notna(r['occ_rate']) else 0.0
-            adr = float(r['adr']) if pd.notna(r['adr']) else 0.0
-            rev = float(r['revenue']) if pd.notna(r['revenue']) else 0.0
-            rm = float(r['total_rooms']) if pd.notna(r['total_rooms']) else 0.0
+            # 強化字串清理防護
+            def clean_num(val):
+                if pd.isna(val): return 0.0
+                try: return float(str(val).replace(',', '').replace('%', ''))
+                except: return 0.0
+                
+            o = clean_num(r.get('occ_rate'))
+            adr = clean_num(r.get('adr'))
+            rev = clean_num(r.get('revenue'))
+            rm = clean_num(r.get('total_rooms'))
             
             # 容錯處理：若 Excel 某天缺營收但有 ADR 和房數，或缺房數但有營收，做數學回推
             if rev == 0 and adr > 0 and rm > 0:
