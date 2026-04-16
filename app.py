@@ -86,6 +86,7 @@ def save_daily_data(d_str, data_dict):
         
         df = pd.concat([df, new_row], ignore_index=True)
         conn.update(worksheet="daily_data", data=df.fillna(""))
+        st.cache_data.clear()
     except Exception as e:
         st.error(f"儲存失敗: {e}")
 
@@ -113,6 +114,7 @@ def save_monthly_target(month_str, target):
             df = pd.concat([df, new_row], ignore_index=True)
             
         conn.update(worksheet="targets", data=df.fillna(""))
+        st.cache_data.clear()
         return True
     except: return False
 
@@ -129,7 +131,7 @@ def get_month_delta(d, delta):
 
 def prepare_monthly_report(year, month):
     try:
-        df_all = conn.read(worksheet="daily_data", ttl=0)
+        df_all = conn.read(worksheet="daily_data", ttl="10m")
         month_str = f"{year}-{month:02d}"
         df = df_all[df_all['date'].str.startswith(month_str, na=False)].sort_values('date')
     except:
@@ -149,7 +151,7 @@ def fetch_month_summary(year, month):
     m_end = f"{year}-{month:02d}-{last_day:02d}"
     
     try:
-        df_all = conn.read(worksheet="daily_data", ttl=0)
+        df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
         else:
@@ -453,6 +455,7 @@ def parse_and_save_jinxu(file):
                 df_final = df_new.reset_index()
                 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
+            st.cache_data.clear()
             return len(updates)
             
         return 0
@@ -536,6 +539,7 @@ def parse_and_save_restaurant(file, current_year):
                 df_final = df_new.reset_index()
                 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
+            st.cache_data.clear()
             
         st.session_state['_last_loaded_date'] = None
         return len(parsed_days)
@@ -633,7 +637,7 @@ with tab1:
     start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
     
     try:
-        df_all = conn.read(worksheet="daily_data", ttl=0)
+        df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
         else:
