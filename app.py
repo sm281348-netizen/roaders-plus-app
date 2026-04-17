@@ -1285,7 +1285,13 @@ with tab_p:
                     prev_depts = pd.DataFrame(columns=['部門', '小計'])
                 
                 comparison = pd.merge(curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
-                comparison['變動率'] = ((comparison['小計_今'] - comparison['小計_昨']) / comparison['小計_昨'] * 100).replace([float('inf')], 100)
+                
+                # 安全計算變動率 (避免 ZeroDivisionError)
+                comparison['變動率'] = 0.0
+                mask_existing = comparison['小計_昨'] > 0
+                comparison.loc[mask_existing, '變動率'] = ((comparison['小計_今'] - comparison['小計_昨']) / comparison['小計_昨'] * 100)
+                # 處理從無到有的情況 (上月=0, 本月>0)
+                comparison.loc[(~mask_existing) & (comparison['小計_今'] > 0), '變動率'] = 100.0
                 
                 # 找出變動率大於 20% 且金額大於一定門檻的 (例如 > 2000)
                 spikes = comparison[(comparison['變動率'] > 20) & (comparison['小計_今'] > 2000)].sort_values('變動率', ascending=False)
