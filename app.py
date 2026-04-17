@@ -1275,8 +1275,14 @@ with tab_p:
                 # --- 異常值監控：找出增長過快的部門 ---
                 st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
                 # 計算各部門本月 vs 上月
-                curr_depts = df_month.groupby('部門')['小計'].sum().reset_index()
-                prev_depts = df_prev_month.groupby('部門')['小計'].sum().reset_index() if not df_prev_month.empty else pd.DataFrame(columns=['部門', '小計'])
+                curr_depts = df_month.groupby(dept_col)['小計'].sum().reset_index()
+                curr_depts.columns = ['部門', '小計']
+                
+                if not df_prev_month.empty:
+                    prev_depts = df_prev_month.groupby(dept_col)['小計'].sum().reset_index()
+                    prev_depts.columns = ['部門', '小計']
+                else:
+                    prev_depts = pd.DataFrame(columns=['部門', '小計'])
                 
                 comparison = pd.merge(curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
                 comparison['變動率'] = ((comparison['小計_今'] - comparison['小計_昨']) / comparison['小計_昨'] * 100).replace([float('inf')], 100)
