@@ -53,9 +53,9 @@ def get_daily_data(d_str):
         # 讀取完整表單 (快取設定為 1 分鐘)
         df = conn.read(worksheet="daily_data", ttl="1m")
         if df is not None and not df.empty:
-            # 確保日期欄位為字串格式以供比對
+            # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             if 'date' in df.columns:
-                df['date'] = df['date'].astype(str)
+                df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d')
             res = df[df['date'] == d_str]
             if not res.empty:
                 data_dict = res.iloc[0].to_dict()
@@ -220,7 +220,7 @@ def fetch_month_summary(year, month):
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
             if 'date' in df_all.columns:
-                df_all['date'] = df_all['date'].astype(str)
+                df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
         else:
             df = pd.DataFrame()
@@ -719,7 +719,7 @@ with tab1:
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
             if 'date' in df_all.columns:
-                df_all['date'] = df_all['date'].astype(str)
+                df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
         else:
             df_mtd = pd.DataFrame()
