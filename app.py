@@ -1286,18 +1286,13 @@ with tab_p:
                 
                 comparison = pd.merge(curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
                 
-                # 安全計算變動率 (避免 ZeroDivisionError)
-                comparison['變動率'] = 0.0
-                mask_existing = (comparison['小計_昨'] > 0)
+                # 安全計算變動率 (避免 ZeroDivisionError 與 Indexing 類型報錯)
+                def calc_mom_ratio(row):
+                    if row['小計_昨'] > 0:
+                        return (row['小計_今'] - row['小計_昨']) / row['小計_昨'] * 100
+                    return 100.0 if row['小計_今'] > 0 else 0.0
                 
-                # 重要：必須在兩邊都套用 mask，否則 pandas 在計算右邊時仍會觸發 ZeroDivisionError
-                comparison.loc[mask_existing, '變動率'] = (
-                    (comparison.loc[mask_existing, '小計_今'] - comparison.loc[mask_existing, '小計_昨']) / 
-                    comparison.loc[mask_existing, '小計_昨'] * 100
-                )
-                
-                # 處理從無到有的情況 (上月=0, 本月>0)
-                comparison.loc[(~mask_existing) & (comparison['小計_今'] > 0), '變動率'] = 100.0
+                comparison['變動率'] = comparison.apply(calc_mom_ratio, axis=1)
                 
                 # 找出變動率大於 20% 且金額大於一定門檻的 (例如 > 2000)
                 spikes = comparison[(comparison['變動率'] > 20) & (comparison['小計_今'] > 2000)].sort_values('變動率', ascending=False)
