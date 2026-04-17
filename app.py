@@ -1288,8 +1288,14 @@ with tab_p:
                 
                 # 安全計算變動率 (避免 ZeroDivisionError)
                 comparison['變動率'] = 0.0
-                mask_existing = comparison['小計_昨'] > 0
-                comparison.loc[mask_existing, '變動率'] = ((comparison['小計_今'] - comparison['小計_昨']) / comparison['小計_昨'] * 100)
+                mask_existing = (comparison['小計_昨'] > 0)
+                
+                # 重要：必須在兩邊都套用 mask，否則 pandas 在計算右邊時仍會觸發 ZeroDivisionError
+                comparison.loc[mask_existing, '變動率'] = (
+                    (comparison.loc[mask_existing, '小計_今'] - comparison.loc[mask_existing, '小計_昨']) / 
+                    comparison.loc[mask_existing, '小計_昨'] * 100
+                )
+                
                 # 處理從無到有的情況 (上月=0, 本月>0)
                 comparison.loc[(~mask_existing) & (comparison['小計_今'] > 0), '變動率'] = 100.0
                 
