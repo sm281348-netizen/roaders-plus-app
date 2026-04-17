@@ -1162,8 +1162,22 @@ with tab_p:
                 df_purchase = conn.read(worksheet="purchase_data", ttl="5m")
         
         if df_purchase is not None and not df_purchase.empty:
+            # 清理欄位名稱 (移除空格)
+            df_purchase.columns = df_purchase.columns.astype(str).str.strip()
+            
+            # 尋找關鍵欄位 (自動識別可能的名稱變體)
+            date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or 'Department' in c), None)
+            total_col = next((c for c in df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
+            
+            if not date_col or not dept_col or not total_col:
+                missing = [c for c, found in [('日期', date_col), ('部門', dept_col), ('小計', total_col)] if not found]
+                st.error(f"❌ 採購分頁缺少必要欄位：{', '.join(missing)}")
+                st.write("目前偵測到的欄位有：", list(df_purchase.columns))
+                st.stop()
+
             # 確保日期欄位為日期型態
-            df_purchase['日期'] = pd.to_datetime(df_purchase['日期']).dt.date
+            df_purchase['日期'] = pd.to_datetime(df_purchase[date_col], errors='coerce').dt.date
             
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
@@ -1175,9 +1189,13 @@ with tab_p:
             
             if not df_month.empty:
                 # 數值清理
-                df_month['小計'] = pd.to_numeric(df_month['小計'], errors='coerce').fillna(0)
-                df_month['單價'] = pd.to_numeric(df_month['單價'], errors='coerce').fillna(0)
-                df_month['數量'] = pd.to_numeric(df_month['數量'], errors='coerce').fillna(0)
+                df_month['小計'] = pd.to_numeric(df_month[total_col], errors='coerce').fillna(0)
+                # 其他欄位清理 (如果存在的話)
+                price_col = next((c for c in df_month.columns if '單價' in c or 'Price' in c), None)
+                qty_col = next((c for c in df_month.columns if '數量' in c or 'Qty' in c), None)
+                
+                if price_col: df_month['單價'] = pd.to_numeric(df_month[price_col], errors='coerce').fillna(0)
+                if qty_col: df_month['數量'] = pd.to_numeric(df_month[qty_col], errors='coerce').fillna(0)
                 
                 total_month_expense = df_month['小計'].sum()
                 
@@ -1191,8 +1209,11 @@ with tab_p:
                 
                 # 2. 部門佔比圓餅圖
                 st.subheader("📊 各部門請購佔比分析")
-                dept_summary = df_month.groupby('部門')['小計'].sum().reset_index()
+                dept_summary = df_month.groupby(dept_col)['小計'].sum().reset_index()
+                # 統一重命名方便繪圖與顯示
+                dept_summary.columns = ['部門', '小計']
                 
+                # 繪製圓餅圖
                 pie_chart = alt.Chart(dept_summary).mark_arc(innerRadius=60, stroke="#fff").encode(
                     theta=alt.Theta(field="小計", type="quantitative"),
                     color=alt.Color(field="部門", type="nominal", scale=alt.Scale(scheme='category10'), legend=alt.Legend(title="部門")),
@@ -1210,15 +1231,17 @@ with tab_p:
                 departments = dept_summary.sort_values('小計', ascending=False)['部門'].tolist()
                 
                 for dept in departments:
-                    dept_df = df_month[df_month['部門'] == dept]
+                    dept_df = df_month[df_month[dept_col] == dept]
                     dept_total = dept_df['小計'].sum()
                     
                     with st.expander(f"📌 {dept} (總計: NT$ {int(dept_total):,})", expanded=False):
-                        # 顯示該部門表格
-                        display_cols = ['日期', '供應商', '品名', '小計']
-                        # 如果還有其他欄位想要顯示也可以加上去
+                        # 顯示該部門表格 (動態選擇要顯示的欄位)
+                        cols_to_show = [c for c in ['日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計'] if c in dept_df.columns]
+                        if not cols_to_show:
+                             cols_to_show = dept_df.columns.tolist()
+                             
                         st.dataframe(
-                            dept_df[['日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計']].sort_values('日期'),
+                            dept_df[cols_to_show].sort_values('日期'),
                             use_container_width=True,
                             hide_index=True
                         )
