@@ -1149,8 +1149,17 @@ with tab_p:
     current_month_str = selected_date.strftime('%Y-%m')
     
     try:
-        # 讀取採購數據
-        df_purchase = conn.read(worksheet="purchase data", ttl="5m")
+        # 讀取採購數據 (嘗試不同的名稱變體以防使用者輸入有誤)
+        ws_name = "purchase data"
+        try:
+            df_purchase = conn.read(worksheet=ws_name, ttl="5m")
+        except Exception:
+            try:
+                # 嘗試首字母大寫
+                df_purchase = conn.read(worksheet="Purchase Data", ttl="5m")
+            except Exception:
+                # 嘗試帶底線
+                df_purchase = conn.read(worksheet="purchase_data", ttl="5m")
         
         if df_purchase is not None and not df_purchase.empty:
             # 確保日期欄位為日期型態
@@ -1217,10 +1226,14 @@ with tab_p:
             else:
                 st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
         else:
-            st.warning("⚠️ 無法讀取採購數據或分頁內容為空，請確認 Google Sheet 中有名為 『purchase data』 的分頁且包含正確表頭。")
+            st.warning(f"⚠️ 無法讀取採購數據。請確認您的 Google Sheet 中確實有名為「**purchase data**」的分頁（注意大小寫與空格）。")
+            st.info("💡 建議檢查事項：1. 分頁名稱是否完全一致。 2. 分頁中是否已有資料。")
             
     except Exception as e:
-        st.error(f"讀取採購數據出錯: {e}")
+        if "WorksheetNotFound" in str(e):
+             st.error(f"❌ 找不到名為「purchase data」的分頁！請確認 Google Sheet 中的分頁名稱是否正確。")
+        else:
+            st.error(f"讀取採購數據出錯: {e}")
         import traceback
         st.expander("錯誤詳細資訊").code(traceback.format_exc())
 
