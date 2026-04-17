@@ -53,6 +53,9 @@ def get_daily_data(d_str):
         # 讀取完整表單 (快取設定為 1 分鐘)
         df = conn.read(worksheet="daily_data", ttl="1m")
         if df is not None and not df.empty:
+            # 確保日期欄位為字串格式以供比對
+            if 'date' in df.columns:
+                df['date'] = df['date'].astype(str)
             res = df[df['date'] == d_str]
             if not res.empty:
                 data_dict = res.iloc[0].to_dict()
@@ -216,6 +219,8 @@ def fetch_month_summary(year, month):
     try:
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
+            if 'date' in df_all.columns:
+                df_all['date'] = df_all['date'].astype(str)
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
         else:
             df = pd.DataFrame()
@@ -713,10 +718,13 @@ with tab1:
     try:
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
+            if 'date' in df_all.columns:
+                df_all['date'] = df_all['date'].astype(str)
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
         else:
             df_mtd = pd.DataFrame()
-    except:
+    except Exception as e:
+        st.sidebar.error(f"⚠️ 讀取數據時發生錯誤: {e}")
         df_mtd = pd.DataFrame()
 
     if not df_mtd.empty:
@@ -1257,15 +1265,18 @@ with tab_p:
                         field="部門", 
                         type="nominal", 
                         scale=alt.Scale(scheme='category10'), 
-                        legend=alt.Legend(title="部門"),
+                        legend=alt.Legend(title="部門", orient="right"),
                         sort=alt.SortField("小計", order="descending")
                     ),
                     order=alt.Order("小計", sort="descending"),
                     tooltip=["部門", alt.Tooltip("小計", format=",.0f", title="總金額 (NT$)")]
-                )
+                ).properties(height=450)
                 
-                chart_arc = base.mark_arc(innerRadius=60, stroke="#fff")
-                chart_text = base.mark_text(radius=100, size=12, fontWeight="bold").encode(
+                # 圓餅主體
+                chart_arc = base.mark_arc(innerRadius=60, outerRadius=120, stroke="#fff")
+                
+                # 在圓餅切片上顯示金額
+                chart_text = base.mark_text(radius=90, size=14, fontWeight="bold", color="white").encode(
                     text=alt.Text("小計:Q", format=",.0f")
                 )
                 
