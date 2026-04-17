@@ -1210,6 +1210,10 @@ with tab_p:
 
             df_purchase['日期'] = df_purchase[date_col].apply(robust_date_parse)
             
+            # 處理部門欄位空值 (歸類到「未分類」)
+            df_purchase[dept_col] = df_purchase[dept_col].fillna("未分類").astype(str).str.strip()
+            df_purchase.loc[df_purchase[dept_col] == "", dept_col] = "未分類"
+            
             # 過濾 NaT/None
             df_purchase = df_purchase[df_purchase['日期'].notna()]
             
