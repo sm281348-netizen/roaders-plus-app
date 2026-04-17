@@ -1233,25 +1233,64 @@ with tab_p:
             
             df_month = df_purchase[(df_purchase['日期'] >= m_start) & (df_purchase['日期'] <= m_end)].copy()
             
+            # --- 新增：取得上個月數據用於 MoM 分析 ---
+            prev_m_date = get_month_delta(selected_date, -1)
+            pm_start = prev_m_date.replace(day=1)
+            _, pm_last_day = calendar.monthrange(prev_m_date.year, prev_m_date.month)
+            pm_end = prev_m_date.replace(day=pm_last_day)
+            df_prev_month = df_purchase[(df_purchase['日期'] >= pm_start) & (df_purchase['日期'] <= pm_end)].copy()
+            
             if not df_month.empty:
                 # 數值清理
                 df_month['小計'] = pd.to_numeric(df_month[total_col], errors='coerce').fillna(0)
-                # 其他欄位清理 (如果存在的話)
-                price_col = next((c for c in df_month.columns if '單價' in c or 'Price' in c), None)
-                qty_col = next((c for c in df_month.columns if '數量' in c or 'Qty' in c), None)
-                
-                if price_col: df_month['單價'] = pd.to_numeric(df_month[price_col], errors='coerce').fillna(0)
-                if qty_col: df_month['數量'] = pd.to_numeric(df_month[qty_col], errors='coerce').fillna(0)
+                if not df_prev_month.empty:
+                    df_prev_month['小計'] = pd.to_numeric(df_prev_month[total_col], errors='coerce').fillna(0)
                 
                 total_month_expense = df_month['小計'].sum()
+                total_prev_expense = df_prev_month['小計'].sum() if not df_prev_month.empty else 0
                 
-                # 1. 本月總開銷
+                # 計算增長率
+                mom_delta = total_month_expense - total_prev_expense
+                mom_pcnt = (mom_delta / total_prev_expense * 100) if total_prev_expense > 0 else 0
+                
+                # 1. 本月總開銷與 MoM
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
                     <p style="margin: 0; font-size: 1.1rem; opacity: 0.8;">📅 {current_month_str} 本月總開銷金額</p>
                     <h1 style="margin: 10px 0 0 0; font-size: 3rem; font-weight: 800; letter-spacing: 1px;">NT$ {int(total_month_expense):,}</h1>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # 顯示 MoM 指標
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("上月同期總額", f"NT$ {int(total_prev_expense):,}")
+                with col_m2:
+                    st.metric("月增長金額 (MoM)", f"NT$ {int(mom_delta):,}", delta=int(mom_delta), delta_color="inverse")
+                with col_m3:
+                    st.metric("月增長百分比", f"{mom_pcnt:.1f}%", delta=f"{mom_pcnt:.1f}%", delta_color="inverse")
+                
+                st.divider()
+
+                # --- 異常值監控：找出增長過快的部門 ---
+                st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
+                # 計算各部門本月 vs 上月
+                curr_depts = df_month.groupby('部門')['小計'].sum().reset_index()
+                prev_depts = df_prev_month.groupby('部門')['小計'].sum().reset_index() if not df_prev_month.empty else pd.DataFrame(columns=['部門', '小計'])
+                
+                comparison = pd.merge(curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
+                comparison['變動率'] = ((comparison['小計_今'] - comparison['小計_昨']) / comparison['小計_昨'] * 100).replace([float('inf')], 100)
+                
+                # 找出變動率大於 20% 且金額大於一定門檻的 (例如 > 2000)
+                spikes = comparison[(comparison['變動率'] > 20) & (comparison['小計_今'] > 2000)].sort_values('變動率', ascending=False)
+                
+                if not spikes.empty:
+                    for _, row in spikes.iterrows():
+                        st.warning(f"🚩 **{row['部門']}** 本月開銷異常！較上月增長 **{row['變動率']:.1f}%** (NT$ {int(row['小計_今']):,})")
+                else:
+                    st.success("✅ 目前各部門採購金額平穩，未偵測到異常大幅波動。")
+
+                st.divider()
                 
                 # 2. 部門佔比圓餅圖
                 st.subheader("📊 各部門請購佔比分析")
