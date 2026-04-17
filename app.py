@@ -1149,17 +1149,19 @@ with tab_p:
     current_month_str = selected_date.strftime('%Y-%m')
     
     try:
-        # 讀取採購數據 (嘗試不同的名稱變體以防使用者輸入有誤)
-        ws_name = "purchase data"
-        try:
-            df_purchase = conn.read(worksheet=ws_name, ttl="5m")
-        except Exception:
+        # 讀取採購數據 (降低 TTL 以確保更新及時)
+        possible_names = ["purchase data", "Purchase Data", "purchase_data", "Purchase_Data"]
+        df_purchase = None
+        used_name = ""
+        
+        for name in possible_names:
             try:
-                # 嘗試首字母大寫
-                df_purchase = conn.read(worksheet="Purchase Data", ttl="5m")
-            except Exception:
-                # 嘗試帶底線
-                df_purchase = conn.read(worksheet="purchase_data", ttl="5m")
+                df_purchase = conn.read(worksheet=name, ttl="1m")
+                if df_purchase is not None and not df_purchase.empty:
+                    used_name = name
+                    break
+            except:
+                continue
         
         if df_purchase is not None and not df_purchase.empty:
             # 清理欄位名稱 (移除空格)
@@ -1248,13 +1250,16 @@ with tab_p:
                         
             else:
                 st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
+                st.write(f"ℹ️ 在「**{used_name}**」分頁中總共發現 {len(df_purchase)} 筆資料，但沒有符合 {current_month_str} 的紀錄。")
+                with st.expander("🛠️ 點此查看分頁中的前 5 筆原始資料 (除錯用)"):
+                    st.write(df_purchase.head(5))
         else:
-            st.warning(f"⚠️ 無法讀取採購數據。請確認您的 Google Sheet 中確實有名為「**purchase data**」的分頁（注意大小寫與空格）。")
-            st.info("💡 建議檢查事項：1. 分頁名稱是否完全一致。 2. 分頁中是否已有資料。")
+            st.warning(f"⚠️ 無法在 Google Sheet 中找到採購分頁 (嘗試過: {', '.join(possible_names)})。")
+            st.info("💡 請確認分頁名稱是否正確，且分頁中至少已填入一行資料。")
             
     except Exception as e:
         if "WorksheetNotFound" in str(e):
-             st.error(f"❌ 找不到名為「purchase data」的分頁！請確認 Google Sheet 中的分頁名稱是否正確。")
+             st.error(f"❌ 找不到採購相關分頁！請確認 Google Sheet 中的分頁名稱（如 purchase data）。")
         else:
             st.error(f"讀取採購數據出錯: {e}")
         import traceback
