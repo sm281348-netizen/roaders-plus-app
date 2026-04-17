@@ -189,6 +189,24 @@ def prepare_monthly_report(year, month):
         full_report += generate_report_text(d) + "\n\n"
     return full_report
 
+def minguo_to_western(d_str):
+    """
+    將 民國/月/日 (如 115/03/02 或 0115/03/02) 轉換為 Python date 對象。
+    """
+    if pd.isna(d_str) or not isinstance(d_str, str): return None
+    try:
+        # 移除前導零並拆分
+        parts = d_str.strip().split('/')
+        if len(parts) == 3:
+            year = int(parts[0])
+            # 如果是 115 或 0115，這應是民國年
+            if year < 1000: # 民國年編號通常不大於 1000
+                year += 1911
+            return datetime.date(year, int(parts[1]), int(parts[2]))
+    except:
+        pass
+    return None
+
 def fetch_month_summary(year, month):
     import calendar
     m_start = f"{year}-{month:02d}-01"
@@ -1169,7 +1187,7 @@ with tab_p:
             
             # 尋找關鍵欄位 (自動識別可能的名稱變體)
             date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
-            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or 'Department' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
             total_col = next((c for c in df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
             
             if not date_col or not dept_col or not total_col:
@@ -1178,8 +1196,22 @@ with tab_p:
                 st.write("目前偵測到的欄位有：", list(df_purchase.columns))
                 st.stop()
 
-            # 確保日期欄位為日期型態
-            df_purchase['日期'] = pd.to_datetime(df_purchase[date_col], errors='coerce').dt.date
+            # 確保日期欄位為日期型態 (支援民國年與一般西元年)
+            def robust_date_parse(val):
+                if pd.isna(val): return None
+                s = str(val).strip()
+                # 判斷是否為民國年格式 (含 / 且部分較小)
+                if '/' in s:
+                    res = minguo_to_western(s)
+                    if res: return res
+                # 嘗試標準解析
+                try: return pd.to_datetime(val).date()
+                except: return None
+
+            df_purchase['日期'] = df_purchase[date_col].apply(robust_date_parse)
+            
+            # 過濾 NaT/None
+            df_purchase = df_purchase[df_purchase['日期'].notna()]
             
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
