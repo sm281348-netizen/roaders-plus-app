@@ -1248,17 +1248,28 @@ with tab_p:
                 # 2. 部門佔比圓餅圖
                 st.subheader("📊 各部門請購佔比分析")
                 dept_summary = df_month.groupby(dept_col)['小計'].sum().reset_index()
-                # 統一重命名方便繪圖與顯示
                 dept_summary.columns = ['部門', '小計']
                 
-                # 繪製圓餅圖
-                pie_chart = alt.Chart(dept_summary).mark_arc(innerRadius=60, stroke="#fff").encode(
-                    theta=alt.Theta(field="小計", type="quantitative"),
-                    color=alt.Color(field="部門", type="nominal", scale=alt.Scale(scheme='category10'), legend=alt.Legend(title="部門")),
+                # 繪製圓餅圖 (依照金額排序)
+                base = alt.Chart(dept_summary).encode(
+                    theta=alt.Theta(field="小計", type="quantitative", stack=True),
+                    color=alt.Color(
+                        field="部門", 
+                        type="nominal", 
+                        scale=alt.Scale(scheme='category10'), 
+                        legend=alt.Legend(title="部門"),
+                        sort=alt.SortField("小計", order="descending")
+                    ),
+                    order=alt.Order("小計", sort="descending"),
                     tooltip=["部門", alt.Tooltip("小計", format=",.0f", title="總金額 (NT$)")]
-                ).properties(height=400)
+                )
                 
-                st.altair_chart(pie_chart, use_container_width=True)
+                chart_arc = base.mark_arc(innerRadius=60, stroke="#fff")
+                chart_text = base.mark_text(radius=100, size=12, fontWeight="bold").encode(
+                    text=alt.Text("小計:Q", format=",.0f")
+                )
+                
+                st.altair_chart(chart_arc + chart_text, use_container_width=True)
                 
                 st.divider()
                 
