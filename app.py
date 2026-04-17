@@ -118,6 +118,51 @@ def save_monthly_target(month_str, target):
         return True
     except: return False
 
+def get_daily_log(d_str):
+    try:
+        df = conn.read(worksheet="daily_logs", ttl="1m")
+        if df is not None and not df.empty:
+            res = df[df['date'] == d_str]
+            if not res.empty:
+                return str(res.iloc[0]['log']).strip()
+    except:
+        pass
+    # Fallback to daily_data if not found in daily_logs (backward compatibility)
+    try:
+        df_old = conn.read(worksheet="daily_data", ttl="1m")
+        if df_old is not None and not df_old.empty:
+            res = df_old[df_old['date'] == d_str]
+            if not res.empty and 'daily_work_log' in res.columns:
+                return str(res.iloc[0]['daily_work_log']).strip()
+    except:
+        pass
+    return ""
+
+def save_daily_log(d_str, log_text):
+    try:
+        df = conn.read(worksheet="daily_logs", ttl="0")
+        if df is None or df.empty:
+            df = pd.DataFrame(columns=["date", "log"])
+        
+        # 確保欄位存在
+        if 'date' not in df.columns or 'log' not in df.columns:
+            df = pd.DataFrame(columns=["date", "log"])
+
+        new_row = pd.DataFrame([{'date': d_str, 'log': log_text}])
+        
+        if d_str in df['date'].values:
+            df = df[df['date'] != d_str]
+        
+        df = pd.concat([df, new_row], ignore_index=True)
+        conn.update(worksheet="daily_logs", data=df.fillna(""))
+        st.cache_data.clear()
+        st.toast(f"✅ {d_str} 日誌已自動對齊 Google Sheet！")
+        return True
+    except Exception as e:
+        # 這裡不使用 st.error 以免干擾輸入，但可以列印到日誌或使用 toast
+        print(f"DEBUG: 日誌儲存失敗: {e}")
+        return False
+
 def get_month_delta(d, delta):
     year = d.year
     month = d.month + delta
@@ -197,6 +242,7 @@ def fetch_month_summary(year, month):
     return res
 
 # -- 側邊欄：進階日期選擇器 --
+st.sidebar.caption(f"🚀 最後更新時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 st.sidebar.header("📅 日期選擇")
 if 'sidebar_date' not in st.session_state:
     st.session_state['sidebar_date'] = datetime.date.today()
@@ -209,14 +255,18 @@ field_mapping = {
     'input_bf_theme_est': ('bf_theme_est', 0), 'input_bf_theme_act': ('bf_theme_act', 0), 'input_bf_zq_est': ('bf_zq_est', 0), 'input_bf_zq_act': ('bf_zq_act', 0), 'input_bf_total_est': ('bf_total_est', 0), 'input_bf_total_act': ('bf_total_act', 0),
     'input_af_theme_est': ('af_theme_est', 0), 'input_af_theme_act': ('af_theme_act', 0), 'input_af_zq_est': ('af_zq_est', 0), 'input_af_zq_act': ('af_zq_act', 0), 'input_af_total_est': ('af_total_est', 0), 'input_af_total_act': ('af_total_act', 0),
     'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_rest_car': ('rest_car_data', ""),
-    'input_repair': ('maint_repair_rooms', 0), 'input_maint_rec': ('maint_records', ""), 'input_maint_exp': ('maint_expense', 0),
-    'input_daily_log': ('daily_work_log', "")
+    'input_repair': ('maint_repair_rooms', 0), 'input_maint_rec': ('maint_records', ""), 'input_maint_exp': ('maint_expense', 0)
 }
 
 def sync_st_to_db(target_d_str):
+    # 同步數值數據
     update_dict = {db_col: st.session_state[ss_key] for ss_key, (db_col, _) in field_mapping.items() if ss_key in st.session_state}
     if update_dict:
         save_daily_data(target_d_str, update_dict)
+    
+    # 單獨同步日誌
+    if 'input_daily_log' in st.session_state:
+        save_daily_log(target_d_str, st.session_state['input_daily_log'])
 
 def prev_day():
     st.session_state['sidebar_date'] -= datetime.timedelta(days=1)
@@ -267,13 +317,19 @@ if st.session_state.get('_last_loaded_date') != date_str or st.session_state.get
             if isinstance(default_val, int): st.session_state[ss_key] = int(val)
             elif isinstance(default_val, float): st.session_state[ss_key] = float(val)
             else: st.session_state[ss_key] = str(val)
+    
+    # 獲取日誌
+    st.session_state['input_daily_log'] = get_daily_log(date_str)
+    
     st.session_state['_last_loaded_date'] = date_str
     st.session_state['_last_week_view'] = selected_week
     st.session_state['_data_is_loaded'] = True # 標記為已載入，此後任何變動或換日才允許存檔
 
 def on_input_change():
-    # widget callback 觸發時，使用當前腳本環境中的 date_str
-    sync_st_to_db(date_str)
+    # 使用 session_state 中的當前日期，確保 callback 觸發時日期正確
+    target_d = st.session_state.get('_actual_current_date')
+    if target_d:
+        sync_st_to_db(target_d)
 
 st.sidebar.divider()
 st.sidebar.subheader("📤 數據匯出與備份")
@@ -315,7 +371,7 @@ def generate_report_text(d_str):
     report.append(f"- 修繕細節: {data.get('maint_records', '無')}\n")
     
     report.append(f"【📝 每日營運紀錄細節】")
-    report.append(f"{data.get('daily_work_log', '無紀錄内容')}")
+    report.append(f"{get_daily_log(d_str) or '無紀錄内容'}")
     report.append(f"\n" + "-"*40 + "\n")
     
     return "\n".join(report)
@@ -552,7 +608,7 @@ def parse_and_save_restaurant(file, current_year):
 st.title("路徒Plus行旅站前館營運日誌")
 
 # 主畫面
-tab1, tab_m, tab6, tab2, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
+tab1, tab_m, tab6, tab_p, tab2, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
 with tab2:
     st.header("💼 櫃台數據")
@@ -1069,8 +1125,9 @@ with tab6:
             d_data = get_daily_data(target_date)
             
             with st.expander(f"📅 {target_date} 營運紀錄", expanded=True):
-                if d_data and d_data.get('daily_work_log'):
-                    st.markdown(f"**【當日日誌細節】**\n\n{d_data['daily_work_log']}")
+                day_log = get_daily_log(target_date)
+                if day_log:
+                    st.markdown(f"**【當日日誌細節】**\n\n{day_log}")
                     st.divider()
                     col_a, colb, colc = st.columns(3)
                     col_a.metric("住房率", f"{d_data.get('occ_rate', 0)}%")
@@ -1078,7 +1135,6 @@ with tab6:
                     colc.metric("營收", f"NT$ {int(d_data.get('revenue', 0)):,}")
                 else:
                     st.write("🌑 此日期尚無任何日誌紀錄。")
-        conn.close()
         
         if st.button("⬅️ 返回今日編輯模式"):
             st.rerun()
@@ -1086,6 +1142,87 @@ with tab6:
     else:
         st.info(f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
         st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log", placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
+
+with tab_p:
+    st.header("💰 採購花費分析統計")
+    
+    current_month_str = selected_date.strftime('%Y-%m')
+    
+    try:
+        # 讀取採購數據
+        df_purchase = conn.read(worksheet="purchase data", ttl="5m")
+        
+        if df_purchase is not None and not df_purchase.empty:
+            # 確保日期欄位為日期型態
+            df_purchase['日期'] = pd.to_datetime(df_purchase['日期']).dt.date
+            
+            # 過濾當月數據
+            m_start = selected_date.replace(day=1)
+            import calendar
+            _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
+            m_end = selected_date.replace(day=last_day)
+            
+            df_month = df_purchase[(df_purchase['日期'] >= m_start) & (df_purchase['日期'] <= m_end)].copy()
+            
+            if not df_month.empty:
+                # 數值清理
+                df_month['小計'] = pd.to_numeric(df_month['小計'], errors='coerce').fillna(0)
+                df_month['單價'] = pd.to_numeric(df_month['單價'], errors='coerce').fillna(0)
+                df_month['數量'] = pd.to_numeric(df_month['數量'], errors='coerce').fillna(0)
+                
+                total_month_expense = df_month['小計'].sum()
+                
+                # 1. 本月總開銷
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                    <p style="margin: 0; font-size: 1.1rem; opacity: 0.8;">📅 {current_month_str} 本月總開銷金額</p>
+                    <h1 style="margin: 10px 0 0 0; font-size: 3rem; font-weight: 800; letter-spacing: 1px;">NT$ {int(total_month_expense):,}</h1>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # 2. 部門佔比圓餅圖
+                st.subheader("📊 各部門請購佔比分析")
+                dept_summary = df_month.groupby('部門')['小計'].sum().reset_index()
+                
+                pie_chart = alt.Chart(dept_summary).mark_arc(innerRadius=60, stroke="#fff").encode(
+                    theta=alt.Theta(field="小計", type="quantitative"),
+                    color=alt.Color(field="部門", type="nominal", scale=alt.Scale(scheme='category10'), legend=alt.Legend(title="部門")),
+                    tooltip=["部門", alt.Tooltip("小計", format=",.0f", title="總金額 (NT$)")]
+                ).properties(height=400)
+                
+                st.altair_chart(pie_chart, use_container_width=True)
+                
+                st.divider()
+                
+                # 3. 各部門詳細統計
+                st.subheader("🏢 各部門經費分析")
+                
+                # 取得所有部門
+                departments = dept_summary.sort_values('小計', ascending=False)['部門'].tolist()
+                
+                for dept in departments:
+                    dept_df = df_month[df_month['部門'] == dept]
+                    dept_total = dept_df['小計'].sum()
+                    
+                    with st.expander(f"📌 {dept} (總計: NT$ {int(dept_total):,})", expanded=False):
+                        # 顯示該部門表格
+                        display_cols = ['日期', '供應商', '品名', '小計']
+                        # 如果還有其他欄位想要顯示也可以加上去
+                        st.dataframe(
+                            dept_df[['日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計']].sort_values('日期'),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+            else:
+                st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
+        else:
+            st.warning("⚠️ 無法讀取採購數據或分頁內容為空，請確認 Google Sheet 中有名為 『purchase data』 的分頁且包含正確表頭。")
+            
+    except Exception as e:
+        st.error(f"讀取採購數據出錯: {e}")
+        import traceback
+        st.expander("錯誤詳細資訊").code(traceback.format_exc())
 
 with tab7:
     st.header("👥 人事概況")
