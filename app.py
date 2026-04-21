@@ -546,52 +546,64 @@ def parse_and_save_jinxu(file):
 # -- 餐廳報表解析與寫入資料庫 --
 def parse_and_save_restaurant(file, current_year):
     try:
+        # 讀取 Excel 檔案的所有內容，預設為第一頁
         df = pd.read_excel(file, header=None)
         
         month_rev = 0
         avg_spent = 0
         
-        # 尋找底部的月結算資料
+        # 1. 尋找月結算資料 (稍微放寬匹配條件，去除空格或雜質)
         for i, row in df.iterrows():
             col0 = str(row[0]).strip()
-            if '已結算營收' in col0 and '早餐' not in col0 and '下午茶' not in col0:
+            if ('已結算營收' in col0 or '月營收' in col0) and '早餐' not in col0 and '下午茶' not in col0:
                 for val in row[1:]:
                     if pd.notna(val) and str(val).strip() != '':
-                        month_rev = int(float(str(val).replace('NT$', '').replace(',', '').strip()))
-                        break
-            if '平均客單價' == col0:
+                        try:
+                            month_rev = int(float(str(val).replace('NT$', '').replace('$', '').replace(',', '').strip()))
+                            break
+                        except: continue
+            if '平均客單價' in col0 or '客單價' in col0:
                 for val in row[1:]:
                     if pd.notna(val) and str(val).strip() != '':
-                        avg_spent = int(float(str(val).replace('NT$', '').replace(',', '').strip()))
-                        break
+                        try:
+                            avg_spent = int(float(str(val).replace('NT$', '').replace('$', '').replace(',', '').strip()))
+                            break
+                        except: continue
 
         parsed_days = []
+        # 2. 尋找每日明細 (修正 Regex 讓其更具包容度，例如處理 "4/16 (二)")
         for i, row in df.iterrows():
             col0 = str(row[0]).strip()
-            m = re.match(r'^(\d{1,2})/(\d{1,2})', col0)
+            # 匹配 M/D 或 M/D(...) 的格式
+            m = re.search(r'(\d{1,2})/(\d{1,2})', col0)
             if m:
                 month_val, day_val = m.groups()
                 d_str = f"{current_year}-{int(month_val):02d}-{int(day_val):02d}"
                 
                 def safe_int(val):
+                    if pd.isna(val) or str(val).strip() == '': return 0
                     try: 
-                        if pd.isna(val): return 0
+                        # 處理 Excel 讀入時可能的科學符號或逗號
                         return int(float(str(val).replace(',', '').strip()))
                     except: return 0
-                        
-                bf_theme_est = safe_int(row[1]) if len(row) > 1 else 0
-                bf_theme_act = safe_int(row[2]) if len(row) > 2 else 0
-                bf_zq_est = safe_int(row[3]) if len(row) > 3 else 0
-                bf_zq_act = safe_int(row[4]) if len(row) > 4 else 0
-                bf_total_est = safe_int(row[5]) if len(row) > 5 else 0
-                bf_total_act = safe_int(row[6]) if len(row) > 6 else 0
                 
-                af_theme_est = safe_int(row[7]) if len(row) > 7 else 0
-                af_theme_act = safe_int(row[8]) if len(row) > 8 else 0
-                af_zq_est = safe_int(row[9]) if len(row) > 9 else 0
-                af_zq_act = safe_int(row[10]) if len(row) > 10 else 0
-                af_total_est = safe_int(row[11]) if len(row) > 11 else 0
-                af_total_act = safe_int(row[12]) if len(row) > 12 else 0
+                # 假設欄位順序不變 (根據 Roaders Plus 常用報表格式)
+                # 早餐相關 (1-6)
+                row_vals = row.values.tolist()
+                bf_theme_est = safe_int(row_vals[1]) if len(row_vals) > 1 else 0
+                bf_theme_act = safe_int(row_vals[2]) if len(row_vals) > 2 else 0
+                bf_zq_est = safe_int(row_vals[3]) if len(row_vals) > 3 else 0
+                bf_zq_act = safe_int(row_vals[4]) if len(row_vals) > 4 else 0
+                bf_total_est = safe_int(row_vals[5]) if len(row_vals) > 5 else 0
+                bf_total_act = safe_int(row_vals[6]) if len(row_vals) > 6 else 0
+                
+                # 下午茶相關 (7-12)
+                af_theme_est = safe_int(row_vals[7]) if len(row_vals) > 7 else 0
+                af_theme_act = safe_int(row_vals[8]) if len(row_vals) > 8 else 0
+                af_zq_est = safe_int(row_vals[9]) if len(row_vals) > 9 else 0
+                af_zq_act = safe_int(row_vals[10]) if len(row_vals) > 10 else 0
+                af_total_est = safe_int(row_vals[11]) if len(row_vals) > 11 else 0
+                af_total_act = safe_int(row_vals[12]) if len(row_vals) > 12 else 0
                 
                 parsed_days.append({
                     'date': d_str,
@@ -605,26 +617,37 @@ def parse_and_save_restaurant(file, current_year):
                 })
 
         if parsed_days:
+            # 讀取現有庫內資料
             df_existing = conn.read(worksheet="daily_data", ttl="0")
             if df_existing is None: df_existing = pd.DataFrame()
+            
+            # 重要：確保現有資料的 date 也是字串，否則 combine_first 的 join 會失效
+            if not df_existing.empty and 'date' in df_existing.columns:
+                df_existing['date'] = pd.to_datetime(df_existing['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             df_new = pd.DataFrame(parsed_days)
             
             # 合併數據 (以日期為 key，部分更新)
             df_new = df_new.set_index('date')
             if not df_existing.empty:
                 df_existing = df_existing.set_index('date')
+                # 以新上傳的資料優先蓋掉舊的，但如果是新資料缺少的欄位則保留舊的
                 df_final = df_new.combine_first(df_existing).reset_index()
             else:
                 df_final = df_new.reset_index()
                 
+            # 寫回資料庫
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
             st.cache_data.clear()
             
+        # 清除快取以確保重整後能看到新數據
         st.session_state['_last_loaded_date'] = None
         return len(parsed_days)
     except Exception as e:
         import traceback
-        st.error(f"解析餐廳報表失敗: {e}\n{traceback.format_exc()}")
+        st.error(f"解析餐廳報表失敗: {str(e)}")
+        with st.expander("🔍 查看錯誤細節"):
+            st.code(traceback.format_exc())
         return False
 
 # 頁面標題
