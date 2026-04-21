@@ -56,6 +56,8 @@ def get_daily_data(d_str):
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             if 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            # 確保唯一
+            df = df.drop_duplicates(subset='date', keep='last')
             res = df[df['date'] == d_str]
             if not res.empty:
                 data_dict = res.iloc[0].to_dict()
@@ -221,6 +223,8 @@ def fetch_month_summary(year, month):
         if df_all is not None and not df_all.empty:
             if 'date' in df_all.columns:
                 df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            # 確保日期唯一，避免重複加總
+            df_all = df_all.drop_duplicates(subset='date', keep='last')
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
         else:
             df = pd.DataFrame()
@@ -748,6 +752,8 @@ with tab1:
         if df_all is not None and not df_all.empty:
             if 'date' in df_all.columns:
                 df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            # 防止重複資料毀掉加總
+            df_all = df_all.drop_duplicates(subset='date', keep='last')
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
         else:
             df_mtd = pd.DataFrame()
@@ -788,10 +794,26 @@ with tab1:
         mtd_occ = (mtd_rooms / total_sellable * 100.0) if total_sellable > 0 else 0.0
         mtd_adr = (mtd_rev / mtd_rooms) if mtd_rooms > 0 else 0.0
         
-        m1, m2, m3 = st.columns(3)
-        m1.markdown(make_card("MTD 累計住房率", f"{mtd_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
-        m2.markdown(make_card("MTD 累計 ADR", f"NT$ {int(mtd_adr):,}", "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
-        m3.markdown(make_card("MTD 累計總營收", f"NT$ {int(mtd_rev):,}", "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
+        # 獲取餐廳資料 (正確結算，不重複加總)
+        rest_mrev = 0
+        if not df_mtd.empty:
+            valid_rest = df_mtd[df_mtd['rest_month_rev'] > 0]
+            if not valid_rest.empty:
+                rest_mrev = valid_rest.iloc[-1]['rest_month_rev']
+        
+        grand_total_rev = mtd_rev + rest_mrev
+        
+        # 顯示四大指標
+        st.write("##### 🏨 房務營運 MTD")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(make_card("MTD 累計住房率", f"{mtd_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
+        c2.markdown(make_card("MTD 累計 ADR", f"NT$ {int(mtd_adr):,}", "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
+        c3.markdown(make_card("MTD 房務累計營收", f"NT$ {int(mtd_rev):,}", "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
+        
+        st.write("##### 🏁 全館合併營收 (MTD)")
+        g1, g2 = st.columns([1, 2])
+        g1.markdown(make_card("餐廳結算營收", f"NT$ {int(rest_mrev):,}", "card-theme-purple", "card-bg-dark", "🍽️"), unsafe_allow_html=True)
+        g2.markdown(make_card("✨ 全館 MTD 總營收", f"NT$ {int(grand_total_rev):,}", "card-theme-red", "card-bg-dark", "🚀"), unsafe_allow_html=True)
         
         st.markdown("<br><hr style='margin: 5px 0; border: 1px dashed #ddd;'>", unsafe_allow_html=True)
         st.write("##### 🍽️ 餐廳營運累計 (MTD)")
