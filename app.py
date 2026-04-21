@@ -546,35 +546,40 @@ def parse_and_save_jinxu(file):
 # -- 餐廳報表解析與寫入資料庫 --
 def parse_and_save_restaurant(file, current_year):
     try:
-        # 讀取 Excel 檔案的所有內容，預設為第一頁
+        # 讀取 Excel 檔案的所有內容
         df = pd.read_excel(file, header=None)
         
         month_rev = 0
         avg_spent = 0
         
-        # 1. 尋找月結算資料 (稍微放寬匹配條件，去除空格或雜質)
+        # 1. 改良版：搜尋全表尋找月結算關鍵字 (不再侷限於第 0 欄)
         for i, row in df.iterrows():
-            col0 = str(row[0]).strip()
-            if ('已結算營收' in col0 or '月營收' in col0) and '早餐' not in col0 and '下午茶' not in col0:
-                for val in row[1:]:
-                    if pd.notna(val) and str(val).strip() != '':
+            row_str = " ".join([str(v) for v in row if pd.notna(v)])
+            # 尋找營收
+            if ('已結算營收' in row_str or '月營收' in row_str) and '早餐' not in row_str and '下午茶' not in row_str:
+                for val in row:
+                    s_val = str(val).strip()
+                    if any(c.isdigit() for c in s_val) and not any(k in s_val for k in ['已結算營收', '月營收']):
                         try:
-                            month_rev = int(float(str(val).replace('NT$', '').replace('$', '').replace(',', '').strip()))
+                            clean_val = s_val.replace('NT$', '').replace('$', '').replace(',', '').strip()
+                            month_rev = int(float(clean_val))
                             break
                         except: continue
-            if '平均客單價' in col0 or '客單價' in col0:
-                for val in row[1:]:
-                    if pd.notna(val) and str(val).strip() != '':
+            # 尋找客單價
+            if '平均客單價' in row_str or '客單價' in row_str:
+                for val in row:
+                    s_val = str(val).strip()
+                    if any(c.isdigit() for c in s_val) and '客單價' not in s_val:
                         try:
-                            avg_spent = int(float(str(val).replace('NT$', '').replace('$', '').replace(',', '').strip()))
+                            clean_val = s_val.replace('NT$', '').replace('$', '').replace(',', '').strip()
+                            avg_spent = int(float(clean_val))
                             break
                         except: continue
 
         parsed_days = []
-        # 2. 尋找每日明細 (修正 Regex 讓其更具包容度，例如處理 "4/16 (二)")
+        # 2. 尋找每日明細 (修正 Regex 讓其更具包容度)
         for i, row in df.iterrows():
             col0 = str(row[0]).strip()
-            # 匹配 M/D 或 M/D(...) 的格式
             m = re.search(r'(\d{1,2})/(\d{1,2})', col0)
             if m:
                 month_val, day_val = m.groups()
@@ -819,8 +824,18 @@ with tab1:
         mtd_avg_af = mtd_total_af_act / total_af_days
         mtd_avg_total = mtd_avg_bf + mtd_avg_af
         
-        rest_month_rev = df_mtd['rest_month_rev'].fillna(0).max() if 'rest_month_rev' in df_mtd.columns else 0
-        rest_avg_spent = df_mtd['rest_avg_spent'].fillna(0).max() if 'rest_avg_spent' in df_mtd.columns else 0
+        # 獲取餐廳月度總結
+        # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
+        rest_month_rev = 0
+        rest_avg_spent = 0
+        if not df_mtd.empty:
+            valid_mrev = df_mtd[df_mtd['rest_month_rev'] > 0]
+            if not valid_mrev.empty:
+                rest_month_rev = valid_mrev.iloc[-1]['rest_month_rev']
+                
+            valid_aspent = df_mtd[df_mtd['rest_avg_spent'] > 0]
+            if not valid_aspent.empty:
+                rest_avg_spent = valid_aspent.iloc[-1]['rest_avg_spent']
         
         st.markdown("<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
         sz1, sz2, sz3 = st.columns(3)
@@ -1102,12 +1117,47 @@ with tab4:
     rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=["xls", "xlsx"], key="rest_uploader")
     
     if rest_file:
-        if st.button("📥 寫入系統資料庫", key="rest_btn"):
-            saved_count = parse_and_save_restaurant(rest_file, selected_date.year)
-            if saved_count:
-                st.success(f"✅ 成功將 {saved_count} 筆每日餐廳資料存入系統資料庫！切換日期即可自動調出。")
-                time.sleep(1)
-                st.rerun()
+        # 在寫入前增加預覽區
+        try:
+            # 暫時執行解析 (不存入資料庫)
+            # 為了效率與介面，我們在這裡做個簡化的預覽
+            df_preview = pd.read_excel(rest_file, header=None)
+            st.info("🔍 **報表內容初步掃描：**")
+            
+            p_month_rev = 0
+            p_avg_spent = 0
+            found_days = 0
+            
+            for i, row in df_preview.iterrows():
+                row_str = " ".join([str(v) for v in row if pd.notna(v)])
+                if ('已結算營收' in row_str or '月營收' in row_str) and '早餐' not in row_str and '下午茶' not in row_str:
+                    for v in row:
+                        if any(c.isdigit() for c in str(v)) and not any(k in str(v) for k in ['已結算營收', '月營收']):
+                            try: p_month_rev = int(float(str(v).replace('NT$', '').replace('$', '').replace(',', '').strip())); break
+                            except: pass
+                if '客單價' in row_str:
+                    for v in row:
+                        if any(c.isdigit() for c in str(v)) and '客單價' not in str(v):
+                            try: p_avg_spent = int(float(str(v).replace('NT$', '').replace('$', '').replace(',', '').strip())); break
+                            except: pass
+                if re.search(r'\d{1,2}/\d{1,2}', str(row[0])): found_days += 1
+            
+            pv_col1, pv_col2, pv_col3 = st.columns(3)
+            pv_col1.metric("辨識出月結算營收", f"NT$ {p_month_rev:,}")
+            pv_col2.metric("辨識出平均客單價", f"NT$ {p_avg_spent:,}")
+            pv_col3.metric("辨識出每日明細", f"{found_days} 筆")
+            
+            if p_month_rev == 0:
+                st.warning("⚠️ 系統未能從報表中自動找到「月結算營收」，請確認報表格式或手動檢查。")
+
+            if st.button("📥 確認無誤，寫入系統資料庫", key="rest_btn"):
+                saved_count = parse_and_save_restaurant(rest_file, selected_date.year)
+                if saved_count:
+                    st.success(f"✅ 成功更新 {saved_count} 筆每日餐廳資料！")
+                    time.sleep(1)
+                    st.rerun()
+        except Exception as ex:
+            st.error(f"預覽失敗: {ex}")
 
     st.divider()
     st.subheader(f"餐廳手動確認區 ({date_str})")
