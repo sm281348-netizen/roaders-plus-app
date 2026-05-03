@@ -48,14 +48,45 @@ def init_db():
 init_db()
 
 # -- 基本資料庫讀寫函數 (需優先定義以供導航邏輯使用) --
+def standardize_df_dates(df):
+    if df is None or df.empty or 'date' not in df.columns:
+        return df
+    def fix_d(val):
+        if pd.isna(val) or str(val).strip() == '' or str(val).strip() == 'NaT': 
+            return ""
+        v_str = str(val).split(' ')[0].strip()
+        
+        import re
+        # 處理民國年或簡寫 (例如 115/4/30 或 115-04-30)
+        m_tw = re.match(r'^(\d{2,3})[/-](\d{1,2})[/-](\d{1,2})$', v_str)
+        if m_tw:
+            y, m, d = int(m_tw.group(1)), int(m_tw.group(2)), int(m_tw.group(3))
+            if y < 1000: y += 1911
+            return f"{y:04d}-{m:02d}-{d:02d}"
+            
+        # 處理只有月跟日的狀況 (例如 4/30 或 04-30)
+        m_md = re.match(r'^(\d{1,2})[/-](\d{1,2})$', v_str)
+        if m_md:
+            import datetime
+            curr_y = datetime.datetime.now().year
+            m, d = int(m_md.group(1)), int(m_md.group(2))
+            return f"{curr_y:04d}-{m:02d}-{d:02d}"
+
+        try:
+            p = pd.to_datetime(v_str)
+            if pd.notna(p): return p.strftime('%Y-%m-%d')
+        except: pass
+        return v_str
+    df['date'] = df['date'].apply(fix_d)
+    return df
+
 def get_daily_data(d_str):
     try:
         # 讀取完整表單 (快取設定為 1 分鐘)
         df = conn.read(worksheet="daily_data", ttl="1m")
         if df is not None and not df.empty:
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            df = standardize_df_dates(df)
             # 確保唯一
             df = df.drop_duplicates(subset='date', keep='last')
             res = df[df['date'] == d_str]
@@ -83,6 +114,8 @@ def save_daily_data(d_str, data_dict):
         df = conn.read(worksheet="daily_data", ttl="0")
         if df is None: df = pd.DataFrame()
         
+        df = standardize_df_dates(df)
+        
         data_dict['date'] = d_str
         new_row = pd.DataFrame([data_dict])
         
@@ -90,6 +123,8 @@ def save_daily_data(d_str, data_dict):
             df = df[df['date'] != d_str]
         
         df = pd.concat([df, new_row], ignore_index=True)
+        if 'date' in df.columns:
+            df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_data", data=df.fillna(""))
         st.cache_data.clear()
     except Exception as e:
@@ -148,6 +183,8 @@ def save_daily_log(d_str, log_text):
         df = conn.read(worksheet="daily_logs", ttl="0")
         if df is None or df.empty:
             df = pd.DataFrame(columns=["date", "log"])
+            
+        df = standardize_df_dates(df)
         
         # 確保欄位存在
         if 'date' not in df.columns or 'log' not in df.columns:
@@ -159,6 +196,8 @@ def save_daily_log(d_str, log_text):
             df = df[df['date'] != d_str]
         
         df = pd.concat([df, new_row], ignore_index=True)
+        if 'date' in df.columns:
+            df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_logs", data=df.fillna(""))
         st.cache_data.clear()
         st.toast(f"✅ {d_str} 日誌已自動對齊 Google Sheet！")
@@ -221,8 +260,7 @@ def fetch_month_summary(year, month):
     try:
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
-            if 'date' in df_all.columns:
-                df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            df_all = standardize_df_dates(df_all)
             # 確保日期唯一，避免重複加總
             df_all = df_all.drop_duplicates(subset='date', keep='last')
             df = df_all[(df_all['date'] >= m_start) & (df_all['date'] <= m_end)].copy()
@@ -286,14 +324,50 @@ field_mapping = {
 }
 
 def sync_st_to_db(target_d_str):
+    # 先獲取目前的 DB 資料作為比對基準
+    db_data = get_daily_data(target_d_str)
+    
     # 同步數值數據
-    update_dict = {db_col: st.session_state[ss_key] for ss_key, (db_col, _) in field_mapping.items() if ss_key in st.session_state}
-    if update_dict:
+    update_dict = {}
+    has_changes = False
+    
+    for ss_key, (db_col, default_val) in field_mapping.items():
+        if ss_key in st.session_state:
+            curr_val = st.session_state[ss_key]
+            update_dict[db_col] = curr_val
+            
+            # 從 DB 解析原本應該長怎樣
+            db_val = db_data.get(db_col)
+            if pd.isna(db_val) or db_val is None:
+                norm_db = default_val
+            else:
+                try:
+                    if isinstance(default_val, int): norm_db = int(float(db_val))
+                    elif isinstance(default_val, float): norm_db = float(db_val)
+                    else: norm_db = str(db_val)
+                except:
+                    norm_db = default_val
+            
+            # 判斷是否真的改變
+            if isinstance(curr_val, float) and isinstance(norm_db, float):
+                import math
+                if not math.isclose(curr_val, norm_db, abs_tol=1e-5):
+                    has_changes = True
+                    with open("debug_save.log", "a") as f: f.write(f"[{target_d_str}] DIFF: {db_col} ({type(curr_val)})={curr_val} vs DB {norm_db} ({type(norm_db)})\n")
+            elif curr_val != norm_db:
+                has_changes = True
+                with open("debug_save.log", "a") as f: f.write(f"[{target_d_str}] DIFF: {db_col} ({type(curr_val)})={repr(curr_val)} vs DB {repr(norm_db)} ({type(norm_db)})\n")
+
+    if has_changes:
         save_daily_data(target_d_str, update_dict)
     
     # 單獨同步日誌
     if 'input_daily_log' in st.session_state:
-        save_daily_log(target_d_str, st.session_state['input_daily_log'])
+        curr_log = st.session_state['input_daily_log'].strip()
+        db_log = str(get_daily_log(target_d_str) or "").strip()
+        if curr_log != db_log:
+            with open("debug_save.log", "a") as f: f.write(f"[{target_d_str}] LOG DIFF: curr={repr(curr_log)} vs db={repr(db_log)}\n")
+            save_daily_log(target_d_str, curr_log)
 
 def prev_day():
     st.session_state['sidebar_date'] -= datetime.timedelta(days=1)
@@ -308,20 +382,14 @@ col2.button("後一天 ➡️", on_click=next_day)
 selected_date = st.sidebar.date_input("選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
 date_str = str(selected_date)
 
-# --- 核心修復：檢測日期切換並自動強制存檔舊日期 ---
 # 追蹤當前正在編輯的日期
 if '_actual_current_date' not in st.session_state:
     st.session_state['_actual_current_date'] = date_str
-# 追蹤當前 session_state 內容是否已經從資料庫載入完成 (防止存入預設的 0)
 if '_data_is_loaded' not in st.session_state:
     st.session_state['_data_is_loaded'] = False
 
 if st.session_state['_actual_current_date'] != date_str:
-    # 只有在「確定已經載入過舊日期資料」的情況下，才在切換時存檔
-    if st.session_state.get('_data_is_loaded', False):
-        sync_st_to_db(st.session_state['_actual_current_date'])
-    
-    # 切換日期標記，並重設載入狀態（因為新日期的資料還沒讀取）
+    # 移除原本無條件在切換日期時自動存檔的邏輯，避免單純查看舊日期造成不必要的寫入或位置跳動
     st.session_state['_actual_current_date'] = date_str
     st.session_state['_data_is_loaded'] = False
 
@@ -527,6 +595,7 @@ def parse_and_save_jinxu(file):
         if updates:
             df_existing = conn.read(worksheet="daily_data", ttl="0")
             if df_existing is None: df_existing = pd.DataFrame()
+            df_existing = standardize_df_dates(df_existing)
             df_new = pd.DataFrame(updates)
             
             # 合併數據 (以日期為 key，部分更新)
@@ -536,6 +605,9 @@ def parse_and_save_jinxu(file):
                 df_final = df_new.combine_first(df_existing).reset_index()
             else:
                 df_final = df_new.reset_index()
+                
+            if 'date' in df_final.columns:
+                df_final = df_final.sort_values('date').reset_index(drop=True)
                 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
             st.cache_data.clear()
@@ -631,8 +703,7 @@ def parse_and_save_restaurant(file, current_year):
             if df_existing is None: df_existing = pd.DataFrame()
             
             # 重要：確保現有資料的 date 也是字串，否則 combine_first 的 join 會失效
-            if not df_existing.empty and 'date' in df_existing.columns:
-                df_existing['date'] = pd.to_datetime(df_existing['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            df_existing = standardize_df_dates(df_existing)
             
             df_new = pd.DataFrame(parsed_days)
             
@@ -644,6 +715,9 @@ def parse_and_save_restaurant(file, current_year):
                 df_final = df_new.combine_first(df_existing).reset_index()
             else:
                 df_final = df_new.reset_index()
+                
+            if 'date' in df_final.columns:
+                df_final = df_final.sort_values('date').reset_index(drop=True)
                 
             # 寫回資料庫
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
@@ -750,8 +824,7 @@ with tab1:
     try:
         df_all = conn.read(worksheet="daily_data", ttl="10m")
         if df_all is not None and not df_all.empty:
-            if 'date' in df_all.columns:
-                df_all['date'] = pd.to_datetime(df_all['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            df_all = standardize_df_dates(df_all)
             # 防止重複資料毀掉加總
             df_all = df_all.drop_duplicates(subset='date', keep='last')
             df_mtd = df_all[(df_all['date'] >= start_of_month) & (df_all['date'] <= date_str)].copy()
