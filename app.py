@@ -1620,6 +1620,8 @@ with tab7:
     # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
     if not df_emp.empty and 'employee_id' in df_emp.columns:
         df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
+        # 移除 pandas 自動將數字轉為 float 所產生的 .0 結尾
+        df_emp['employee_id'] = df_emp['employee_id'].str.replace(r'\.0$', '', regex=True)
         df_emp = df_emp[df_emp['employee_id'] != '']
         df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
     
