@@ -1557,12 +1557,20 @@ with tab7:
     def add_employee(e_id, name, dept, pos, salary):
         try:
             df = conn.read(worksheet="employees", ttl="0")
-            if df is None: df = pd.DataFrame(columns=["employee_id", "name", "dept", "position", "salary"])
+            required_cols = ["employee_id", "name", "dept", "position", "salary"]
             
-            if e_id in df['employee_id'].values:
+            if df is None or df.empty or not all(c in df.columns for c in required_cols):
+                if df is None or df.empty:
+                    df = pd.DataFrame(columns=required_cols)
+                else:
+                    for c in required_cols:
+                        if c not in df.columns:
+                            df[c] = ""
+                            
+            if str(e_id) in df['employee_id'].astype(str).values:
                 return "ID_EXISTS"
                 
-            new_emp = pd.DataFrame([{"employee_id": e_id, "name": name, "dept": dept, "position": pos, "salary": salary}])
+            new_emp = pd.DataFrame([{"employee_id": str(e_id), "name": name, "dept": dept, "position": pos, "salary": salary}])
             df = pd.concat([df, new_emp], ignore_index=True)
             conn.update(worksheet="employees", data=df.fillna(""))
             return True
@@ -1572,8 +1580,9 @@ with tab7:
     def delete_employee(e_id):
         try:
             df = conn.read(worksheet="employees", ttl="0")
-            if df is not None:
-                df = df[df['employee_id'] != e_id]
+            if df is not None and not df.empty and 'employee_id' in df.columns:
+                df['employee_id'] = df['employee_id'].astype(str)
+                df = df[df['employee_id'] != str(e_id)]
                 conn.update(worksheet="employees", data=df.fillna(""))
         except:
             pass
