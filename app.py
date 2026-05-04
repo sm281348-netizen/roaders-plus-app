@@ -1617,16 +1617,22 @@ with tab7:
     # -- UI: 員工列表與排序 --
     df_emp = get_all_employees()
     
+    # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
+    if not df_emp.empty and 'employee_id' in df_emp.columns:
+        df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
+        df_emp = df_emp[df_emp['employee_id'] != '']
+        df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
+    
     if df_emp.empty:
         st.info("💡 目前資料庫中尚無員工資訊。")
     else:
         # 計算總薪資 (排除職位為 PT 的人)
         # 確保 position 欄位存在且處理大小寫
         if 'position' in df_emp.columns:
-            non_pt_df = df_emp[df_emp['position'].fillna('').str.upper() != 'PT']
-            total_salary = non_pt_df['salary'].sum()
+            non_pt_df = df_emp[df_emp['position'].fillna('').astype(str).str.upper() != 'PT']
+            total_salary = pd.to_numeric(non_pt_df['salary'], errors='coerce').fillna(0).sum()
         else:
-            total_salary = df_emp['salary'].sum()
+            total_salary = pd.to_numeric(df_emp['salary'], errors='coerce').fillna(0).sum()
 
         st.markdown(f"""
         <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
@@ -1642,17 +1648,21 @@ with tab7:
 
         # 搜尋過濾
         if search_query:
-            df_emp = df_emp[df_emp['name'].str.contains(search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
+            df_emp = df_emp[df_emp['name'].astype(str).str.contains(search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
+
+        # 確保 salary 為數值以便排序
+        if 'salary' in df_emp.columns:
+            df_emp['salary'] = pd.to_numeric(df_emp['salary'], errors='coerce').fillna(0)
 
         # 排序邏輯
         if sort_opt == "員工編號順序":
             df_emp = df_emp.sort_values("employee_id")
         elif sort_opt == "薪資 (由高到低)":
-            df_emp = df_emp.sort_values("salary", ascending=False)
+            if 'salary' in df_emp.columns: df_emp = df_emp.sort_values("salary", ascending=False)
         elif sort_opt == "薪資 (由低到高)":
-            df_emp = df_emp.sort_values("salary", ascending=True)
+            if 'salary' in df_emp.columns: df_emp = df_emp.sort_values("salary", ascending=True)
         elif sort_opt == "按部門排序":
-            df_emp = df_emp.sort_values(["dept", "employee_id"])
+            if 'dept' in df_emp.columns: df_emp = df_emp.sort_values(["dept", "employee_id"])
 
         # 自定義表格顯示
         st.write(f"📊 目前共有 {len(df_emp)} 位員工")
@@ -1670,14 +1680,19 @@ with tab7:
         
         for idx, row in df_emp.iterrows():
             row_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
-            row_cols[0].write(row['employee_id'])
-            row_cols[1].write(row['name'])
-            row_cols[2].write(row['dept'])
-            row_cols[3].write(row['position'])
-            row_cols[4].write(f"NT$ {int(row['salary']):,}")
+            row_cols[0].write(row.get('employee_id', ''))
+            row_cols[1].write(row.get('name', ''))
+            row_cols[2].write(row.get('dept', ''))
+            row_cols[3].write(row.get('position', ''))
             
-            if row_cols[5].button("🗑️", key=f"del_{row['employee_id']}", help="刪除此員工"):
-                delete_employee(row['employee_id'])
+            salary_val = row.get('salary', 0)
+            try: salary_int = int(float(salary_val))
+            except: salary_int = 0
+            row_cols[4].write(f"NT$ {salary_int:,}")
+            
+            # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
+            if row_cols[5].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
+                delete_employee(row.get('employee_id', ''))
                 st.toast(f"已刪除員工: {row['name']}")
                 time.sleep(0.5)
                 st.rerun()
