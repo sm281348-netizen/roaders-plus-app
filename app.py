@@ -835,6 +835,13 @@ with tab1:
         df_mtd = pd.DataFrame()
 
     if not df_mtd.empty:
+        # 先將所有可能計算的欄位轉為數值，避免 Google Sheets 帶來的字串問題
+        for col in ['bf_theme_act', 'bf_zq_act', 'af_theme_act', 'af_zq_act',
+                    'bf_total_act', 'af_total_act', 'bf_total_est', 'af_total_est',
+                    'rest_month_rev', 'rest_avg_spent']:
+            if col in df_mtd.columns:
+                df_mtd[col] = pd.to_numeric(df_mtd[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
         mtd_rooms = 0.0
         mtd_rev = 0.0
         total_sellable = 0.0
@@ -869,7 +876,7 @@ with tab1:
         
         # 獲取餐廳資料 (正確結算，不重複加總)
         rest_mrev = 0
-        if not df_mtd.empty:
+        if not df_mtd.empty and 'rest_month_rev' in df_mtd.columns:
             valid_rest = df_mtd[df_mtd['rest_month_rev'] > 0]
             if not valid_rest.empty:
                 rest_mrev = valid_rest.iloc[-1]['rest_month_rev']
@@ -892,14 +899,14 @@ with tab1:
         st.write("##### 🍽️ 餐廳營運累計 (MTD)")
         
         # MTD 餐廳計算
-        mtd_bf_theme = df_mtd['bf_theme_act'].fillna(0).sum() if 'bf_theme_act' in df_mtd.columns else 0
-        mtd_bf_zq = df_mtd['bf_zq_act'].fillna(0).sum() if 'bf_zq_act' in df_mtd.columns else 0
-        mtd_af_theme = df_mtd['af_theme_act'].fillna(0).sum() if 'af_theme_act' in df_mtd.columns else 0
-        mtd_af_zq = df_mtd['af_zq_act'].fillna(0).sum() if 'af_zq_act' in df_mtd.columns else 0
+        mtd_bf_theme = df_mtd['bf_theme_act'].sum() if 'bf_theme_act' in df_mtd.columns else 0
+        mtd_bf_zq = df_mtd['bf_zq_act'].sum() if 'bf_zq_act' in df_mtd.columns else 0
+        mtd_af_theme = df_mtd['af_theme_act'].sum() if 'af_theme_act' in df_mtd.columns else 0
+        mtd_af_zq = df_mtd['af_zq_act'].sum() if 'af_zq_act' in df_mtd.columns else 0
         
         # 本月整體總和
-        mtd_total_bf_act = df_mtd['bf_total_act'].fillna(0).sum() if 'bf_total_act' in df_mtd.columns else 0
-        mtd_total_af_act = df_mtd['af_total_act'].fillna(0).sum() if 'af_total_act' in df_mtd.columns else 0
+        mtd_total_bf_act = df_mtd['bf_total_act'].sum() if 'bf_total_act' in df_mtd.columns else 0
+        mtd_total_af_act = df_mtd['af_total_act'].sum() if 'af_total_act' in df_mtd.columns else 0
         
         # 為了更精確，僅採計「有預估客數」或「有實際客數」的日子為工作日（這會完美略過月底那些全是 0 的未來天數）
         if 'bf_total_act' in df_mtd.columns:
@@ -921,13 +928,9 @@ with tab1:
         
         # 獲取餐廳月度總結
         # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
-        rest_month_rev = 0
+        rest_month_rev = rest_mrev # 前面已計算過
         rest_avg_spent = 0
-        if not df_mtd.empty:
-            valid_mrev = df_mtd[df_mtd['rest_month_rev'] > 0]
-            if not valid_mrev.empty:
-                rest_month_rev = valid_mrev.iloc[-1]['rest_month_rev']
-                
+        if not df_mtd.empty and 'rest_avg_spent' in df_mtd.columns:
             valid_aspent = df_mtd[df_mtd['rest_avg_spent'] > 0]
             if not valid_aspent.empty:
                 rest_avg_spent = valid_aspent.iloc[-1]['rest_avg_spent']
