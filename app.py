@@ -705,6 +705,18 @@ def parse_and_save_restaurant(file, current_year):
             # 重要：確保現有資料的 date 也是字串，否則 combine_first 的 join 會失效
             df_existing = standardize_df_dates(df_existing)
             
+            # --- 修復：如果成功解析出月結算營收或客單價，強制更新現有資料庫中該月份的所有紀錄 ---
+            # 避免使用者先點擊了未來的日期產生了帶有舊營收的紀錄，導致 MTD 永遠抓到最後一天的舊數據
+            months = set("-".join(str(d['date']).split('-')[:2]) for d in parsed_days)
+            if not df_existing.empty and 'date' in df_existing.columns:
+                for m in months:
+                    mask = df_existing['date'].str.startswith(m, na=False)
+                    if mask.any():
+                        if month_rev > 0:
+                            df_existing.loc[mask, 'rest_month_rev'] = month_rev
+                        if avg_spent > 0:
+                            df_existing.loc[mask, 'rest_avg_spent'] = avg_spent
+            
             df_new = pd.DataFrame(parsed_days)
             
             # 合併數據 (以日期為 key，部分更新)
