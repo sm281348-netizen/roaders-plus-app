@@ -15,12 +15,12 @@ from streamlit_gsheets import GSheetsConnection
 import holidays
 
 TARGET_HOLIDAY_COUNTRIES = {
-    'KR': '🇰🇷',
-    'SG': '🇸🇬',
-    'HK': '🇭🇰',
-    'JP': '🇯🇵',
-    'US': '🇺🇸',
-    'TW': '🇹🇼'
+    'KR': '[韓]',
+    'SG': '[星]',
+    'HK': '[港]',
+    'JP': '[日]',
+    'US': '[美]',
+    'TW': '[台]'
 }
 OTHER_HOLIDAY_COUNTRIES = ['PH', 'MY', 'TH', 'VN']
 
