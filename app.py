@@ -24,6 +24,16 @@ TARGET_HOLIDAY_COUNTRIES = {
 }
 OTHER_HOLIDAY_COUNTRIES = ['PH', 'MY', 'TH', 'VN']
 
+@st.cache_data(ttl=86400 * 30)
+def translate_to_zh(text):
+    if not text: return text
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='auto', target='zh-TW')
+        return translator.translate(text)
+    except:
+        return text
+
 @st.cache_data(ttl=86400)
 def get_holidays_for_month(year, month):
     """回傳當月所有目標國家的國定假日字典: { 'YYYY-MM-DD': {'flags': '...', 'details': [...] } }"""
@@ -48,7 +58,9 @@ def get_holidays_for_month(year, month):
         
         for code, h_obj in h_objs.items():
             if dt_obj in h_obj:
-                h_name = h_obj.get(dt_obj)
+                raw_name = h_obj.get(dt_obj)
+                h_name = translate_to_zh(raw_name)
+                
                 if code in TARGET_HOLIDAY_COUNTRIES:
                     day_flags.add(TARGET_HOLIDAY_COUNTRIES[code])
                     day_details.append(f"{TARGET_HOLIDAY_COUNTRIES[code]} {code}: {h_name}")
@@ -89,12 +101,15 @@ def get_upcoming_holidays(start_date, days=30):
         has_other = False
         for code, h_obj in h_objs.items():
             if dt_obj in h_obj:
+                raw_name = h_obj.get(dt_obj)
+                h_name = translate_to_zh(raw_name)
+                
                 if code in TARGET_HOLIDAY_COUNTRIES:
                     day_flags.add(TARGET_HOLIDAY_COUNTRIES[code])
-                    day_details.append(f"{TARGET_HOLIDAY_COUNTRIES[code]} {code}: {h_obj.get(dt_obj)}")
+                    day_details.append(f"{TARGET_HOLIDAY_COUNTRIES[code]} {code}: {h_name}")
                 else:
                     has_other = True
-                    day_details.append(f"🌍 {code}: {h_obj.get(dt_obj)}")
+                    day_details.append(f"🌍 {code}: {h_name}")
         
         flags_str = "".join(sorted(list(day_flags)))
         if has_other: flags_str += "🌍"
