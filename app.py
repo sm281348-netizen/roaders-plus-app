@@ -35,7 +35,7 @@ def translate_to_zh(text):
         return text
 
 @st.cache_data(ttl=86400)
-def get_holidays_for_month(year, month):
+def fetch_holidays_for_month(year, month):
     """回傳當月所有目標國家的國定假日字典: { 'YYYY-MM-DD': {'flags': '...', 'details': [...] } }"""
     h_objs = {}
     for code in list(TARGET_HOLIDAY_COUNTRIES.keys()) + OTHER_HOLIDAY_COUNTRIES:
@@ -82,7 +82,7 @@ def get_holidays_for_month(year, month):
     return result
 
 @st.cache_data(ttl=86400)
-def get_upcoming_holidays(start_date, days=30):
+def fetch_upcoming_holidays(start_date, days=30):
     """回傳未來 N 天內的假日"""
     years = {start_date.year, (start_date + datetime.timedelta(days=days)).year}
     h_objs = {}
@@ -1119,7 +1119,7 @@ with tab_m:
         
         if not df.empty:
             y_str, m_str = df['date'].iloc[0].split('-')[:2]
-            holidays_dict = get_holidays_for_month(int(y_str), int(m_str))
+            holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
             df['flags'] = df['date'].apply(lambda d: holidays_dict.get(d, {}).get('flags', ''))
         else:
             df['flags'] = ''
@@ -1205,7 +1205,7 @@ with tab_m:
 
     # --- B2. 即將到來的海外連假警報 ---
     st.markdown("#### 🚨 即將到來的海外連假警報 (未來 30 天)")
-    upcoming_holidays = get_upcoming_holidays(selected_date, 30)
+    upcoming_holidays = fetch_upcoming_holidays(selected_date, 30)
     if upcoming_holidays:
         alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
         for h in upcoming_holidays:
@@ -1222,7 +1222,7 @@ with tab_m:
     curr_df = m_curr['df'].copy()
     if not curr_df.empty:
         y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
-        h_dict = get_holidays_for_month(int(y_str), int(m_str))
+        h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
         curr_df['flags'] = curr_df['date'].apply(lambda d: h_dict.get(d, {}).get('flags', ''))
         
         holiday_days = curr_df[curr_df['flags'] != '']
