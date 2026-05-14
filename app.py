@@ -1006,7 +1006,7 @@ with tab_m:
         df['weekday'] = dt.dt.weekday.map(weekday_map)
         df['label'] = df['day'].astype(str) + " (" + df['weekday'] + ")"
         
-        df['color'] = df['occ_rate'].apply(lambda x: '#e74c3c' if x >= 90.0 else ('#3498db' if x >= 80.0 else '#2ecc71'))
+        df['color_category'] = df['occ_rate'].apply(lambda x: '>=90' if x >= 90.0 else ('>=80' if x >= 80.0 else '<80'))
         
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
@@ -1022,7 +1022,14 @@ with tab_m:
         
         bars = base.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.Color('color:N', scale=None)
+            color=alt.Color(
+                'color_category:N', 
+                scale=alt.Scale(
+                    domain=['>=90', '>=80', '<80'], 
+                    range=['#e74c3c', '#3498db', '#2ecc71']
+                ),
+                legend=None
+            )
         )
         
         # 新增文字標籤 (固定顯示在長條上方)
