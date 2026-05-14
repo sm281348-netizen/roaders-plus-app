@@ -42,8 +42,8 @@ def fetch_taipei_events():
             return df
     except Exception:
         # 如果分頁不存在或讀取失敗，回傳空 DataFrame
-        return pd.DataFrame(columns=['date', 'event_name', 'event_type'])
-    return pd.DataFrame(columns=['date', 'event_name', 'event_type'])
+        return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
+    return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
 @st.cache_data(ttl=86400 * 30)
 def translate_to_zh(text):
     if not text: return text
@@ -1144,21 +1144,24 @@ with tab_m:
             y_str, m_str = df['date'].iloc[0].split('-')[:2]
             holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
             
-            # 合併假日與台北活動標籤
-            def get_combined_flags(d_str):
-                h_flags = holidays_dict.get(d_str, {}).get('flags', '')
-                e_flags = ""
+            # 合併假日與台北活動標籤 (回傳列表以供 Altair 垂直堆疊)
+            def get_combined_flags_list(d_str):
+                import re
+                h_f_str = holidays_dict.get(d_str, {}).get('flags', '')
+                h_flags = re.findall(r'\[.*?\]|🌍', h_f_str)
+                
+                e_flags = []
                 if not taipei_events_df.empty:
                     day_events = taipei_events_df[taipei_events_df['date'] == d_str]
                     for _, row in day_events.iterrows():
                         e_label = EVENT_TYPE_LABELS.get(row['event_type'], '[活]')
-                        if e_label not in e_flags: # 避免重複標籤
-                            e_flags += e_label
+                        if e_label not in e_flags:
+                            e_flags.append(e_label)
                 return h_flags + e_flags
 
-            df['flags'] = df['date'].apply(get_combined_flags)
+            df['flags_list'] = df['date'].apply(get_combined_flags_list)
         else:
-            df['flags'] = ''
+            df['flags_list'] = []
             
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
@@ -1195,18 +1198,19 @@ with tab_m:
             text=alt.Text('occ_rate:Q', format='.1f')
         )
 
-        # 新增國旗標記 (在文字標籤上方)
+        # 新增標記 (垂直堆疊顯示於文字標籤上方)
         flags_text = base.mark_text(
             align='center',
             baseline='bottom',
             dy=-22,
-            fontSize=14
+            fontSize=12,
+            lineHeight=12
         ).encode(
             y=alt.Y('occ_rate:Q'),
-            text='flags:N'
+            text='flags_list:N'
         )
         
-        chart = (bars + text + flags_text).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
+        chart = (bars + text + flags_text).properties(title=f"{month_data['month_label']} {title_suffix}", height=350)
         st.altair_chart(chart, use_container_width=True)
 
     with col_chart1: render_occ_chart(m_prev_prev, "(前前月)")
@@ -1243,33 +1247,42 @@ with tab_m:
     st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
     upcoming_holidays = fetch_upcoming_holidays(selected_date, 30)
     
-    # 合併台北重大活動至警報列表
-    combined_alerts = upcoming_holidays.copy()
-    if not taipei_events_df.empty:
-        end_date = selected_date + datetime.timedelta(days=30)
-        future_events = taipei_events_df[(taipei_events_df['date'] >= selected_date.strftime('%Y-%m-%d')) & 
-                                         (taipei_events_df['date'] <= end_date.strftime('%Y-%m-%d'))]
-        for _, row in future_events.iterrows():
-            e_label = EVENT_TYPE_LABELS.get(row['event_type'], '[活]')
-            found = False
-            for a in combined_alerts:
-                if a['date'] == row['date']:
-                    if e_label not in a['flags']: a['flags'] += e_label
-                    a['details'] += f", 🏟️ {row['event_name']}"
-                    found = True
-                    break
-            if not found:
-                combined_alerts.append({
-                    'date': row['date'],
-                    'flags': e_label,
-                    'details': f"🏟️ {row['event_name']}"
-                })
-    combined_alerts.sort(key=lambda x: x['date'])
+    # 合併台北重大活動至警報列表 (分開呈現假日與活動)
+    combined_alerts = []
+    h_map = {h['date']: h for h in upcoming_holidays}
+    
+    for i in range(31):
+        d_obj = selected_date + datetime.timedelta(days=i)
+        d_str = d_obj.strftime('%Y-%m-%d')
+        
+        h_info = h_map.get(d_str)
+        e_list = []
+        e_labels = []
+        if not taipei_events_df.empty:
+            day_events = taipei_events_df[taipei_events_df['date'] == d_str]
+            for _, row in day_events.iterrows():
+                v_suffix = f" <span style='color:#777;'>@{row['venue']}</span>" if pd.notna(row['venue']) and str(row['venue']).strip() != "" else ""
+                e_list.append(f"🏟️ {row['event_name']}{v_suffix}")
+                e_labels.append(EVENT_TYPE_LABELS.get(row['event_type'], '[活]'))
+        
+        if h_info or e_list:
+            all_flags = (h_info['flags'] if h_info else "") + "".join(sorted(list(set(e_labels))))
+            details_html = ""
+            if h_info:
+                details_html += f"<div style='margin-bottom:4px; color:#856404;'>🌍 {h_info['details']}</div>"
+            if e_list:
+                details_html += "<div style='color:#2c3e50;'>" + "<br>".join(e_list) + "</div>"
+            
+            combined_alerts.append({
+                'date': d_str,
+                'flags': all_flags,
+                'details_html': details_html
+            })
 
     if combined_alerts:
         alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
         for h in combined_alerts:
-            alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.2em;'>{h['flags']}</span><br><span style='font-size: 0.9em; color: #666;'>{h['details']}</span></div>"
+            alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.1em;'>{h['flags']}</span><br><div style='font-size: 0.85em; margin-top:5px;'>{h['details_html']}</div></div>"
         alert_html += "</div>"
         st.write(alert_html, unsafe_allow_html=True)
     else:
@@ -1277,40 +1290,42 @@ with tab_m:
 
     st.divider()
 
-    # --- C. 假日與活動績效貢獻度分析 ---
-    st.markdown("#### 🌍 假日與重大活動績效分析")
+    # --- C. 假日與活動績效分析 ---
+    st.markdown("#### 🌍 績效貢獻度交叉分析")
     curr_df = m_curr['df'].copy()
     if not curr_df.empty:
         y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
         h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
+        h_dates = {d for d, info in h_dict.items() if info['flags']}
+        e_dates = set(taipei_events_df['date'].unique()) if not taipei_events_df.empty else set()
         
-        def get_analysis_flags(d_str):
-            h_f = h_dict.get(d_str, {}).get('flags', '')
-            e_f = ""
-            if not taipei_events_df.empty:
-                de = taipei_events_df[taipei_events_df['date'] == d_str]
-                for _, r in de.iterrows(): e_f += EVENT_TYPE_LABELS.get(r['event_type'], '[活]')
-            return h_f + e_f
+        curr_df['is_h'] = curr_df['date'].isin(h_dates)
+        curr_df['is_e'] = curr_df['date'].isin(e_dates)
+        curr_df['is_any'] = curr_df['is_h'] | curr_df['is_e']
 
-        curr_df['any_flags'] = curr_df['date'].apply(get_analysis_flags)
-        
-        holiday_days = curr_df[curr_df['any_flags'] != '']
-        non_holiday_days = curr_df[curr_df['any_flags'] == '']
-        
-        h_occ = holiday_days['occ_rate'].mean() if len(holiday_days) > 0 else 0
-        h_adr = holiday_days['adr'].mean() if len(holiday_days) > 0 else 0
-        nh_occ = non_holiday_days['occ_rate'].mean() if len(non_holiday_days) > 0 else 0
-        nh_adr = non_holiday_days['adr'].mean() if len(non_holiday_days) > 0 else 0
-        
-        col_c1, col_c2, col_c3 = st.columns(3)
-        with col_c1:
-            st.info(f"🎉 **有假日/活動 ({len(holiday_days)}天)**\n\n平均住房率：{h_occ:.1f}%\n\n平均 ADR：NT$ {int(h_adr):,}")
-        with col_c2:
-            st.info(f"👔 **無假日/活動 ({len(non_holiday_days)}天)**\n\n平均住房率：{nh_occ:.1f}%\n\n平均 ADR：NT$ {int(nh_adr):,}")
-        with col_c3:
+        def render_impact_row(df, condition_col, title, icon):
+            holiday_days = df[df[condition_col]]
+            non_holiday_days = df[~df[condition_col]]
+            
+            h_occ = holiday_days['occ_rate'].mean() if len(holiday_days) > 0 else 0
+            h_adr = holiday_days['adr'].mean() if len(holiday_days) > 0 else 0
+            nh_occ = non_holiday_days['occ_rate'].mean() if len(non_holiday_days) > 0 else 0
+            nh_adr = non_holiday_days['adr'].mean() if len(non_holiday_days) > 0 else 0
+            
             diff_occ = h_occ - nh_occ
             diff_adr = h_adr - nh_adr
-            st.success(f"📈 **帶動效益**\n\n住房率提升：{diff_occ:+.1f}%\n\nADR 提升：NT$ {int(diff_adr):+,}")
+            
+            st.markdown(f"**{icon} {title}**")
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"<div style='background:#f1f8ff; padding:10px; border-radius:5px; border-left:3px solid #3498db; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>有標籤 ({len(holiday_days)}天)</p><strong style='font-size:16px;'>{h_occ:.1f}% / NT$ {int(h_adr):,}</strong></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div style='background:#f8f9fa; padding:10px; border-radius:5px; border-left:3px solid #ccc; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>無標籤 ({len(non_holiday_days)}天)</p><strong style='font-size:16px;'>{nh_occ:.1f}% / NT$ {int(nh_adr):,}</strong></div>", unsafe_allow_html=True)
+            color = "#2ecc71" if diff_occ >= 0 else "#e74c3c"
+            c3.markdown(f"<div style='background:#f0fff4; padding:10px; border-radius:5px; border-left:3px solid #2ecc71; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>帶動效益</p><strong style='font-size:16px; color:{color};'>{diff_occ:+.1f}% / NT$ {int(diff_adr):+,}</strong></div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:15px;'></div>", unsafe_allow_html=True)
+
+        render_impact_row(curr_df, 'is_any', "綜合分析 (假日 + 台北活動)", "📊")
+        render_impact_row(curr_df, 'is_h', "僅外國節慶分析", "🌍")
+        render_impact_row(curr_df, 'is_e', "僅台北重大活動分析", "🏟️")
             
         with st.expander("📅 查看本月所有假日與台北活動詳細清單"):
             # Combine details for expander
@@ -1323,7 +1338,8 @@ with tab_m:
                     if not taipei_events_df.empty:
                         de = taipei_events_df[taipei_events_df['date'] == d]
                         for _, r in de.iterrows():
-                            e_info += f", 🏟️ {r['event_name']} ({r['event_type']})"
+                            v_suffix = f" @{r['venue']}" if pd.notna(r['venue']) and str(r['venue']).strip() != "" else ""
+                            e_info += f", 🏟️ {r['event_name']}{v_suffix} ({r['event_type']})"
                     
                     if h_info['flags'] or e_info:
                         st.markdown(f"- **{d}** {h_info['flags']}{e_info}: {', '.join(h_info['details'])}")
