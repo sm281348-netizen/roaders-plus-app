@@ -1159,9 +1159,12 @@ with tab_m:
                             e_flags.append(e_label)
                 return h_flags + e_flags
 
-            df['flags_multiline'] = df['date'].apply(lambda d: "\n".join(get_combined_flags_list(d)))
+            # 建立多層標籤資料 (最多支援 5 層垂直堆疊，避免過度擁擠)
+            for i in range(5):
+                df[f'flag_{i}'] = df['date'].apply(lambda d: get_combined_flags_list(d)[i] if len(get_combined_flags_list(d)) > i else '')
         else:
-            df['flags_multiline'] = ''
+            for i in range(5):
+                df[f'flag_{i}'] = ''
             
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
@@ -1186,7 +1189,7 @@ with tab_m:
             )
         )
         
-        # 新增文字標籤 (固定顯示在長條上方)
+        # 住房率文字標籤 (dy=-5)
         text = base.mark_text(
             align='center',
             baseline='bottom',
@@ -1198,20 +1201,24 @@ with tab_m:
             text=alt.Text('occ_rate:Q', format='.1f')
         )
 
-        # 新增標記 (垂直堆疊顯示於文字標籤上方)
-        flags_text = base.mark_text(
-            align='center',
-            baseline='bottom',
-            dy=-22,
-            fontSize=12,
-            lineHeight=12,
-            lineBreak='\n'
-        ).encode(
-            y=alt.Y('occ_rate:Q'),
-            text='flags_multiline:N'
-        )
+        # 建立多層垂直標籤 (保證在所有瀏覽器都不會重疊)
+        # 第一層 (dy=-22), 第二層 (dy=-35), 第三層 (dy=-48) ...
+        layers = [bars, text]
+        for i in range(5):
+            offset = -22 - (i * 13)
+            f_layer = base.mark_text(
+                align='center',
+                baseline='bottom',
+                dy=offset,
+                fontSize=11,
+                fontWeight='normal'
+            ).encode(
+                y=alt.Y('occ_rate:Q'),
+                text=f'flag_{i}:N'
+            )
+            layers.append(f_layer)
         
-        chart = (bars + text + flags_text).properties(title=f"{month_data['month_label']} {title_suffix}", height=350)
+        chart = alt.layer(*layers).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
         st.altair_chart(chart, use_container_width=True)
 
     with col_chart1: render_occ_chart(m_prev_prev, "(前前月)")
