@@ -1159,9 +1159,9 @@ with tab_m:
                             e_flags.append(e_label)
                 return h_flags + e_flags
 
-            df['flags_list'] = df['date'].apply(get_combined_flags_list)
+            df['flags_multiline'] = df['date'].apply(lambda d: "\n".join(get_combined_flags_list(d)))
         else:
-            df['flags_list'] = []
+            df['flags_multiline'] = ''
             
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
@@ -1204,10 +1204,11 @@ with tab_m:
             baseline='bottom',
             dy=-22,
             fontSize=12,
-            lineHeight=12
+            lineHeight=12,
+            lineBreak='\n'
         ).encode(
             y=alt.Y('occ_rate:Q'),
-            text='flags_list:N'
+            text='flags_multiline:N'
         )
         
         chart = (bars + text + flags_text).properties(title=f"{month_data['month_label']} {title_suffix}", height=350)
