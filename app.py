@@ -1194,12 +1194,7 @@ with tab_m:
     if upcoming_holidays:
         alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
         for h in upcoming_holidays:
-            alert_html += f"""
-            <div style="min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;">
-                <strong style="color: #856404;">{h['date']}</strong> <span style="font-size: 1.2em;">{h['flags']}</span><br>
-                <span style="font-size: 0.9em; color: #666;">{h['details']}</span>
-            </div>
-            """
+            alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.2em;'>{h['flags']}</span><br><span style='font-size: 0.9em; color: #666;'>{h['details']}</span></div>"
         alert_html += "</div>"
         st.write(alert_html, unsafe_allow_html=True)
     else:
