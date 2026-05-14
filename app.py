@@ -743,6 +743,8 @@ def parse_and_save_restaurant(file, current_year):
         st.error(f"解析餐廳報表失敗: {str(e)}")
         with st.expander("🔍 查看錯誤細節"):
             st.code(traceback.format_exc())
+        with open("debug_error.log", "w") as f:
+            f.write(traceback.format_exc())
         return False
 
 # 頁面標題
@@ -997,17 +999,36 @@ with tab_m:
         if df.empty:
             st.info(f"💡 {month_data['month_label']} 尚無數據。")
             return
-        df['day'] = pd.to_datetime(df['date']).dt.day
+            
+        dt = pd.to_datetime(df['date'])
+        df['day'] = dt.dt.day
+        weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
+        df['weekday'] = dt.dt.weekday.map(weekday_map)
+        df['label'] = df['day'].astype(str) + " (" + df['weekday'] + ")"
         
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
-            x=alt.X('day:O', title='日期', axis=alt.Axis(labelAngle=0)),
+            x=alt.X('label:O', 
+                    title='日期', 
+                    sort=df['label'].tolist(),
+                    axis=alt.Axis(
+                        labelAngle=0,
+                        labelColor=alt.expr("datum.value.indexOf('五') > -1 || datum.value.indexOf('六') > -1 ? '#e74c3c' : '#2c3e50'")
+                    )),
             tooltip=['date', 'occ_rate']
         )
         
         bars = base.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
-            color=alt.condition(alt.datum.occ_rate >= 90, alt.value('#e74c3c'), alt.value('#3498db'))
+            color=alt.condition(
+                alt.datum.occ_rate >= 90.0, 
+                alt.value('#e74c3c'), 
+                alt.condition(
+                    alt.datum.occ_rate >= 80.0, 
+                    alt.value('#3498db'), 
+                    alt.value('#2ecc71')
+                )
+            )
         )
         
         # 新增文字標籤 (固定顯示在長條上方)
