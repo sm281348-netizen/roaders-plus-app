@@ -1326,6 +1326,50 @@ with tab_m:
         render_impact_row(curr_df, 'is_any', "綜合分析 (假日 + 台北活動)", "📊")
         render_impact_row(curr_df, 'is_h', "僅外國節慶分析", "🌍")
         render_impact_row(curr_df, 'is_e', "僅台北重大活動分析", "🏟️")
+
+        st.divider()
+
+        # --- C2. 過去三個月合計績效分析 (長期趨勢) ---
+        st.markdown("#### ⏳ 過去三個月合計績效分析 (長期趨勢)")
+        # 取得前三個月日期
+        m1_date = get_month_delta(selected_date, -1)
+        m2_date = get_month_delta(selected_date, -2)
+        m3_date = get_month_delta(selected_date, -3)
+        
+        m1_sum = fetch_month_summary(m1_date.year, m1_date.month)
+        m2_sum = fetch_month_summary(m2_date.year, m2_date.month)
+        m3_sum = fetch_month_summary(m3_date.year, m3_date.month)
+        
+        hist_df = pd.concat([m1_sum['df'], m2_sum['df'], m3_sum['df']], ignore_index=True)
+        
+        if not hist_df.empty:
+            # 準備歷史資料的標籤
+            def get_hist_flags(row):
+                d = row['date']
+                y, m = int(d.split('-')[0]), int(d.split('-')[1])
+                h_f = fetch_holidays_for_month(y, m).get(d, {}).get('flags', '')
+                e_f = ""
+                if not taipei_events_df.empty:
+                    de = taipei_events_df[taipei_events_df['date'] == d]
+                    for _, r in de.iterrows(): e_f += EVENT_TYPE_LABELS.get(r['event_type'], '[活]')
+                return (h_f != ''), (e_f != '')
+
+            # 為了效能，預先抓取這幾個月的假日資料
+            hist_h_dates = set()
+            for md in [m1_date, m2_date, m3_date]:
+                hd = fetch_holidays_for_month(md.year, md.month)
+                for d, info in hd.items():
+                    if info['flags']: hist_h_dates.add(d)
+            
+            hist_df['is_h'] = hist_df['date'].isin(hist_h_dates)
+            hist_df['is_e'] = hist_df['date'].isin(set(taipei_events_df['date'].unique())) if not taipei_events_df.empty else False
+            hist_df['is_any'] = hist_df['is_h'] | hist_df['is_e']
+            
+            render_impact_row(hist_df, 'is_any', "綜合分析 (過去三個月合計)", "📊")
+            render_impact_row(hist_df, 'is_h', "僅外國節慶分析 (過去三個月合計)", "🌍")
+            render_impact_row(hist_df, 'is_e', "僅台北重大活動分析 (過去三個月合計)", "🏟️")
+        else:
+            st.info("尚無足夠的歷史數據進行長期趨勢分析。")
             
         with st.expander("📅 查看本月所有假日與台北活動詳細清單"):
             # Combine details for expander
