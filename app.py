@@ -12,6 +12,100 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from streamlit_gsheets import GSheetsConnection
+import holidays
+
+TARGET_HOLIDAY_COUNTRIES = {
+    'KR': '🇰🇷',
+    'SG': '🇸🇬',
+    'HK': '🇭🇰',
+    'JP': '🇯🇵',
+    'US': '🇺🇸',
+    'TW': '🇹🇼'
+}
+OTHER_HOLIDAY_COUNTRIES = ['PH', 'MY', 'TH', 'VN']
+
+@st.cache_data(ttl=86400)
+def get_holidays_for_month(year, month):
+    """回傳當月所有目標國家的國定假日字典: { 'YYYY-MM-DD': {'flags': '...', 'details': [...] } }"""
+    h_objs = {}
+    for code in list(TARGET_HOLIDAY_COUNTRIES.keys()) + OTHER_HOLIDAY_COUNTRIES:
+        try:
+            h_objs[code] = holidays.country_holidays(code, years=[year])
+        except Exception as e:
+            continue
+            
+    import calendar
+    _, last_day = calendar.monthrange(year, month)
+    
+    result = {}
+    for day in range(1, last_day + 1):
+        dt_obj = datetime.date(year, month, day)
+        dt_str = dt_obj.strftime('%Y-%m-%d')
+        
+        day_flags = set()
+        day_details = []
+        has_other = False
+        
+        for code, h_obj in h_objs.items():
+            if dt_obj in h_obj:
+                h_name = h_obj.get(dt_obj)
+                if code in TARGET_HOLIDAY_COUNTRIES:
+                    day_flags.add(TARGET_HOLIDAY_COUNTRIES[code])
+                    day_details.append(f"{TARGET_HOLIDAY_COUNTRIES[code]} {code}: {h_name}")
+                else:
+                    has_other = True
+                    day_details.append(f"🌍 {code}: {h_name}")
+        
+        # Sort flags to maintain consistent order
+        flags_str = "".join(sorted(list(day_flags)))
+        if has_other:
+            flags_str += "🌍"
+            
+        if flags_str:
+            result[dt_str] = {
+                'flags': flags_str,
+                'details': day_details
+            }
+            
+    return result
+
+@st.cache_data(ttl=86400)
+def get_upcoming_holidays(start_date, days=30):
+    """回傳未來 N 天內的假日"""
+    years = {start_date.year, (start_date + datetime.timedelta(days=days)).year}
+    h_objs = {}
+    for code in list(TARGET_HOLIDAY_COUNTRIES.keys()) + OTHER_HOLIDAY_COUNTRIES:
+        try:
+            h_objs[code] = holidays.country_holidays(code, years=list(years))
+        except:
+            pass
+            
+    result = []
+    for i in range(days + 1):
+        dt_obj = start_date + datetime.timedelta(days=i)
+        
+        day_details = []
+        day_flags = set()
+        has_other = False
+        for code, h_obj in h_objs.items():
+            if dt_obj in h_obj:
+                if code in TARGET_HOLIDAY_COUNTRIES:
+                    day_flags.add(TARGET_HOLIDAY_COUNTRIES[code])
+                    day_details.append(f"{TARGET_HOLIDAY_COUNTRIES[code]} {code}: {h_obj.get(dt_obj)}")
+                else:
+                    has_other = True
+                    day_details.append(f"🌍 {code}: {h_obj.get(dt_obj)}")
+        
+        flags_str = "".join(sorted(list(day_flags)))
+        if has_other: flags_str += "🌍"
+        
+        if flags_str:
+            result.append({
+                'date': dt_obj.strftime('%Y-%m-%d'),
+                'flags': flags_str,
+                'details': ", ".join(day_details)
+            })
+    return result
 
 # 設定頁面資訊
 st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="wide")
@@ -1008,6 +1102,13 @@ with tab_m:
         
         df['color_category'] = df['occ_rate'].apply(lambda x: '>=90' if x >= 90.0 else ('>=80' if x >= 80.0 else '<80'))
         
+        if not df.empty:
+            y_str, m_str = df['date'].iloc[0].split('-')[:2]
+            holidays_dict = get_holidays_for_month(int(y_str), int(m_str))
+            df['flags'] = df['date'].apply(lambda d: holidays_dict.get(d, {}).get('flags', ''))
+        else:
+            df['flags'] = ''
+            
         # 建立 Altair 圖表
         base = alt.Chart(df).encode(
             x=alt.X('label:O', 
@@ -1042,8 +1143,19 @@ with tab_m:
             y=alt.Y('occ_rate:Q'),
             text=alt.Text('occ_rate:Q', format='.1f')
         )
+
+        # 新增國旗標記 (在文字標籤上方)
+        flags_text = base.mark_text(
+            align='center',
+            baseline='bottom',
+            dy=-22,
+            fontSize=14
+        ).encode(
+            y=alt.Y('occ_rate:Q'),
+            text='flags:N'
+        )
         
-        chart = (bars + text).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
+        chart = (bars + text + flags_text).properties(title=f"{month_data['month_label']} {title_suffix}", height=300)
         st.altair_chart(chart, use_container_width=True)
 
     with col_chart1: render_occ_chart(m_prev_prev, "(前前月)")
@@ -1075,8 +1187,66 @@ with tab_m:
     st.write(html_content, unsafe_allow_html=True)
     
     st.divider()
+
+    # --- B2. 即將到來的海外連假警報 ---
+    st.markdown("#### 🚨 即將到來的海外連假警報 (未來 30 天)")
+    upcoming_holidays = get_upcoming_holidays(selected_date, 30)
+    if upcoming_holidays:
+        alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
+        for h in upcoming_holidays:
+            alert_html += f"""
+            <div style="min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;">
+                <strong style="color: #856404;">{h['date']}</strong> <span style="font-size: 1.2em;">{h['flags']}</span><br>
+                <span style="font-size: 0.9em; color: #666;">{h['details']}</span>
+            </div>
+            """
+        alert_html += "</div>"
+        st.write(alert_html, unsafe_allow_html=True)
+    else:
+        st.info("未來 30 天內目標國家無重大國定假日。")
+
+    st.divider()
+
+    # --- C. 本月海外假日貢獻度分析 ---
+    st.markdown("#### 🌍 本月海外假日貢獻度分析")
+    curr_df = m_curr['df'].copy()
+    if not curr_df.empty:
+        y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
+        h_dict = get_holidays_for_month(int(y_str), int(m_str))
+        curr_df['flags'] = curr_df['date'].apply(lambda d: h_dict.get(d, {}).get('flags', ''))
+        
+        holiday_days = curr_df[curr_df['flags'] != '']
+        non_holiday_days = curr_df[curr_df['flags'] == '']
+        
+        h_occ = holiday_days['occ_rate'].mean() if len(holiday_days) > 0 else 0
+        h_adr = holiday_days['adr'].mean() if len(holiday_days) > 0 else 0
+        nh_occ = non_holiday_days['occ_rate'].mean() if len(non_holiday_days) > 0 else 0
+        nh_adr = non_holiday_days['adr'].mean() if len(non_holiday_days) > 0 else 0
+        
+        col_c1, col_c2, col_c3 = st.columns(3)
+        with col_c1:
+            st.info(f"🎉 **有海外假日 ({len(holiday_days)}天)**\n\n平均住房率：{h_occ:.1f}%\n\n平均 ADR：NT$ {int(h_adr):,}")
+        with col_c2:
+            st.info(f"👔 **無海外假日 ({len(non_holiday_days)}天)**\n\n平均住房率：{nh_occ:.1f}%\n\n平均 ADR：NT$ {int(nh_adr):,}")
+        with col_c3:
+            diff_occ = h_occ - nh_occ
+            diff_adr = h_adr - nh_adr
+            st.success(f"📈 **假日帶動效益**\n\n住房率提升：{diff_occ:+.1f}%\n\nADR 提升：NT$ {int(diff_adr):+,}")
+            
+        with st.expander("📅 查看本月所有海外假日詳細清單"):
+            has_holidays = False
+            for d, h_info in h_dict.items():
+                if h_info['flags']:
+                    st.markdown(f"- **{d}** {h_info['flags']}: {', '.join(h_info['details'])}")
+                    has_holidays = True
+            if not has_holidays:
+                st.write("本月無任何海外國定假日。")
+    else:
+        st.info("本月尚無營運數據可供分析。")
     
-    # --- C. 月度營運指標 (四個月對比) ---
+    st.divider()
+    
+    # --- D. 月度營運指標 (四個月對比) ---
     st.subheader("📌 月度營運指標對比")
     
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
