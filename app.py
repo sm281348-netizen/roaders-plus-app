@@ -1015,7 +1015,11 @@ with tab_m:
                     sort=df['label'].tolist(),
                     axis=alt.Axis(
                         labelAngle=0,
-                        labelColor=alt.expr("datum.value.indexOf('五') > -1 || datum.value.indexOf('六') > -1 ? '#e74c3c' : '#2c3e50'")
+                        labelColor=alt.condition(
+                            "datum.value.indexOf('五') > -1 || datum.value.indexOf('六') > -1",
+                            alt.value('#e74c3c'),
+                            alt.value('#2c3e50')
+                        )
                     )),
             tooltip=['date', 'occ_rate']
         )
