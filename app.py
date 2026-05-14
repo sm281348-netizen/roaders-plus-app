@@ -24,6 +24,26 @@ TARGET_HOLIDAY_COUNTRIES = {
 }
 OTHER_HOLIDAY_COUNTRIES = ['PH', 'MY', 'TH', 'VN']
 
+EVENT_TYPE_LABELS = {
+    '演唱會': '[演]',
+    '展覽': '[展]',
+    '賽事': '[賽]',
+    '其他': '[活]'
+}
+
+@st.cache_data(ttl=600)
+def fetch_taipei_events():
+    """讀取試算表中的台北重大活動分頁"""
+    try:
+        # 讀取試算表中的 taipei_events 分頁
+        df = conn.read(worksheet="taipei_events", ttl="10m")
+        if df is not None and not df.empty:
+            df = standardize_df_dates(df)
+            return df
+    except Exception:
+        # 如果分頁不存在或讀取失敗，回傳空 DataFrame
+        return pd.DataFrame(columns=['date', 'event_name', 'event_type'])
+    return pd.DataFrame(columns=['date', 'event_name', 'event_type'])
 @st.cache_data(ttl=86400 * 30)
 def translate_to_zh(text):
     if not text: return text
@@ -1098,6 +1118,9 @@ with tab_m:
     m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
     m_curr = fetch_month_summary(selected_date.year, selected_date.month)
     m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
+
+    # 取得台北重大活動資料
+    taipei_events_df = fetch_taipei_events()
     
     # --- A. 每日住房率概況 (四個月對比) ---
     st.subheader("📊 每日住房率概況比較 (四個月)")
@@ -1120,7 +1143,20 @@ with tab_m:
         if not df.empty:
             y_str, m_str = df['date'].iloc[0].split('-')[:2]
             holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
-            df['flags'] = df['date'].apply(lambda d: holidays_dict.get(d, {}).get('flags', ''))
+            
+            # 合併假日與台北活動標籤
+            def get_combined_flags(d_str):
+                h_flags = holidays_dict.get(d_str, {}).get('flags', '')
+                e_flags = ""
+                if not taipei_events_df.empty:
+                    day_events = taipei_events_df[taipei_events_df['date'] == d_str]
+                    for _, row in day_events.iterrows():
+                        e_label = EVENT_TYPE_LABELS.get(row['event_type'], '[活]')
+                        if e_label not in e_flags: # 避免重複標籤
+                            e_flags += e_label
+                return h_flags + e_flags
+
+            df['flags'] = df['date'].apply(get_combined_flags)
         else:
             df['flags'] = ''
             
@@ -1203,30 +1239,63 @@ with tab_m:
     
     st.divider()
 
-    # --- B2. 即將到來的海外連假警報 ---
-    st.markdown("#### 🚨 即將到來的海外連假警報 (未來 30 天)")
+    # --- B2. 即將到來的重大活動與假日警報 ---
+    st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
     upcoming_holidays = fetch_upcoming_holidays(selected_date, 30)
-    if upcoming_holidays:
+    
+    # 合併台北重大活動至警報列表
+    combined_alerts = upcoming_holidays.copy()
+    if not taipei_events_df.empty:
+        end_date = selected_date + datetime.timedelta(days=30)
+        future_events = taipei_events_df[(taipei_events_df['date'] >= selected_date.strftime('%Y-%m-%d')) & 
+                                         (taipei_events_df['date'] <= end_date.strftime('%Y-%m-%d'))]
+        for _, row in future_events.iterrows():
+            e_label = EVENT_TYPE_LABELS.get(row['event_type'], '[活]')
+            found = False
+            for a in combined_alerts:
+                if a['date'] == row['date']:
+                    if e_label not in a['flags']: a['flags'] += e_label
+                    a['details'] += f", 🏟️ {row['event_name']}"
+                    found = True
+                    break
+            if not found:
+                combined_alerts.append({
+                    'date': row['date'],
+                    'flags': e_label,
+                    'details': f"🏟️ {row['event_name']}"
+                })
+    combined_alerts.sort(key=lambda x: x['date'])
+
+    if combined_alerts:
         alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
-        for h in upcoming_holidays:
+        for h in combined_alerts:
             alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.2em;'>{h['flags']}</span><br><span style='font-size: 0.9em; color: #666;'>{h['details']}</span></div>"
         alert_html += "</div>"
         st.write(alert_html, unsafe_allow_html=True)
     else:
-        st.info("未來 30 天內目標國家無重大國定假日。")
+        st.info("未來 30 天內無重大假日或台北活動。")
 
     st.divider()
 
-    # --- C. 本月海外假日貢獻度分析 ---
-    st.markdown("#### 🌍 本月海外假日貢獻度分析")
+    # --- C. 假日與活動績效貢獻度分析 ---
+    st.markdown("#### 🌍 假日與重大活動績效分析")
     curr_df = m_curr['df'].copy()
     if not curr_df.empty:
         y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
         h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
-        curr_df['flags'] = curr_df['date'].apply(lambda d: h_dict.get(d, {}).get('flags', ''))
         
-        holiday_days = curr_df[curr_df['flags'] != '']
-        non_holiday_days = curr_df[curr_df['flags'] == '']
+        def get_analysis_flags(d_str):
+            h_f = h_dict.get(d_str, {}).get('flags', '')
+            e_f = ""
+            if not taipei_events_df.empty:
+                de = taipei_events_df[taipei_events_df['date'] == d_str]
+                for _, r in de.iterrows(): e_f += EVENT_TYPE_LABELS.get(r['event_type'], '[活]')
+            return h_f + e_f
+
+        curr_df['any_flags'] = curr_df['date'].apply(get_analysis_flags)
+        
+        holiday_days = curr_df[curr_df['any_flags'] != '']
+        non_holiday_days = curr_df[curr_df['any_flags'] == '']
         
         h_occ = holiday_days['occ_rate'].mean() if len(holiday_days) > 0 else 0
         h_adr = holiday_days['adr'].mean() if len(holiday_days) > 0 else 0
@@ -1235,22 +1304,32 @@ with tab_m:
         
         col_c1, col_c2, col_c3 = st.columns(3)
         with col_c1:
-            st.info(f"🎉 **有海外假日 ({len(holiday_days)}天)**\n\n平均住房率：{h_occ:.1f}%\n\n平均 ADR：NT$ {int(h_adr):,}")
+            st.info(f"🎉 **有假日/活動 ({len(holiday_days)}天)**\n\n平均住房率：{h_occ:.1f}%\n\n平均 ADR：NT$ {int(h_adr):,}")
         with col_c2:
-            st.info(f"👔 **無海外假日 ({len(non_holiday_days)}天)**\n\n平均住房率：{nh_occ:.1f}%\n\n平均 ADR：NT$ {int(nh_adr):,}")
+            st.info(f"👔 **無假日/活動 ({len(non_holiday_days)}天)**\n\n平均住房率：{nh_occ:.1f}%\n\n平均 ADR：NT$ {int(nh_adr):,}")
         with col_c3:
             diff_occ = h_occ - nh_occ
             diff_adr = h_adr - nh_adr
-            st.success(f"📈 **假日帶動效益**\n\n住房率提升：{diff_occ:+.1f}%\n\nADR 提升：NT$ {int(diff_adr):+,}")
+            st.success(f"📈 **帶動效益**\n\n住房率提升：{diff_occ:+.1f}%\n\nADR 提升：NT$ {int(diff_adr):+,}")
             
-        with st.expander("📅 查看本月所有海外假日詳細清單"):
-            has_holidays = False
-            for d, h_info in h_dict.items():
-                if h_info['flags']:
-                    st.markdown(f"- **{d}** {h_info['flags']}: {', '.join(h_info['details'])}")
-                    has_holidays = True
-            if not has_holidays:
-                st.write("本月無任何海外國定假日。")
+        with st.expander("📅 查看本月所有假日與台北活動詳細清單"):
+            # Combine details for expander
+            all_dates = sorted(set(list(h_dict.keys()) + (taipei_events_df['date'].tolist() if not taipei_events_df.empty else [])))
+            has_any = False
+            for d in all_dates:
+                if d.startswith(f"{y_str}-{m_str}"):
+                    h_info = h_dict.get(d, {'flags': '', 'details': []})
+                    e_info = ""
+                    if not taipei_events_df.empty:
+                        de = taipei_events_df[taipei_events_df['date'] == d]
+                        for _, r in de.iterrows():
+                            e_info += f", 🏟️ {r['event_name']} ({r['event_type']})"
+                    
+                    if h_info['flags'] or e_info:
+                        st.markdown(f"- **{d}** {h_info['flags']}{e_info}: {', '.join(h_info['details'])}")
+                        has_any = True
+            if not has_any:
+                st.write("本月無任何重大活動或假日。")
     else:
         st.info("本月尚無營運數據可供分析。")
     
