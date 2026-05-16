@@ -1928,53 +1928,54 @@ with tab_p:
                     analysis_df = pd.merge(analysis_df, daily_hh_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
                     analysis_df.rename(columns={'小計': 'hh_cost'}, inplace=True)
                     
-                    # 計算累計指標
-                    total_peak_guests = analysis_df['effective_peak_guests'].sum()
-                    total_peak_cost = analysis_df['peak_cost'].sum()
-                    peak_cpg = total_peak_cost / total_peak_guests if total_peak_guests > 0 else 0
+                    # --- 累計分析邏輯：計算本月至今的累積數據 ---
+                    analysis_df = analysis_df.sort_values('日期_obj')
+                    analysis_df['cum_peak_cost'] = analysis_df['peak_cost'].cumsum()
+                    analysis_df['cum_peak_guests'] = analysis_df['effective_peak_guests'].cumsum()
+                    analysis_df['cum_hh_cost'] = analysis_df['hh_cost'].cumsum()
+                    analysis_df['cum_hh_guests'] = analysis_df['rest_hh_guests'].cumsum()
                     
-                    total_hh_guests = analysis_df['rest_hh_guests'].sum()
-                    total_hh_cost = analysis_df['hh_cost'].sum()
-                    hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
+                    # 計算累積 CPG (這才是真實的平均成本走勢)
+                    analysis_df['cum_peak_cpg'] = analysis_df.apply(lambda r: r['cum_peak_cost']/r['cum_peak_guests'] if r['cum_peak_guests']>0 else 0, axis=1)
+                    analysis_df['cum_hh_cpg'] = analysis_df.apply(lambda r: r['cum_hh_cost']/r['cum_hh_guests'] if r['cum_hh_guests']>0 else 0, axis=1)
+
+                    # UI 呈現 (本月總結)
+                    total_peak_cost = analysis_df['cum_peak_cost'].iloc[-1] if not analysis_df.empty else 0
+                    total_peak_guests = analysis_df['cum_peak_guests'].iloc[-1] if not analysis_df.empty else 0
+                    final_peak_cpg = total_peak_cost / total_peak_guests if total_peak_guests > 0 else 0
                     
-                    # UI 呈現
+                    total_hh_cost = analysis_df['cum_hh_cost'].iloc[-1] if not analysis_df.empty else 0
+                    total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
+                    final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
+
                     c_ana1, c_ana2 = st.columns(2)
                     with c_ana1:
                         st.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
                         st.markdown(f"**🏰 The Peak (餐廳)**")
                         st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
-                        
-                        # 顯示是否為自動加總
-                        manual_guests = analysis_df['effective_peak_guests'].sum()
-                        label_suffix = "(自動加總)" if (analysis_df['effective_peak_guests'].sum() != 0 and analysis_df['effective_peak_guests'].sum() != df_daily_rest['rest_day_guests'].sum()) else ""
-                        st.metric(f"本月總來客數 {label_suffix}", f"{int(total_peak_guests):,} 人")
-                        st.metric("平均每客成本 (CPG)", f"NT$ {int(peak_cpg):,}", help="總採購額 / 總來客數")
+                        is_auto = "(自動加總)" if (df_daily_rest['rest_day_guests'].sum() == 0 and total_peak_guests > 0) else ""
+                        st.metric(f"本月總來客數 {is_auto}", f"{int(total_peak_guests):,} 人")
+                        st.metric("平均每客成本 (CPG)", f"NT$ {int(final_peak_cpg):,}")
                         st.markdown("</div>", unsafe_allow_html=True)
-                    
                     with c_ana2:
                         st.markdown(f"<div style='background:#fff9f0; padding:15px; border-radius:10px; border-top:4px solid #ff9f43;'>", unsafe_allow_html=True)
                         st.markdown(f"**🥂 Happy Hour (HH)**")
                         st.metric("本月總採購額", f"NT$ {int(total_hh_cost):,}")
                         st.metric("本月總來客數", f"{int(total_hh_guests):,} 人")
-                        st.metric("平均每客服務成本", f"NT$ {int(hh_cpg):,}", help="總採購額 / HH來客數")
+                        st.metric("平均每客服務成本", f"NT$ {int(final_hh_cpg):,}")
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     st.write("")
-                    
                     # 趨勢圖表
-                    st.markdown("#### 📈 每日每客成本波動 (CPG Trend)")
+                    st.markdown("#### 📈 本月累計每客成本趨勢 (Monthly Cumulative CPG)")
                     analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
                     
-                    # 計算每日 CPG
-                    analysis_df['peak_cpg'] = analysis_df.apply(lambda r: r['peak_cost']/r['effective_peak_guests'] if r['effective_peak_guests']>0 else 0, axis=1)
-                    analysis_df['hh_cpg'] = analysis_df.apply(lambda r: r['hh_cost']/r['rest_hh_guests'] if r['rest_hh_guests']>0 else 0, axis=1)
-
                     # 整合圖表
                     base_chart = alt.Chart(analysis_df).encode(x=alt.X('日期_str:T', title='日期'))
                     
-                    peak_line = base_chart.mark_line(point=True, color='#1f2c56').encode(
-                        y=alt.Y('peak_cpg:Q', title='每客成本 (NT$)'),
-                        tooltip=['日期_str', alt.Tooltip('effective_peak_guests', title='來客'), alt.Tooltip('peak_cost', title='採購額'), alt.Tooltip('peak_cpg', format='.0f', title='CPG')]
+                    peak_line = base_chart.mark_line(point=True, color='#1f2c56', strokeWidth=3).encode(
+                        y=alt.Y('cum_peak_cpg:Q', title='累計平均成本 (NT$)'),
+                        tooltip=['日期_str', alt.Tooltip('cum_peak_guests', title='累計來客'), alt.Tooltip('cum_peak_cost', title='累計採購'), alt.Tooltip('cum_peak_cpg', format='.0f', title='累計 CPG')]
                     )
                     
                     st.altair_chart(peak_line.properties(title="The Peak 每日每客成本變化", height=300), use_container_width=True)
