@@ -1981,11 +1981,31 @@ with tab_p:
                     st.altair_chart(peak_line.properties(title="The Peak 累計平均成本趨勢", height=300), use_container_width=True)
                     
                     if total_hh_guests > 0:
-                        hh_bar = base_chart.mark_bar(color='#ff9f43', opacity=0.7).encode(
+                        st.write("")
+                        st.markdown("#### 🥂 Happy Hour 累計成本分析")
+                        
+                        # 顯示累計人數 vs 累計成本
+                        hh_chart_base = alt.Chart(analysis_df).encode(x=alt.X('日期_str:T', title='日期'))
+                        
+                        # 長條圖顯示累計 CPG
+                        hh_bar = hh_chart_base.mark_bar(color='#ff9f43', opacity=0.7).encode(
                             y=alt.Y('cum_hh_cpg:Q', title='累計平均成本 (NT$)'),
-                            tooltip=['日期_str', alt.Tooltip('cum_hh_guests', title='累計來客'), alt.Tooltip('cum_hh_cost', title='累計採購'), alt.Tooltip('cum_hh_cpg', format='.0f', title='累計 CPG')]
+                            tooltip=[
+                                '日期_str', 
+                                alt.Tooltip('cum_hh_guests', title='累計來客 (分母)'), 
+                                alt.Tooltip('cum_hh_cost', title='累計採購 (分子)'), 
+                                alt.Tooltip('cum_hh_cpg', format='.1f', title='累計 CPG')
+                            ]
                         )
-                        st.altair_chart(hh_bar.properties(title="Happy Hour 累計平均成本趨勢", height=250), use_container_width=True)
+                        
+                        # 疊加一條線顯示累計人數的成長 (確保分母正確)
+                        hh_guest_line = hh_chart_base.mark_line(color='#e67e22', strokeDash=[5,5]).encode(
+                            y=alt.Y('cum_hh_guests:Q', title='累計人數'),
+                            tooltip=['日期_str', alt.Tooltip('cum_hh_guests', title='累計人數')]
+                        )
+                        
+                        st.altair_chart(alt.layer(hh_bar, hh_guest_line).resolve_scale(y='independent').properties(title="Happy Hour 累計趨勢 (長條:成本, 虛線:人數)", height=300), use_container_width=True)
+                        st.caption("💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
                     
                     st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
 
