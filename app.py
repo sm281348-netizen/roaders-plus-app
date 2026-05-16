@@ -1888,16 +1888,17 @@ with tab_p:
 
                     # 篩選 The Peak 與 Happy Hour 採購 (動態匹配部門名稱)
                     all_depts = dept_summary['部門'].tolist()
-                    peak_depts = [d for d in all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK'])]
-                    hh_depts = [d for d in all_depts if any(k in d.upper() for k in ['HAPPY HOUR', 'HH', 'HAPPYHOUR'])]
-                    
-                    with st.expander("🔍 採購部門匹配偵測 (除錯用)"):
-                        st.write(f"所有偵測到的部門: {all_depts}")
-                        st.write(f"匹配到 The Peak 的部門: {peak_depts}")
-                        st.write(f"匹配到 Happy Hour 的部門: {hh_depts}")
+                    peak_depts = [d for d in all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])]
+                    hh_depts = [d for d in all_depts if any(k in d.upper() for k in ['HAPPY HOUR', 'HH', 'HAPPYHOUR', '歡樂時光', '餐廳4F'])]
                     
                     df_peak_purchase = df_month[df_month[dept_col].isin(peak_depts)].copy()
                     df_hh_purchase = df_month[df_month[dept_col].isin(hh_depts)].copy()
+                    
+                    # --- 進階匹配：若部門抓不到 HH，嘗試從品名抓取 ---
+                    if df_hh_purchase.empty:
+                        item_col = next((c for c in df_month.columns if any(k in c for k in ['品名', '項目', 'Item'])), None)
+                        if item_col:
+                            df_hh_purchase = df_month[df_month[item_col].astype(str).str.upper().str.contains('HH|HAPPY|歡樂時光', na=False)].copy()
                     
                     # 計算每日採購總額
                     daily_peak_cost = df_peak_purchase.groupby('日期')['小計'].sum().reset_index()
