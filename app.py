@@ -1935,7 +1935,11 @@ with tab_p:
                         st.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
                         st.markdown(f"**🏰 The Peak (餐廳)**")
                         st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
-                        st.metric("本月總來客數", f"{int(total_peak_guests):,} 人")
+                        
+                        # 顯示是否為自動加總
+                        manual_guests = analysis_df['effective_peak_guests'].sum()
+                        label_suffix = "(自動加總)" if (analysis_df['effective_peak_guests'].sum() != 0 and analysis_df['effective_peak_guests'].sum() != df_daily_rest['rest_day_guests'].sum()) else ""
+                        st.metric(f"本月總來客數 {label_suffix}", f"{int(total_peak_guests):,} 人")
                         st.metric("平均每客成本 (CPG)", f"NT$ {int(peak_cpg):,}", help="總採購額 / 總來客數")
                         st.markdown("</div>", unsafe_allow_html=True)
                     
