@@ -2047,17 +2047,40 @@ with tab_p:
                 departments = dept_summary.sort_values('小計', ascending=False)['部門'].tolist()
                 
                 for dept in departments:
-                    dept_df = df_month[df_month[dept_col] == dept]
+                    dept_df = df_month[df_month[dept_col] == dept].copy()
                     dept_total = dept_df['小計'].sum()
                     
                     with st.expander(f"📌 {dept} (總計: NT$ {int(dept_total):,})", expanded=False):
-                        # 顯示該部門表格 (動態選擇要顯示的欄位)
+                        # --- 新增：Top 5 高額品項排行榜 ---
+                        item_name_col = next((c for c in dept_df.columns if any(k in c for k in ['品名', '項目', 'Item'])), None)
+                        if item_name_col:
+                            st.markdown("##### 🏆 前五名高額採購品項")
+                            top_items = dept_df.groupby(item_name_col)['小計'].sum().sort_values(ascending=False).head(5).reset_index()
+                            t_cols = st.columns(5)
+                            for idx, row in top_items.iterrows():
+                                with t_cols[idx]:
+                                    st.metric(f"No.{idx+1} {row[item_name_col][:8]}", f"NT$ {int(row['小計']):,}")
+                        st.divider()
+
+                        # --- 新增：排序控制 ---
+                        sort_by = st.selectbox(f"排序方式 ({dept})", ["日期 (新→舊)", "金額 (高→低)", "金額 (低→高)", "品項名稱"], key=f"sort_{dept}")
+                        
+                        if sort_by == "金額 (高→低)":
+                            dept_df = dept_df.sort_values('小計', ascending=False)
+                        elif sort_by == "金額 (低→高)":
+                            dept_df = dept_df.sort_values('小計', ascending=True)
+                        elif sort_by == "日期 (新→舊)":
+                            dept_df = dept_df.sort_values('日期', ascending=False)
+                        elif sort_by == "品項名稱" and item_name_col:
+                            dept_df = dept_df.sort_values(item_name_col)
+
+                        # 顯示該部門表格
                         cols_to_show = [c for c in ['日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計'] if c in dept_df.columns]
                         if not cols_to_show:
                              cols_to_show = dept_df.columns.tolist()
                              
                         st.dataframe(
-                            dept_df[cols_to_show].sort_values('日期'),
+                            dept_df[cols_to_show],
                             use_container_width=True,
                             hide_index=True
                         )
