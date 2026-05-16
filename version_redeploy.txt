@@ -1,3 +1,0 @@
-REDEPLOY_TIMESTAMP: 2026-05-16 17:22:00
-VERSION: 1.2.2
-PURPOSE: Force redeploy for Restaurant Analysis Matching Logic
