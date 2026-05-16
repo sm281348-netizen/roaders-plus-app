@@ -1879,12 +1879,20 @@ with tab_p:
                 
                 if not df_daily_rest.empty:
                     # 確保必要欄位存在並轉為數值
-                    target_cols = ['rest_day_guests', 'rest_hh_guests', 'revenue']
+                    target_cols = ['rest_day_guests', 'rest_hh_guests', 'revenue', 'bf_total_act', 'af_total_act']
                     for c in target_cols:
                         if c in df_daily_rest.columns:
                             df_daily_rest[c] = pd.to_numeric(df_daily_rest[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                         else:
                             df_daily_rest[c] = 0
+                    
+                    # --- 自動化邏輯：如果 The Peak 來客數為 0，則自動加總 早餐 + 下午茶 ---
+                    def calculate_peak_guests(row):
+                        if row['rest_day_guests'] > 0:
+                            return row['rest_day_guests']
+                        return row['bf_total_act'] + row['af_total_act']
+                    
+                    df_daily_rest['effective_peak_guests'] = df_daily_rest.apply(calculate_peak_guests, axis=1)
 
                     # 篩選 The Peak 與 Happy Hour 採購 (動態匹配部門名稱)
                     all_depts = dept_summary['部門'].tolist()
@@ -1907,13 +1915,13 @@ with tab_p:
                     # 合併來客數與成本 (對齊日期)
                     df_daily_rest['日期_obj'] = pd.to_datetime(df_daily_rest['date']).dt.date
                     
-                    analysis_df = pd.merge(df_daily_rest[['日期_obj', 'rest_day_guests', 'rest_hh_guests', 'revenue']], daily_peak_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
+                    analysis_df = pd.merge(df_daily_rest[['日期_obj', 'effective_peak_guests', 'rest_hh_guests', 'revenue']], daily_peak_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
                     analysis_df.rename(columns={'小計': 'peak_cost'}, inplace=True)
                     analysis_df = pd.merge(analysis_df, daily_hh_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
                     analysis_df.rename(columns={'小計': 'hh_cost'}, inplace=True)
                     
                     # 計算累計指標
-                    total_peak_guests = analysis_df['rest_day_guests'].sum()
+                    total_peak_guests = analysis_df['effective_peak_guests'].sum()
                     total_peak_cost = analysis_df['peak_cost'].sum()
                     peak_cpg = total_peak_cost / total_peak_guests if total_peak_guests > 0 else 0
                     
@@ -1946,7 +1954,7 @@ with tab_p:
                     analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
                     
                     # 計算每日 CPG
-                    analysis_df['peak_cpg'] = analysis_df.apply(lambda r: r['peak_cost']/r['rest_day_guests'] if r['rest_day_guests']>0 else 0, axis=1)
+                    analysis_df['peak_cpg'] = analysis_df.apply(lambda r: r['peak_cost']/r['effective_peak_guests'] if r['effective_peak_guests']>0 else 0, axis=1)
                     analysis_df['hh_cpg'] = analysis_df.apply(lambda r: r['hh_cost']/r['rest_hh_guests'] if r['rest_hh_guests']>0 else 0, axis=1)
 
                     # 整合圖表
@@ -1954,7 +1962,7 @@ with tab_p:
                     
                     peak_line = base_chart.mark_line(point=True, color='#1f2c56').encode(
                         y=alt.Y('peak_cpg:Q', title='每客成本 (NT$)'),
-                        tooltip=['日期_str', alt.Tooltip('rest_day_guests', title='來客'), alt.Tooltip('peak_cost', title='採購額'), alt.Tooltip('peak_cpg', format='.0f', title='CPG')]
+                        tooltip=['日期_str', alt.Tooltip('effective_peak_guests', title='來客'), alt.Tooltip('peak_cost', title='採購額'), alt.Tooltip('peak_cpg', format='.0f', title='CPG')]
                     )
                     
                     st.altair_chart(peak_line.properties(title="The Peak 每日每客成本變化", height=300), use_container_width=True)
