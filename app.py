@@ -225,7 +225,7 @@ def get_daily_data(d_str):
                     'occ_rate', 'adr', 'revenue', 'total_rooms', 'counter_expense', 
                     'cleaned_rooms', 'hk_checkout_extend', 'hk_avg_clean', 'hk_expense',
                     'rest_breakfast', 'rest_month_guests', 'rest_day_guests', 'rest_avg_guests',
-                    'rest_month_rev', 'rest_avg_spent', 'rest_peak_expense',
+                    'rest_month_rev', 'rest_avg_spent', 'rest_peak_expense', 'rest_hh_guests',
                     'maint_repair_rooms', 'maint_expense',
                     'bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act',
                     'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act'
@@ -448,7 +448,7 @@ field_mapping = {
     'input_cleaned': ('cleaned_rooms', 0), 'input_hk_co': ('hk_checkout_extend', 0), 'input_hk_avg': ('hk_avg_clean', 0.0), 'input_hk_exp': ('hk_expense', 0),
     'input_bf_theme_est': ('bf_theme_est', 0), 'input_bf_theme_act': ('bf_theme_act', 0), 'input_bf_zq_est': ('bf_zq_est', 0), 'input_bf_zq_act': ('bf_zq_act', 0), 'input_bf_total_est': ('bf_total_est', 0), 'input_bf_total_act': ('bf_total_act', 0),
     'input_af_theme_est': ('af_theme_est', 0), 'input_af_theme_act': ('af_theme_act', 0), 'input_af_zq_est': ('af_zq_est', 0), 'input_af_zq_act': ('af_zq_act', 0), 'input_af_total_est': ('af_total_est', 0), 'input_af_total_act': ('af_total_act', 0),
-    'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_rest_car': ('rest_car_data', ""),
+    'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_hh_act': ('rest_hh_guests', 0),
     'input_repair': ('maint_repair_rooms', 0), 'input_maint_rec': ('maint_records', ""), 'input_maint_exp': ('maint_expense', 0)
 }
 
@@ -588,6 +588,7 @@ def generate_report_text(d_str):
     report.append(f"【🍽️ 餐廳數據 (兩館實際來客)】")
     report.append(f"- 早餐總計: {safe_int_val(data.get('bf_total_act', 0))} 人")
     report.append(f"- 下午茶總計: {safe_int_val(data.get('af_total_act', 0))} 人")
+    report.append(f"- Happy Hour: {safe_int_val(data.get('rest_hh_guests', 0))} 人")
     report.append(f"- 餐廳營收(全月): {safe_int_val(data.get('rest_month_rev', 0))} 元\n")
     
     report.append(f"【🔧 工務紀錄】")
@@ -1647,7 +1648,8 @@ with tab4:
     c1.number_input("已結算營收 (全月)", min_value=0, step=100, key="input_rest_mrev", on_change=on_input_change)
     c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent", on_change=on_input_change)
     c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp", on_change=on_input_change)
-    st.text_area("4樓餐車數據", key="input_rest_car", on_change=on_input_change)
+    
+    st.number_input("Happy Hour當日來客數", min_value=0, step=1, key="input_hh_act", on_change=on_input_change)
 
 with tab5:
     st.header("🔧 工務數據")
