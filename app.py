@@ -448,7 +448,7 @@ field_mapping = {
     'input_cleaned': ('cleaned_rooms', 0), 'input_hk_co': ('hk_checkout_extend', 0), 'input_hk_avg': ('hk_avg_clean', 0.0), 'input_hk_exp': ('hk_expense', 0),
     'input_bf_theme_est': ('bf_theme_est', 0), 'input_bf_theme_act': ('bf_theme_act', 0), 'input_bf_zq_est': ('bf_zq_est', 0), 'input_bf_zq_act': ('bf_zq_act', 0), 'input_bf_total_est': ('bf_total_est', 0), 'input_bf_total_act': ('bf_total_act', 0),
     'input_af_theme_est': ('af_theme_est', 0), 'input_af_theme_act': ('af_theme_act', 0), 'input_af_zq_est': ('af_zq_est', 0), 'input_af_zq_act': ('af_zq_act', 0), 'input_af_total_est': ('af_total_est', 0), 'input_af_total_act': ('af_total_act', 0),
-    'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_hh_act': ('rest_hh_guests', 0),
+    'input_rest_mrev': ('rest_month_rev', 0), 'input_rest_aspent': ('rest_avg_spent', 0), 'input_rest_exp': ('rest_peak_expense', 0), 'input_hh_act': ('rest_hh_guests', 0), 'input_peak_act': ('rest_day_guests', 0),
     'input_repair': ('maint_repair_rooms', 0), 'input_maint_rec': ('maint_records', ""), 'input_maint_exp': ('maint_expense', 0)
 }
 
@@ -1649,7 +1649,9 @@ with tab4:
     c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent", on_change=on_input_change)
     c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp", on_change=on_input_change)
     
-    st.number_input("Happy Hour當日來客數", min_value=0, step=1, key="input_hh_act", on_change=on_input_change)
+    col_rest1, col_rest2 = st.columns(2)
+    col_rest1.number_input("The Peak 當日來客數", min_value=0, step=1, key="input_peak_act", on_change=on_input_change)
+    col_rest2.number_input("Happy Hour 當日來客數", min_value=0, step=1, key="input_hh_act", on_change=on_input_change)
 
 with tab5:
     st.header("🔧 工務數據")
@@ -1886,8 +1888,13 @@ with tab_p:
 
                     # 篩選 The Peak 與 Happy Hour 採購 (動態匹配部門名稱)
                     all_depts = dept_summary['部門'].tolist()
-                    peak_depts = [d for d in all_depts if 'The Peak' in d or '餐廳' in d]
-                    hh_depts = [d for d in all_depts if 'Happy Hour' in d or 'HH' in d]
+                    peak_depts = [d for d in all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK'])]
+                    hh_depts = [d for d in all_depts if any(k in d.upper() for k in ['HAPPY HOUR', 'HH', 'HAPPYHOUR'])]
+                    
+                    with st.expander("🔍 採購部門匹配偵測 (除錯用)"):
+                        st.write(f"所有偵測到的部門: {all_depts}")
+                        st.write(f"匹配到 The Peak 的部門: {peak_depts}")
+                        st.write(f"匹配到 Happy Hour 的部門: {hh_depts}")
                     
                     df_peak_purchase = df_month[df_month[dept_col].isin(peak_depts)].copy()
                     df_hh_purchase = df_month[df_month[dept_col].isin(hh_depts)].copy()
