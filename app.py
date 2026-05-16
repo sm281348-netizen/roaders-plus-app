@@ -1867,6 +1867,101 @@ with tab_p:
                 
                 st.altair_chart(chart_arc + chart_text, use_container_width=True)
                 
+                # --- 新增：餐飲績效分析 (The Peak & Happy Hour) ---
+                st.divider()
+                st.subheader("🍽️ 餐飲績效與成本深度分析 (Cash-basis)")
+                
+                # 獲取當月每日數據 (含餐廳來客數)
+                m_data = fetch_month_summary(selected_date.year, selected_date.month)
+                df_daily_rest = m_data['df']
+                
+                if not df_daily_rest.empty:
+                    # 確保必要欄位存在並轉為數值
+                    target_cols = ['rest_day_guests', 'rest_hh_guests', 'revenue']
+                    for c in target_cols:
+                        if c in df_daily_rest.columns:
+                            df_daily_rest[c] = pd.to_numeric(df_daily_rest[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        else:
+                            df_daily_rest[c] = 0
+
+                    # 篩選 The Peak 與 Happy Hour 採購 (動態匹配部門名稱)
+                    peak_depts = [d for d in departments if 'The Peak' in d or '餐廳' in d]
+                    hh_depts = [d for d in departments if 'Happy Hour' in d or 'HH' in d]
+                    
+                    df_peak_purchase = df_month[df_month[dept_col].isin(peak_depts)].copy()
+                    df_hh_purchase = df_month[df_month[dept_col].isin(hh_depts)].copy()
+                    
+                    # 計算每日採購總額
+                    daily_peak_cost = df_peak_purchase.groupby('日期')['小計'].sum().reset_index()
+                    daily_hh_cost = df_hh_purchase.groupby('日期')['小計'].sum().reset_index()
+                    
+                    # 合併來客數與成本 (對齊日期)
+                    df_daily_rest['日期_obj'] = pd.to_datetime(df_daily_rest['date']).dt.date
+                    
+                    analysis_df = pd.merge(df_daily_rest[['日期_obj', 'rest_day_guests', 'rest_hh_guests', 'revenue']], daily_peak_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
+                    analysis_df.rename(columns={'小計': 'peak_cost'}, inplace=True)
+                    analysis_df = pd.merge(analysis_df, daily_hh_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
+                    analysis_df.rename(columns={'小計': 'hh_cost'}, inplace=True)
+                    
+                    # 計算累計指標
+                    total_peak_guests = analysis_df['rest_day_guests'].sum()
+                    total_peak_cost = analysis_df['peak_cost'].sum()
+                    peak_cpg = total_peak_cost / total_peak_guests if total_peak_guests > 0 else 0
+                    
+                    total_hh_guests = analysis_df['rest_hh_guests'].sum()
+                    total_hh_cost = analysis_df['hh_cost'].sum()
+                    hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
+                    
+                    # UI 呈現
+                    c_ana1, c_ana2 = st.columns(2)
+                    with c_ana1:
+                        st.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
+                        st.markdown(f"**🏰 The Peak (餐廳)**")
+                        st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
+                        st.metric("本月總來客數", f"{int(total_peak_guests):,} 人")
+                        st.metric("平均每客成本 (CPG)", f"NT$ {int(peak_cpg):,}", help="總採購額 / 總來客數")
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    with c_ana2:
+                        st.markdown(f"<div style='background:#fff9f0; padding:15px; border-radius:10px; border-top:4px solid #ff9f43;'>", unsafe_allow_html=True)
+                        st.markdown(f"**🥂 Happy Hour (HH)**")
+                        st.metric("本月總採購額", f"NT$ {int(total_hh_cost):,}")
+                        st.metric("本月總來客數", f"{int(total_hh_guests):,} 人")
+                        st.metric("平均每客服務成本", f"NT$ {int(hh_cpg):,}", help="總採購額 / HH來客數")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.write("")
+                    
+                    # 趨勢圖表
+                    st.markdown("#### 📈 每日每客成本波動 (CPG Trend)")
+                    analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
+                    
+                    # 計算每日 CPG
+                    analysis_df['peak_cpg'] = analysis_df.apply(lambda r: r['peak_cost']/r['rest_day_guests'] if r['rest_day_guests']>0 else 0, axis=1)
+                    analysis_df['hh_cpg'] = analysis_df.apply(lambda r: r['hh_cost']/r['rest_hh_guests'] if r['rest_hh_guests']>0 else 0, axis=1)
+
+                    # 整合圖表
+                    base_chart = alt.Chart(analysis_df).encode(x=alt.X('日期_str:T', title='日期'))
+                    
+                    peak_line = base_chart.mark_line(point=True, color='#1f2c56').encode(
+                        y=alt.Y('peak_cpg:Q', title='每客成本 (NT$)'),
+                        tooltip=['日期_str', alt.Tooltip('rest_day_guests', title='來客'), alt.Tooltip('peak_cost', title='採購額'), alt.Tooltip('peak_cpg', format='.0f', title='CPG')]
+                    )
+                    
+                    st.altair_chart(peak_line.properties(title="The Peak 每日每客成本變化", height=300), use_container_width=True)
+                    
+                    if total_hh_guests > 0:
+                        hh_bar = base_chart.mark_bar(color='#ff9f43', opacity=0.7).encode(
+                            y=alt.Y('hh_cpg:Q', title='HH 每客成本'),
+                            tooltip=['日期_str', alt.Tooltip('rest_hh_guests', title='HH來客'), alt.Tooltip('hh_cost', title='採購額'), alt.Tooltip('hh_cpg', format='.0f', title='HH CPG')]
+                        )
+                        st.altair_chart(hh_bar.properties(title="Happy Hour 每日每客成本 (條狀圖)", height=250), use_container_width=True)
+                    
+                    st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
+
+                else:
+                    st.info("尚未偵測到本月的餐廳來客數據，無法進行成本效益分析。")
+                
                 st.divider()
                 
                 # 3. 各部門詳細統計
