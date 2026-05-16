@@ -1885,8 +1885,9 @@ with tab_p:
                             df_daily_rest[c] = 0
 
                     # 篩選 The Peak 與 Happy Hour 採購 (動態匹配部門名稱)
-                    peak_depts = [d for d in departments if 'The Peak' in d or '餐廳' in d]
-                    hh_depts = [d for d in departments if 'Happy Hour' in d or 'HH' in d]
+                    all_depts = dept_summary['部門'].tolist()
+                    peak_depts = [d for d in all_depts if 'The Peak' in d or '餐廳' in d]
+                    hh_depts = [d for d in all_depts if 'Happy Hour' in d or 'HH' in d]
                     
                     df_peak_purchase = df_month[df_month[dept_col].isin(peak_depts)].copy()
                     df_hh_purchase = df_month[df_month[dept_col].isin(hh_depts)].copy()
