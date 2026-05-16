@@ -1978,14 +1978,14 @@ with tab_p:
                         tooltip=['日期_str', alt.Tooltip('cum_peak_guests', title='累計來客'), alt.Tooltip('cum_peak_cost', title='累計採購'), alt.Tooltip('cum_peak_cpg', format='.0f', title='累計 CPG')]
                     )
                     
-                    st.altair_chart(peak_line.properties(title="The Peak 每日每客成本變化", height=300), use_container_width=True)
+                    st.altair_chart(peak_line.properties(title="The Peak 累計平均成本趨勢", height=300), use_container_width=True)
                     
                     if total_hh_guests > 0:
                         hh_bar = base_chart.mark_bar(color='#ff9f43', opacity=0.7).encode(
-                            y=alt.Y('hh_cpg:Q', title='HH 每客成本'),
-                            tooltip=['日期_str', alt.Tooltip('rest_hh_guests', title='HH來客'), alt.Tooltip('hh_cost', title='採購額'), alt.Tooltip('hh_cpg', format='.0f', title='HH CPG')]
+                            y=alt.Y('cum_hh_cpg:Q', title='累計平均成本 (NT$)'),
+                            tooltip=['日期_str', alt.Tooltip('cum_hh_guests', title='累計來客'), alt.Tooltip('cum_hh_cost', title='累計採購'), alt.Tooltip('cum_hh_cpg', format='.0f', title='累計 CPG')]
                         )
-                        st.altair_chart(hh_bar.properties(title="Happy Hour 每日每客成本 (條狀圖)", height=250), use_container_width=True)
+                        st.altair_chart(hh_bar.properties(title="Happy Hour 累計平均成本趨勢", height=250), use_container_width=True)
                     
                     st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
 
