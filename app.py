@@ -1955,8 +1955,34 @@ with tab_p:
                         st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
                         is_auto = "(自動加總)" if (df_daily_rest['rest_day_guests'].sum() == 0 and total_peak_guests > 0) else ""
                         st.metric(f"本月總來客數 {is_auto}", f"{int(total_peak_guests):,} 人")
-                        st.metric("平均每客成本 (CPG)", f"NT$ {int(final_peak_cpg):,}")
+                        
+                        # CPG 顏色警示 (目標 $150)
+                        peak_target = 150
+                        delta_val = peak_target - final_peak_cpg
+                        st.metric("平均每客成本 (CPG)", f"NT$ {int(final_peak_cpg):,}", delta=f"{int(delta_val)} (距離目標)" if delta_val >=0 else f"{int(delta_val)} (已超標)", delta_color="normal" if delta_val >=0 else "inverse")
                         st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # --- 新增：財務預測與目標控管 ---
+                        st.write("")
+                        st.markdown("##### 🎯 財務目標控管")
+                        # 1. 成本佔比 (餐飲成本 / 總營收)
+                        total_hotel_rev = m_data['rev']
+                        cost_ratio = (total_peak_cost / total_hotel_rev * 100) if total_hotel_rev > 0 else 0
+                        st.write(f"📊 目前成本佔總營收比例: **{cost_ratio:.1f}%**")
+                        
+                        # 2. 月底支出預測
+                        import calendar
+                        _, last_day_num = calendar.monthrange(selected_date.year, selected_date.month)
+                        current_day_num = len(analysis_df)
+                        if current_day_num > 0:
+                            daily_avg_cost = total_peak_cost / current_day_num
+                            forecast_total = total_peak_cost + (daily_avg_cost * (last_day_num - current_day_num))
+                            
+                            forecast_color = "red" if final_peak_cpg > peak_target else "green"
+                            st.markdown(f"🔮 月底預估總支出: <span style='color:{forecast_color}; font-weight:bold;'>NT$ {int(forecast_total):,}</span>", unsafe_allow_html=True)
+                            if final_peak_cpg > peak_target:
+                                st.warning(f"⚠️ 警告：目前每客成本 ({int(final_peak_cpg)}) 已高於目標 {peak_target} 元，請檢視進貨項目或份量控管。")
+                        # ----------------------------
                     with c_ana2:
                         st.markdown(f"<div style='background:#fff9f0; padding:15px; border-radius:10px; border-top:4px solid #ff9f43;'>", unsafe_allow_html=True)
                         st.markdown(f"**🥂 Happy Hour (HH)**")
