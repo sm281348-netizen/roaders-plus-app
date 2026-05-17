@@ -1145,7 +1145,7 @@ with tab_m:
             y_str, m_str = df['date'].iloc[0].split('-')[:2]
             holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
             
-            # 合併假日與台北活動標籤 (回傳列表以供 Altair 垂直堆疊)
+            # 合併假日與台北活動標籤
             def get_combined_flags_list(d_str):
                 import re
                 h_f_str = holidays_dict.get(d_str, {}).get('flags', '')
@@ -1167,18 +1167,18 @@ with tab_m:
             for i in range(5):
                 df[f'flag_{i}'] = ''
             
-        # 建立 Altair 圖表 (新增 adr 至 tooltip)
-        base = alt.Chart(df).encode(
+        # ==========================================
+        # 1. 建立 OCC 子圖 (長條圖 + 住房百分比文字標籤 + 活動/節慶)
+        # ==========================================
+        base_occ = alt.Chart(df).encode(
             x=alt.X('label:O', 
                     title='日期', 
                     sort=df['label'].tolist(),
-                    axis=alt.Axis(
-                        labelAngle=0
-                    )),
+                    axis=alt.Axis(labelAngle=0)),
             tooltip=['date', 'occ_rate', 'adr']
         )
         
-        bars = base.mark_bar().encode(
+        bars = base_occ.mark_bar().encode(
             y=alt.Y('occ_rate:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 100])),
             color=alt.Color(
                 'color_category:N', 
@@ -1190,8 +1190,8 @@ with tab_m:
             )
         )
         
-        # 住房率文字標籤 (dy=-5)
-        text = base.mark_text(
+        # 住房率文字標籤 (不畫獨立Y軸)
+        text = base_occ.mark_text(
             align='center',
             baseline='bottom',
             dy=-5,
@@ -1202,11 +1202,11 @@ with tab_m:
             text=alt.Text('occ_rate:Q', format='.1f')
         )
 
-        # 建立多層垂直標籤 (保證在所有瀏覽器都不會重疊)
-        layers = [bars, text]
+        # 建立多層垂直標籤
+        occ_layers = [bars, text]
         for i in range(5):
             offset = -22 - (i * 13)
-            f_layer = base.mark_text(
+            f_layer = base_occ.mark_text(
                 align='center',
                 baseline='bottom',
                 dy=offset,
@@ -1216,31 +1216,41 @@ with tab_m:
                 y=alt.Y('occ_rate:Q', axis=None),
                 text=f'flag_{i}:N'
             )
-            layers.append(f_layer)
+            occ_layers.append(f_layer)
+            
+        occ_chart = alt.layer(*occ_layers)
         
-        # 建立 ADR 折線與資料點 (橘黃色高質感折線，使用右側 Y 軸)
-        adr_line = base.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
+        # ==========================================
+        # 2. 建立 ADR 子圖 (折線圖 + 資料點 + 紅色平均房價基準線 + 紅色金額數值標記)
+        # ==========================================
+        base_adr = alt.Chart(df).encode(
+            x=alt.X('label:O', sort=df['label'].tolist(), axis=None), # 共享 X 軸但隱藏重複標記
+            tooltip=['date', 'occ_rate', 'adr']
+        )
+        
+        adr_line = base_adr.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
             y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
         )
-        adr_points = base.mark_circle(color='#ff9f43', size=60).encode(
+        adr_points = base_adr.mark_circle(color='#ff9f43', size=60).encode(
             y=alt.Y('adr:Q', axis=None)
         )
         
-        # 【新增】全月平均 ADR 紅色基準線與右側數值標記
+        adr_layers = [adr_line, adr_points]
+        
+        # 繪製全月平均 ADR 紅色基準線與右側數值標記
         avg_adr = month_data.get('avg_adr', 0)
-        baseline_layers = []
         if avg_adr > 0:
-            # 建立水平紅色虛線
+            # 建立水平紅色虛線 (共享 ADR 的 Y 軸)
             rule_df = pd.DataFrame([{'adr': avg_adr}])
             baseline_rule = alt.Chart(rule_df).mark_rule(
                 color='#e74c3c', 
                 strokeWidth=1.5, 
                 strokeDash=[5, 5]
             ).encode(
-                y=alt.Y('adr:Q', axis=None)
+                y=alt.Y('adr:Q')
             )
             
-            # 建立紅色文字標籤，靠右對齊放置於最後一天
+            # 建立紅色文字標籤，靠右放置於最後一天的 X 位置
             last_day_label = df['label'].iloc[-1] if not df.empty else ""
             label_df = pd.DataFrame([{'adr': avg_adr, 'label': last_day_label, 'text': f"${int(avg_adr):,}"}])
             baseline_text = alt.Chart(label_df).mark_text(
@@ -1253,13 +1263,17 @@ with tab_m:
                 fontWeight='bold'
             ).encode(
                 x=alt.X('label:O'),
-                y=alt.Y('adr:Q', axis=None),
+                y=alt.Y('adr:Q'),
                 text='text:N'
             )
-            baseline_layers = [baseline_rule, baseline_text]
+            adr_layers.extend([baseline_rule, baseline_text])
+            
+        adr_chart = alt.layer(*adr_layers)
         
-        # 結合圖層，並宣告 Y 軸獨立雙軸
-        chart = alt.layer(*layers, adr_line, adr_points, *baseline_layers).resolve_scale(
+        # ==========================================
+        # 3. 結合兩個子圖，宣告 Y 軸為獨立雙軸，實現完美對齊
+        # ==========================================
+        chart = alt.layer(occ_chart, adr_chart).resolve_scale(
             y='independent'
         ).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
         
