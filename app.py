@@ -1231,7 +1231,7 @@ with tab_m:
         adr_line = base_adr.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
             y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
         )
-        adr_points = base_adr.mark_circle(color='#ff9f43', size=60).encode(
+        adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
             y='adr:Q'
         )
         
@@ -1250,14 +1250,13 @@ with tab_m:
                 y='adr:Q'
             )
             
-            # 建立紅色文字標籤，靠右放置於最後一天的 X 位置
+            # 建立紅色文字標籤，置於右側 Y 軸線上，垂直置中，避開長條圖重疊
             last_day_label = df['label'].iloc[-1] if not df.empty else ""
             label_df = pd.DataFrame([{'adr': avg_adr, 'label': last_day_label, 'text': f"${int(avg_adr):,}"}])
             baseline_text = alt.Chart(label_df).mark_text(
-                align='right',
-                baseline='bottom',
-                dx=-5,
-                dy=-5,
+                align='left',      # 靠左對齊，使文字向右側 Y 軸外伸展
+                baseline='middle', # 垂直置中對齊虛線
+                dx=8,              # 向右偏移 8 像素，剛好落在右側 Y 軸線上
                 color='#e74c3c',
                 fontSize=12,
                 fontWeight='bold'
