@@ -1262,7 +1262,7 @@ with tab_m:
                 fontSize=12,
                 fontWeight='bold'
             ).encode(
-                x=alt.X('label:O'),
+                x=alt.X('label:O', sort=df['label'].tolist()),
                 y='adr:Q',
                 text='text:N'
             )
