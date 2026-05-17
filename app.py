@@ -1232,7 +1232,7 @@ with tab_m:
             y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
         )
         adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
-            y='adr:Q'
+            y=alt.Y('adr:Q', scale=alt.Scale(zero=False))
         )
         
         adr_layers = [adr_line, adr_points]
@@ -1247,7 +1247,7 @@ with tab_m:
                 strokeWidth=1.5, 
                 strokeDash=[5, 5]
             ).encode(
-                y='adr:Q'
+                y=alt.Y('adr:Q', scale=alt.Scale(zero=False))
             )
             
             # 建立紅色文字標籤，置於右側 Y 軸線上，垂直置中，避開長條圖重疊
@@ -1262,7 +1262,7 @@ with tab_m:
                 fontWeight='bold'
             ).encode(
                 x=alt.X('label:O', sort=df['label'].tolist()),
-                y='adr:Q',
+                y=alt.Y('adr:Q', scale=alt.Scale(zero=False)),
                 text='text:N'
             )
             adr_layers.extend([baseline_rule, baseline_text])
