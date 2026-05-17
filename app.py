@@ -1332,9 +1332,111 @@ with tab_m:
             c3.markdown(f"<div style='background:#f0fff4; padding:10px; border-radius:5px; border-left:3px solid #2ecc71; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>帶動效益</p><strong style='font-size:16px; color:{color};'>{diff_occ:+.1f}% / NT$ {int(diff_adr):+,}</strong></div>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom:15px;'></div>", unsafe_allow_html=True)
 
+        def render_exclusive_matrix(df, title_suffix=""):
+            st.markdown(f"**📐 四象限排他性交叉分析 {title_suffix}**")
+            
+            is_e = df['is_e']
+            is_h = df['is_h']
+            
+            df_pure_weekday = df[~is_e & ~is_h]
+            df_pure_event = df[is_e & ~is_h]
+            df_pure_holiday = df[~is_e & is_h]
+            df_double_impact = df[is_e & is_h]
+            
+            def get_metrics(sub_df):
+                days = len(sub_df)
+                if days == 0:
+                    return 0, 0, days
+                occ = sub_df['occ_rate'].mean()
+                adr = sub_df['revenue'].sum() / sub_df['total_rooms'].sum() if sub_df['total_rooms'].sum() > 0 else 0
+                return occ, adr, days
+            
+            occ_pw, adr_pw, days_pw = get_metrics(df_pure_weekday)
+            occ_pe, adr_pe, days_pe = get_metrics(df_pure_event)
+            occ_ph, adr_ph, days_ph = get_metrics(df_pure_holiday)
+            occ_di, adr_di, days_di = get_metrics(df_double_impact)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            def format_diff(val, is_percent=False):
+                if val == 0:
+                    return "0.0%" if is_percent else "NT$ 0"
+                sign = "+" if val > 0 else ""
+                if is_percent:
+                    return f"{sign}{val:.1f}%"
+                else:
+                    return f"{sign}NT$ {int(val):,}"
+
+            # 象限 4: 純平日
+            with col1:
+                st.markdown(
+                    f"<div style='background:#1e293b; padding:15px; border-radius:8px; border-left:4px solid #94a3b8; height:100%; min-height:140px; color:#f8fafc;'>"
+                    f"<p style='margin:0; font-size:12px; color:#94a3b8; font-weight:bold;'>【象限 4】純平日 ({days_pw}天)</p>"
+                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>基準對照組</p>"
+                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pw:.1f}% / NT$ {int(adr_pw):,}</strong>"
+                    f"<p style='margin:8px 0 0 0; font-size:11px; color:#64748b;'>無活動、無節慶的基準線</p>"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+                
+            # 象限 1: 純活動日
+            with col2:
+                diff_occ = occ_pe - occ_pw if days_pe > 0 and days_pw > 0 else 0
+                diff_adr = adr_pe - adr_pw if days_pe > 0 and days_pw > 0 else 0
+                color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                bg_style = "background:#0f172a; border-left:4px solid #3b82f6;"
+                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_pe > 0 else "無數據"
+                st.markdown(
+                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                    f"<p style='margin:0; font-size:12px; color:#3b82f6; font-weight:bold;'>【象限 1】純活動日 ({days_pe}天)</p>"
+                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅台北重大活動</p>"
+                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pe:.1f}% / NT$ {int(adr_pe):,}</strong>"
+                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+                
+            # 象限 2: 純節慶日
+            with col3:
+                diff_occ = occ_ph - occ_pw if days_ph > 0 and days_pw > 0 else 0
+                diff_adr = adr_ph - adr_pw if days_ph > 0 and days_pw > 0 else 0
+                color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                bg_style = "background:#0f172a; border-left:4px solid #eab308;"
+                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_ph > 0 else "無數據"
+                st.markdown(
+                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                    f"<p style='margin:0; font-size:12px; color:#eab308; font-weight:bold;'>【象限 2】純節慶日 ({days_ph}天)</p>"
+                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅外國節慶</p>"
+                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_ph:.1f}% / NT$ {int(adr_ph):,}</strong>"
+                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+                
+            # 象限 3: 黃金雙重日
+            with col4:
+                diff_occ = occ_di - occ_pw if days_di > 0 and days_pw > 0 else 0
+                diff_adr = adr_di - adr_pw if days_di > 0 and days_pw > 0 else 0
+                color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                bg_style = "background:#1e1b4b; border-left:4px solid #a855f7;"
+                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_di > 0 else "無數據"
+                st.markdown(
+                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                    f"<p style='margin:0; font-size:12px; color:#a855f7; font-weight:bold;'>【象限 3】黃金雙重日 ({days_di}天)</p>"
+                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>活動 ＋ 節慶疊加</p>"
+                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_di:.1f}% / NT$ {int(adr_di):,}</strong>"
+                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                    f"</div>", 
+                    unsafe_allow_html=True
+                )
+            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+
         render_impact_row(curr_df, 'is_any', "綜合分析 (假日 + 台北活動)", "📊")
         render_impact_row(curr_df, 'is_h', "僅外國節慶分析", "🌍")
         render_impact_row(curr_df, 'is_e', "僅台北重大活動分析", "🏟️")
+        
+        st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+        render_exclusive_matrix(curr_df, "(當月)")
 
         st.divider()
 
@@ -1377,6 +1479,9 @@ with tab_m:
             render_impact_row(hist_df, 'is_any', "綜合分析 (過去三個月合計)", "📊")
             render_impact_row(hist_df, 'is_h', "僅外國節慶分析 (過去三個月合計)", "🌍")
             render_impact_row(hist_df, 'is_e', "僅台北重大活動分析 (過去三個月合計)", "🏟️")
+            
+            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+            render_exclusive_matrix(hist_df, "(過去三個月合計)")
         else:
             st.info("尚無足夠的歷史數據進行長期趨勢分析。")
             
