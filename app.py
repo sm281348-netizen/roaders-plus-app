@@ -1133,6 +1133,13 @@ with tab_m:
             st.info(f"💡 {month_data['month_label']} 尚無數據。")
             return
             
+        # 預先新增全月平均 ADR 基準線欄位，與主資料集完美共用同一資料來源以解決尺度分裂問題
+        avg_adr = month_data.get('avg_adr', 0)
+        df['adr_baseline'] = avg_adr
+        df['adr_baseline_text'] = ''
+        if not df.empty and avg_adr > 0:
+            df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,}"
+            
         dt = pd.to_datetime(df['date'])
         df['day'] = dt.dt.day
         weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
@@ -1220,6 +1227,22 @@ with tab_m:
             
         occ_chart = alt.layer(*occ_layers)
         
+        # 計算當月 ADR 的邊界，鎖定統一的 Y 軸比例尺 domain，消除 Altair 多資料來源尺度獨立導致的錯位 Bug
+        valid_adrs = df[df['adr'] > 0]['adr'] if not df.empty else pd.Series([])
+        if not valid_adrs.empty:
+            adr_min = max(0, int(valid_adrs.min() * 0.9))
+            adr_max = int(valid_adrs.max() * 1.1)
+        else:
+            adr_min = 2000
+            adr_max = 8000
+            
+        avg_adr = month_data.get('avg_adr', 0)
+        if avg_adr > 0:
+            adr_min = min(adr_min, int(avg_adr * 0.9))
+            adr_max = max(adr_max, int(avg_adr * 1.1))
+            
+        adr_scale = alt.Scale(domain=[adr_min, adr_max], zero=False)
+        
         # ==========================================
         # 2. 建立 ADR 子圖 (折線圖 + 資料點 + 紅色平均房價基準線 + 紅色金額數值標記)
         # ==========================================
@@ -1229,31 +1252,27 @@ with tab_m:
         )
         
         adr_line = base_adr.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
-            y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
+            y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=adr_scale)
         )
         adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
-            y=alt.Y('adr:Q', scale=alt.Scale(zero=False))
+            y=alt.Y('adr:Q', scale=adr_scale)
         )
         
         adr_layers = [adr_line, adr_points]
         
         # 繪製全月平均 ADR 紅色基準線與右側數值標記
-        avg_adr = month_data.get('avg_adr', 0)
         if avg_adr > 0:
-            # 建立水平紅色虛線 (使用獨立 rule_df，無 X 軸編碼，保證完美水平)
-            rule_df = pd.DataFrame([{'adr': avg_adr}])
-            baseline_rule = alt.Chart(rule_df).mark_rule(
+            # 建立水平紅色虛線 (共用相同 df 解決尺度獨立 bug，且因不含 X 編碼故保證水平)
+            baseline_rule = alt.Chart(df).mark_rule(
                 color='#e74c3c', 
                 strokeWidth=1.5, 
                 strokeDash=[5, 5]
             ).encode(
-                y=alt.Y('adr:Q', scale=alt.Scale(zero=False))
+                y=alt.Y('adr_baseline:Q', scale=adr_scale)
             )
             
-            # 建立紅色文字標籤 (使用獨立 label_df，只在最後一天繪製，保證對齊)
-            last_day_label = df['label'].iloc[-1] if not df.empty else ""
-            label_df = pd.DataFrame([{'adr': avg_adr, 'label': last_day_label, 'text': f"${int(avg_adr):,}"}])
-            baseline_text = alt.Chart(label_df).mark_text(
+            # 建立紅色文字標籤 (共用相同 df，只在最後一天繪製文字，完美對齊)
+            baseline_text = alt.Chart(df).mark_text(
                 align='left',      # 靠左對齊，使文字向右側 Y 軸外伸展
                 baseline='middle', # 垂直置中對齊虛線
                 dx=8,              # 向右偏移 8 像素，剛好落在右側 Y 軸線上
@@ -1262,8 +1281,8 @@ with tab_m:
                 fontWeight='bold'
             ).encode(
                 x=alt.X('label:O', sort=df['label'].tolist()),
-                y=alt.Y('adr:Q', scale=alt.Scale(zero=False)),
-                text='text:N'
+                y=alt.Y('adr_baseline:Q', scale=adr_scale),
+                text='text:N' if 'text' in df.columns else 'adr_baseline_text:N'
             )
             adr_layers.extend([baseline_rule, baseline_text])
             
