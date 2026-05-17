@@ -1133,13 +1133,6 @@ with tab_m:
             st.info(f"💡 {month_data['month_label']} 尚無數據。")
             return
             
-        # 預先新增全月平均 ADR 基準線欄位，與主資料集完美共用同一資料來源，保證 Y 軸尺度共享對齊
-        avg_adr = month_data.get('avg_adr', 0)
-        df['adr_baseline'] = avg_adr
-        df['adr_baseline_text'] = ''
-        if not df.empty and avg_adr > 0:
-            df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,}"
-            
         dt = pd.to_datetime(df['date'])
         df['day'] = dt.dt.day
         weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
@@ -1247,17 +1240,20 @@ with tab_m:
         # 繪製全月平均 ADR 紅色基準線與右側數值標記
         avg_adr = month_data.get('avg_adr', 0)
         if avg_adr > 0:
-            # 建立水平紅色虛線 (使用 base_adr 共用同一資料來源 df 以保證對齊)
-            baseline_rule = base_adr.mark_rule(
+            # 建立水平紅色虛線 (使用獨立 rule_df，無 X 軸編碼，保證完美水平)
+            rule_df = pd.DataFrame([{'adr': avg_adr}])
+            baseline_rule = alt.Chart(rule_df).mark_rule(
                 color='#e74c3c', 
                 strokeWidth=1.5, 
                 strokeDash=[5, 5]
             ).encode(
-                y=alt.Y('adr_baseline:Q', scale=alt.Scale(zero=False))
+                y=alt.Y('adr:Q', scale=alt.Scale(zero=False))
             )
             
-            # 建立紅色文字標籤 (使用 base_adr 共用同一資料來源 df，只在最後一天繪製文字，完美對齊)
-            baseline_text = base_adr.mark_text(
+            # 建立紅色文字標籤 (使用獨立 label_df，只在最後一天繪製，保證對齊)
+            last_day_label = df['label'].iloc[-1] if not df.empty else ""
+            label_df = pd.DataFrame([{'adr': avg_adr, 'label': last_day_label, 'text': f"${int(avg_adr):,}"}])
+            baseline_text = alt.Chart(label_df).mark_text(
                 align='left',      # 靠左對齊，使文字向右側 Y 軸外伸展
                 baseline='middle', # 垂直置中對齊虛線
                 dx=8,              # 向右偏移 8 像素，剛好落在右側 Y 軸線上
@@ -1265,8 +1261,9 @@ with tab_m:
                 fontSize=12,
                 fontWeight='bold'
             ).encode(
-                y=alt.Y('adr_baseline:Q', scale=alt.Scale(zero=False)),
-                text='adr_baseline_text:N'
+                x=alt.X('label:O', sort=df['label'].tolist()),
+                y=alt.Y('adr:Q', scale=alt.Scale(zero=False)),
+                text='text:N'
             )
             adr_layers.extend([baseline_rule, baseline_text])
             
