@@ -1198,7 +1198,7 @@ with tab_m:
             fontSize=14,
             fontWeight='bold'
         ).encode(
-            y=alt.Y('occ_rate:Q'),
+            y=alt.Y('occ_rate:Q', axis=None),
             text=alt.Text('occ_rate:Q', format='.1f')
         )
 
@@ -1213,7 +1213,7 @@ with tab_m:
                 fontSize=11,
                 fontWeight='normal'
             ).encode(
-                y=alt.Y('occ_rate:Q'),
+                y=alt.Y('occ_rate:Q', axis=None),
                 text=f'flag_{i}:N'
             )
             layers.append(f_layer)
@@ -1223,7 +1223,7 @@ with tab_m:
             y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
         )
         adr_points = base.mark_circle(color='#ff9f43', size=60).encode(
-            y=alt.Y('adr:Q')
+            y=alt.Y('adr:Q', axis=None)
         )
         
         # 結合圖層，並宣告 Y 軸獨立雙軸
