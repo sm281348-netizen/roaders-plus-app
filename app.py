@@ -1317,9 +1317,9 @@ with tab_m:
             non_holiday_days = df[~df[condition_col]]
             
             h_occ = holiday_days['occ_rate'].mean() if len(holiday_days) > 0 else 0
-            h_adr = holiday_days['adr'].mean() if len(holiday_days) > 0 else 0
+            h_adr = holiday_days['revenue'].sum() / holiday_days['total_rooms'].sum() if len(holiday_days) > 0 and holiday_days['total_rooms'].sum() > 0 else 0
             nh_occ = non_holiday_days['occ_rate'].mean() if len(non_holiday_days) > 0 else 0
-            nh_adr = non_holiday_days['adr'].mean() if len(non_holiday_days) > 0 else 0
+            nh_adr = non_holiday_days['revenue'].sum() / non_holiday_days['total_rooms'].sum() if len(non_holiday_days) > 0 and non_holiday_days['total_rooms'].sum() > 0 else 0
             
             diff_occ = h_occ - nh_occ
             diff_adr = h_adr - nh_adr
