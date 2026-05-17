@@ -1167,7 +1167,7 @@ with tab_m:
             for i in range(5):
                 df[f'flag_{i}'] = ''
             
-        # 建立 Altair 圖表
+        # 建立 Altair 圖表 (新增 adr 至 tooltip)
         base = alt.Chart(df).encode(
             x=alt.X('label:O', 
                     title='日期', 
@@ -1175,7 +1175,7 @@ with tab_m:
                     axis=alt.Axis(
                         labelAngle=0
                     )),
-            tooltip=['date', 'occ_rate']
+            tooltip=['date', 'occ_rate', 'adr']
         )
         
         bars = base.mark_bar().encode(
@@ -1203,7 +1203,6 @@ with tab_m:
         )
 
         # 建立多層垂直標籤 (保證在所有瀏覽器都不會重疊)
-        # 第一層 (dy=-22), 第二層 (dy=-35), 第三層 (dy=-48) ...
         layers = [bars, text]
         for i in range(5):
             offset = -22 - (i * 13)
@@ -1219,7 +1218,19 @@ with tab_m:
             )
             layers.append(f_layer)
         
-        chart = alt.layer(*layers).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
+        # 建立 ADR 折線與資料點 (橘黃色高質感折線，使用右側 Y 軸)
+        adr_line = base.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
+            y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
+        )
+        adr_points = base.mark_circle(color='#ff9f43', size=60).encode(
+            y=alt.Y('adr:Q')
+        )
+        
+        # 結合圖層，並宣告 Y 軸獨立雙軸
+        chart = alt.layer(*layers, adr_line, adr_points).resolve_scale(
+            y='independent'
+        ).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
+        
         st.altair_chart(chart, use_container_width=True)
 
     with col_chart1: render_occ_chart(m_prev_prev, "(前前月)")
@@ -1608,6 +1619,36 @@ with tab_m:
         stretch_gap = stretch_goal - m_rev
         progress = min(1.0, m_rev / new_target)
         st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
+        
+        # 營收進度外推預估 (Run-Rate Forecast)
+        active_days = m_curr['df'][m_curr['df']['revenue'] > 0]
+        elapsed_days = len(active_days)
+        
+        if elapsed_days > 0:
+            import calendar
+            total_days = calendar.monthrange(selected_date.year, selected_date.month)[1]
+            daily_avg = m_rev / elapsed_days
+            projected_rev = daily_avg * total_days
+            projected_progress = projected_rev / new_target
+            
+            # 預警顏色與文字
+            status_color = "#2ecc71" if projected_rev >= new_target else "#ef4444"
+            status_icon = "📈" if projected_rev >= new_target else "⚠️"
+            status_text = "依目前進度，預計**可順利達標**！" if projected_rev >= new_target else "依目前進度，**達標可能有難度**，建議調整動態定價或加強促銷！"
+            
+            st.markdown(
+                f"<div style='background: #1e293b; padding: 15px; border-radius: 8px; border-left: 5px solid {status_color}; margin-top: 10px; margin-bottom: 15px; color: #f8fafc;'>"
+                f"<p style='margin:0; font-size:13px; color:#94a3b8;'>🔮 <strong>當月營收進度外推預估 (Pacing Forecast)</strong></p>"
+                f"<div style='display: flex; gap: 20px; align-items: center; margin-top: 5px; flex-wrap: wrap; font-size: 13px;'>"
+                f"<div>已統計天數: <strong style='color:#f1f5f9;'>{elapsed_days} / {total_days} 天</strong></div>"
+                f"<div>當前日均營收: <strong style='color:#f1f5f9;'>NT$ {int(daily_avg):,}</strong></div>"
+                f"<div>預估月底總營收: <strong style='color:{status_color}; font-size: 15px;'>NT$ {int(projected_rev):,}</strong></div>"
+                f"<div>預估最終達成率: <strong style='color:{status_color}; font-size: 15px;'>{projected_progress*100:.1f}%</strong></div>"
+                f"</div>"
+                f"<p style='margin: 8px 0 0 0; font-size: 12px; color: #cbd5e1;'>{status_icon} {status_text}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
         
         a_col1, a_col2, a_col3 = st.columns(3)
         if gap <= 0:
