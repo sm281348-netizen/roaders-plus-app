@@ -1190,7 +1190,7 @@ with tab_m:
             )
         )
         
-        # 住房率文字標籤 (不畫獨立Y軸)
+        # 住房率文字標籤 (自然繼承 OCC 軸，不需畫新軸)
         text = base_occ.mark_text(
             align='center',
             baseline='bottom',
@@ -1198,7 +1198,7 @@ with tab_m:
             fontSize=14,
             fontWeight='bold'
         ).encode(
-            y=alt.Y('occ_rate:Q', axis=None),
+            y='occ_rate:Q',
             text=alt.Text('occ_rate:Q', format='.1f')
         )
 
@@ -1213,7 +1213,7 @@ with tab_m:
                 fontSize=11,
                 fontWeight='normal'
             ).encode(
-                y=alt.Y('occ_rate:Q', axis=None),
+                y='occ_rate:Q',
                 text=f'flag_{i}:N'
             )
             occ_layers.append(f_layer)
@@ -1224,7 +1224,7 @@ with tab_m:
         # 2. 建立 ADR 子圖 (折線圖 + 資料點 + 紅色平均房價基準線 + 紅色金額數值標記)
         # ==========================================
         base_adr = alt.Chart(df).encode(
-            x=alt.X('label:O', sort=df['label'].tolist(), axis=None), # 共享 X 軸但隱藏重複標記
+            x=alt.X('label:O', sort=df['label'].tolist()), # 自然與 OCC X 軸合併
             tooltip=['date', 'occ_rate', 'adr']
         )
         
@@ -1232,7 +1232,7 @@ with tab_m:
             y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(titleColor='#ff9f43', format='$,.0f'), scale=alt.Scale(zero=False))
         )
         adr_points = base_adr.mark_circle(color='#ff9f43', size=60).encode(
-            y=alt.Y('adr:Q', axis=None)
+            y='adr:Q'
         )
         
         adr_layers = [adr_line, adr_points]
@@ -1247,7 +1247,7 @@ with tab_m:
                 strokeWidth=1.5, 
                 strokeDash=[5, 5]
             ).encode(
-                y=alt.Y('adr:Q')
+                y='adr:Q'
             )
             
             # 建立紅色文字標籤，靠右放置於最後一天的 X 位置
@@ -1263,7 +1263,7 @@ with tab_m:
                 fontWeight='bold'
             ).encode(
                 x=alt.X('label:O'),
-                y=alt.Y('adr:Q'),
+                y='adr:Q',
                 text='text:N'
             )
             adr_layers.extend([baseline_rule, baseline_text])
