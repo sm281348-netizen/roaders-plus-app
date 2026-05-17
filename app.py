@@ -1226,8 +1226,40 @@ with tab_m:
             y=alt.Y('adr:Q', axis=None)
         )
         
+        # 【新增】全月平均 ADR 紅色基準線與右側數值標記
+        avg_adr = month_data.get('avg_adr', 0)
+        baseline_layers = []
+        if avg_adr > 0:
+            # 建立水平紅色虛線
+            rule_df = pd.DataFrame([{'adr': avg_adr}])
+            baseline_rule = alt.Chart(rule_df).mark_rule(
+                color='#e74c3c', 
+                strokeWidth=1.5, 
+                strokeDash=[5, 5]
+            ).encode(
+                y=alt.Y('adr:Q', axis=None)
+            )
+            
+            # 建立紅色文字標籤，靠右對齊放置於最後一天
+            last_day_label = df['label'].iloc[-1] if not df.empty else ""
+            label_df = pd.DataFrame([{'adr': avg_adr, 'label': last_day_label, 'text': f"${int(avg_adr):,}"}])
+            baseline_text = alt.Chart(label_df).mark_text(
+                align='right',
+                baseline='bottom',
+                dx=-5,
+                dy=-5,
+                color='#e74c3c',
+                fontSize=12,
+                fontWeight='bold'
+            ).encode(
+                x=alt.X('label:O'),
+                y=alt.Y('adr:Q', axis=None),
+                text='text:N'
+            )
+            baseline_layers = [baseline_rule, baseline_text]
+        
         # 結合圖層，並宣告 Y 軸獨立雙軸
-        chart = alt.layer(*layers, adr_line, adr_points).resolve_scale(
+        chart = alt.layer(*layers, adr_line, adr_points, *baseline_layers).resolve_scale(
             y='independent'
         ).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
         
