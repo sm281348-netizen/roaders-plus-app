@@ -1364,9 +1364,9 @@ with tab_m:
             
             # 建立紅色文字標籤 (共用相同 df，只在最後一天繪製文字，完美對齊)
             baseline_text = alt.Chart(df).mark_text(
-                align='left',      # 靠左對齊，使文字向右側 Y 軸外伸展
-                baseline='middle', # 垂直置中對齊虛線
-                dx=8,              # 向右偏移 8 像素，剛好落在右側 Y 軸線上
+                align='right',     # 改為靠右對齊，讓文字往圖表內部 (左側) 延伸
+                baseline='middle', 
+                dx=-8,             # 向左偏移 8 像素，避免與外側的年 ADR 數值重疊
                 color='#000000',
                 fontSize=12,
                 fontWeight='bold'
