@@ -925,29 +925,8 @@ def parse_and_save_restaurant(file, current_year):
 st.title("路徒Plus行旅站前館營運日誌")
 
 # 主畫面
-tab1, tab_m, tab6, tab_p, tab2, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "💼 櫃台數據", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
+tab1, tab_m, tab6, tab_p, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
-with tab2:
-    st.header("💼 櫃台數據")
-    st.subheader("📁 數據報表上傳")
-    jinxu_file = st.file_uploader("上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
-    
-    if jinxu_file:
-        if st.button("📥 寫入系統資料庫"):
-            saved_count = parse_and_save_jinxu(jinxu_file)
-            if saved_count:
-                st.success(f"✅ 成功將 {saved_count} 筆每日資料存入系統資料庫！切換日期即可自動調出。")
-                time.sleep(1)
-                st.rerun()
-
-    st.divider()
-    st.subheader(f"櫃台手動確認區 ({date_str})")
-    st.number_input("訂房率 (%)", min_value=0.0, max_value=100.0, step=0.1, key="input_occ", on_change=on_input_change)
-    st.number_input("總營收", min_value=0, step=100, key="input_rev", on_change=on_input_change)
-    st.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr", on_change=on_input_change)
-    st.number_input("總住房數", min_value=0, step=1, key="input_rooms", on_change=on_input_change)
-    st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
-    st.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp", on_change=on_input_change)
 
 with tab1:
     st.header("📊 營運總覽")
@@ -2244,7 +2223,29 @@ with tab5:
 
 with tab6:
     st.header("📝 每日營運紀錄")
+
+    # --- 金旭報表上傳 + 手動輸入 (從原「櫃台數據」移入) ---
+    with st.expander("📁 金旭報表上傳 & 當日數字手動確認", expanded=False):
+        jinxu_file = st.file_uploader("上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
+        if jinxu_file:
+            if st.button("📥 寫入系統資料庫"):
+                saved_count = parse_and_save_jinxu(jinxu_file)
+                if saved_count:
+                    st.success(f"✅ 成功將 {saved_count} 筆每日資料存入系統資料庫！切換日期即可自動調出。")
+                    time.sleep(1)
+                    st.rerun()
+        st.divider()
+        st.subheader(f"📋 當日數字手動確認 ({date_str})")
+        rc1, rc2, rc3 = st.columns(3)
+        rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0, step=0.1, key="input_occ", on_change=on_input_change)
+        rc2.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr", on_change=on_input_change)
+        rc3.number_input("總營收", min_value=0, step=100, key="input_rev", on_change=on_input_change)
+        rc4, rc5 = st.columns(2)
+        rc4.number_input("總住房數", min_value=0, step=1, key="input_rooms", on_change=on_input_change)
+        rc5.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp", on_change=on_input_change)
+        st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
     
+
     if selected_week != "--- 關閉週預覽 ---":
         import calendar
         _, last_day_of_month = calendar.monthrange(selected_date.year, selected_date.month)
