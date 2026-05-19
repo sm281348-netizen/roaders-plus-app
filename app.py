@@ -1588,12 +1588,16 @@ with tab_m:
         scatter_df['adr_val'] = pd.to_numeric(scatter_df['adr'], errors='coerce').fillna(0)
         scatter_df['day'] = pd.to_datetime(scatter_df['date']).dt.day
 
-        avg_adr_s = m_curr.get('avg_adr', scatter_df['adr_val'].mean())
+        # 以「年純平 ADR」作為 Y 軸分界（最客觀的裸實力底線，不受淡日拉低）
+        y_adr_s, y_pure_adr_s = fetch_yearly_metrics(selected_date.year)
+        adr_anchor = y_pure_adr_s if y_pure_adr_s > 0 else m_curr.get('avg_adr', scatter_df['adr_val'].mean())
+        anchor_label = f'年純平 ADR ${int(adr_anchor):,}'
+        anchor_color = '#000000'
         occ_threshold = 75.0  # 高住房率門檻
 
         def classify_quadrant(row):
             hi_occ = row['occ_val'] >= occ_threshold
-            hi_adr = row['adr_val'] >= avg_adr_s
+            hi_adr = row['adr_val'] >= adr_anchor
             if hi_occ and hi_adr: return '🟠 理想（高OCC+高ADR）'
             if hi_occ and not hi_adr: return '🔴 賤賣（高OCC+低ADR）'
             if not hi_occ and hi_adr: return '🟡 定價偏高（低OCC+高ADR）'
@@ -1626,12 +1630,12 @@ with tab_m:
             ]
         )
 
-        # 月均 ADR 水平輔助線
-        adr_rule = alt.Chart(pd.DataFrame({'y': [avg_adr_s]})).mark_rule(
-            color='#e74c3c', strokeDash=[6, 3], strokeWidth=1.5
+        # 年純平 ADR 水平輔助線
+        adr_rule = alt.Chart(pd.DataFrame({'y': [adr_anchor]})).mark_rule(
+            color=anchor_color, strokeDash=[6, 3], strokeWidth=2
         ).encode(y='y:Q')
-        adr_label = alt.Chart(pd.DataFrame({'y': [avg_adr_s], 'x': [105], 'text': [f'月均 ADR ${int(avg_adr_s):,}']})).mark_text(
-            align='right', dx=-4, dy=-8, color='#e74c3c', fontSize=11, fontWeight='bold'
+        adr_label = alt.Chart(pd.DataFrame({'y': [adr_anchor], 'x': [105], 'text': [anchor_label]})).mark_text(
+            align='right', dx=-4, dy=-8, color=anchor_color, fontSize=11, fontWeight='bold'
         ).encode(x='x:Q', y='y:Q', text='text:N')
 
         # 75% OCC 垂直輔助線
