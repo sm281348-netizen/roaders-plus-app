@@ -3088,14 +3088,14 @@ with tab_p:
                                 # 分週配送週期比例建議
                                 st.markdown("📋 **叫貨週期配送配比推薦**")
                                 if vendor_type == "蛋商":
-                                    st.markdown("- **週一 (40%)**：建議採購 **`{:.1f}`** {}（供週二、三、四消耗）".format(recommended_qty * 0.4, most_common_unit))
-                                    st.markdown("- **週三 (30%)**：建議採購 **`{:.1f}`** {}（供週五消耗）".format(recommended_qty * 0.3, most_common_unit))
-                                    st.markdown("- **週五 (30%)**：建議採購 **`{:.1f}`** {}（因應週末雙冠日高峰）".format(recommended_qty * 0.3, most_common_unit))
+                                    st.markdown("- **週一 (40%)**：建議採購 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty * 0.4, most_common_unit, int(est_cost * 0.4)))
+                                    st.markdown("- **週三 (30%)**：建議採購 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty * 0.3, most_common_unit, int(est_cost * 0.3)))
+                                    st.markdown("- **週五 (30%)**：建議採購 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty * 0.3, most_common_unit, int(est_cost * 0.3)))
                                 elif vendor_type == "菜商":
-                                    st.markdown("- **平日每日均攤 (60%)**：每次到貨建議 **`{:.1f}`** {}".format(recommended_qty * 0.12, most_common_unit))
-                                    st.markdown("- **週五加強 (40%)**：一次叫足 **`{:.1f}`** {}（備戰週末雙冠日）".format(recommended_qty * 0.4, most_common_unit))
+                                    st.markdown("- **平日每日均攤 (60%)**：每次到貨建議 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty * 0.12, most_common_unit, int(est_cost * 0.12)))
+                                    st.markdown("- **週五加強 (40%)**：一次叫足 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty * 0.4, most_common_unit, int(est_cost * 0.4)))
                                 else:
-                                    st.markdown("- **單次足額採購 (100%)**：於週一或合約到貨日一次性採購 **`{:.1f}`** {}".format(recommended_qty, most_common_unit))
+                                    st.markdown("- **單次足額採購 (100%)**：於週一或合約到貨日一次性採購 **`{:.1f}`** {}（預估單次費用：**NT$ {:,}**）".format(recommended_qty, most_common_unit, int(est_cost)))
                                     
                         else:
                             st.warning(f"⚠️ 在目前的採購資料中，找不到含有「{search_term}」的品項名稱。")
