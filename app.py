@@ -2750,6 +2750,21 @@ with tab_p:
                         # 月均日來客數作為預估基準（只取有來客的天）
                         active_days_df = analysis_df[analysis_df['effective_peak_guests'] > 0]
                         avg_daily_guests_fw = active_days_df['effective_peak_guests'].mean() if not active_days_df.empty else 0
+                        guest_source_label = f"本月實際 ({len(active_days_df)} 天記錄)"
+                        
+                        # 備援：本月無資料時，改用上個月平均
+                        if avg_daily_guests_fw == 0:
+                            prev_rest_data = m_prev.get('df', pd.DataFrame())
+                            if not prev_rest_data.empty and 'bf_total_act' in prev_rest_data.columns:
+                                prev_rest_data = prev_rest_data.copy()
+                                for _c in ['bf_total_act', 'af_total_act', 'rest_day_guests']:
+                                    if _c in prev_rest_data.columns:
+                                        prev_rest_data[_c] = pd.to_numeric(prev_rest_data[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                                prev_bf = prev_rest_data[prev_rest_data['bf_total_act'] > 0]['bf_total_act']
+                                if not prev_bf.empty:
+                                    avg_daily_guests_fw = prev_bf.mean()
+                                    guest_source_label = f"⚠️ 以上月平均推估（本月尚無餐廳資料）"
+                        
                         dual_dates_set_fw = set(dual_match_dates) if dual_match_dates else set()
                         
                         # 從今天開始到月底，逐週生成
@@ -2784,7 +2799,7 @@ with tab_p:
                             cursor = sunday + dt_timedelta(days=1)
                         
                         if avg_daily_guests_fw > 0 and week_plans:
-                            st.caption(f"💡 以本月平均每日來客數 **{avg_daily_guests_fw:.1f} 人** 為預估基準，雙冠週採購上限提高 15%。")
+                            st.caption(f"💡 預估基準：每日平均來客數 **{avg_daily_guests_fw:.1f} 人**（{guest_source_label}）。雙冠週採購上限自動提高 15%。")
                             for wp in week_plans:
                                 color = '#e67e22' if wp['has_dual'] else '#2980b9'
                                 dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
