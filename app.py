@@ -1163,6 +1163,36 @@ with tab_m:
     m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
     m_curr = fetch_month_summary(selected_date.year, selected_date.month)
     m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
+    
+    # 取得去年同月數據 (YoY)
+    m_curr_ly = fetch_month_summary(selected_date.year - 1, selected_date.month)
+    
+    st.markdown("#### 🏆 本月總覽與去年同期比較 (YoY)")
+    if not m_curr['df'].empty and not m_curr_ly['df'].empty:
+        col1, col2, col3 = st.columns(3)
+        
+        adr_diff = m_curr['avg_adr'] - m_curr_ly['avg_adr']
+        adr_pct = (adr_diff / m_curr_ly['avg_adr'] * 100) if m_curr_ly['avg_adr'] > 0 else 0
+        adr_color = "#2ecc71" if adr_diff >= 0 else "#e74c3c"
+        adr_sign = "+" if adr_diff >= 0 else ""
+        col1.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {adr_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 ADR</p><strong style='font-size:22px;'>NT$ {int(m_curr['avg_adr']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{adr_color}; font-weight:bold;'>較去年同期 {adr_sign}NT$ {int(adr_diff):,} ({adr_sign}{adr_pct:.1f}%)</p></div>", unsafe_allow_html=True)
+        
+        occ_diff = m_curr['avg_occ'] - m_curr_ly['avg_occ']
+        occ_color = "#2ecc71" if occ_diff >= 0 else "#e74c3c"
+        occ_sign = "+" if occ_diff >= 0 else ""
+        col2.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {occ_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 OCC</p><strong style='font-size:22px;'>{m_curr['avg_occ']:.1f}%</strong><p style='margin:5px 0 0 0; font-size:13px; color:{occ_color}; font-weight:bold;'>較去年同期 {occ_sign}{occ_diff:.1f}%</p></div>", unsafe_allow_html=True)
+        
+        rev_diff = m_curr['rev'] - m_curr_ly['rev']
+        rev_pct = (rev_diff / m_curr_ly['rev'] * 100) if m_curr_ly['rev'] > 0 else 0
+        rev_color = "#2ecc71" if rev_diff >= 0 else "#e74c3c"
+        rev_sign = "+" if rev_diff >= 0 else ""
+        col3.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {rev_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月總客房營收</p><strong style='font-size:22px;'>NT$ {int(m_curr['rev']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{rev_color}; font-weight:bold;'>較去年同期 {rev_sign}NT$ {int(rev_diff):,} ({rev_sign}{rev_pct:.1f}%)</p></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+    else:
+        if m_curr['df'].empty:
+            st.info("💡 本月尚無數據，無法與去年同期比較。")
+        elif m_curr_ly['df'].empty:
+            st.info("💡 去年同月尚無歷史對比資料。")
 
     # 取得台北重大活動資料
     taipei_events_df = fetch_taipei_events()
@@ -1380,6 +1410,41 @@ with tab_m:
     with col_chart2: render_occ_chart(m_prev, "(上月)")
     with col_chart3: render_occ_chart(m_curr, "(本月)")
     with col_chart4: render_occ_chart(m_next, "(下月)")
+    
+    # --- A2. 去年同期軌跡對比 (YoY Daily Comparison) ---
+    st.markdown("#### 📅 去年同期軌跡對比 (YoY Daily Comparison)")
+    if not m_curr['df'].empty and not m_curr_ly['df'].empty:
+        df_ty = m_curr['df'].copy()
+        df_ly = m_curr_ly['df'].copy()
+        
+        if 'day' not in df_ty.columns: df_ty['day'] = pd.to_datetime(df_ty['date']).dt.day
+        if 'day' not in df_ly.columns: df_ly['day'] = pd.to_datetime(df_ly['date']).dt.day
+            
+        df_ty['year'] = '今年'
+        df_ly['year'] = '去年'
+        
+        df_yoy = pd.concat([df_ty[['day', 'adr', 'year']], df_ly[['day', 'adr', 'year']]], ignore_index=True)
+        df_yoy['adr'] = pd.to_numeric(df_yoy['adr'], errors='coerce').fillna(0)
+        
+        # 設定 Y 軸比例尺
+        yoy_adr_min = max(0, int(df_yoy['adr'].min() * 0.9))
+        yoy_adr_max = int(df_yoy['adr'].max() * 1.1)
+        if yoy_adr_min == yoy_adr_max: yoy_adr_max += 1000
+        
+        yoy_chart = alt.Chart(df_yoy).mark_line(point=True, strokeWidth=3).encode(
+            x=alt.X('day:O', title='日期 (Day of Month)'),
+            y=alt.Y('adr:Q', title='平均房價 (NT$)', scale=alt.Scale(domain=[yoy_adr_min, yoy_adr_max], zero=False)),
+            color=alt.Color('year:N', 
+                scale=alt.Scale(domain=['今年', '去年'], range=['#ff9f43', '#bdc3c7']),
+                legend=alt.Legend(title="年份", orient="top-left")
+            ),
+            strokeDash=alt.condition(alt.datum.year == '去年', alt.value([5, 5]), alt.value([0])),
+            tooltip=['day', 'year', 'adr']
+        ).properties(height=350)
+        
+        st.altair_chart(yoy_chart, use_container_width=True)
+    
+    st.markdown("<div style='margin-bottom:30px;'></div>", unsafe_allow_html=True)
     
     # --- B. 關鍵表現數據分析 ---
     st.markdown("#### 🌟 關鍵表現數據分析")
