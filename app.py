@@ -1665,6 +1665,58 @@ with tab_m:
             )
         st.write("")
 
+        # --- 定價成功率 (Pricing Success Rate) ---
+        ideal_cnt = q_counts.get('🟠 理想（高OCC+高ADR）', 0)
+        cheap_cnt = q_counts.get('🔴 賤賣（高OCC+低ADR）', 0)
+        high_occ_total = ideal_cnt + cheap_cnt
+        success_rate = (ideal_cnt / high_occ_total * 100) if high_occ_total > 0 else 0
+        
+        # 計算上個月的定價成功率作為對比
+        prev_scatter_df = m_prev['df'].copy()
+        prev_success_rate = 0
+        if not prev_scatter_df.empty:
+            prev_scatter_df['occ_val'] = pd.to_numeric(prev_scatter_df['occ_rate'], errors='coerce').fillna(0)
+            prev_scatter_df['adr_val'] = pd.to_numeric(prev_scatter_df['adr'], errors='coerce').fillna(0)
+            prev_scatter_df['hi_occ'] = prev_scatter_df['occ_val'] >= occ_threshold
+            prev_scatter_df['hi_adr'] = prev_scatter_df['adr_val'] >= adr_anchor
+            prev_ideal = int((prev_scatter_df['hi_occ'] & prev_scatter_df['hi_adr']).sum())
+            prev_cheap = int((prev_scatter_df['hi_occ'] & ~prev_scatter_df['hi_adr']).sum())
+            prev_total = prev_ideal + prev_cheap
+            prev_success_rate = (prev_ideal / prev_total * 100) if prev_total > 0 else 0
+        
+        rate_diff = success_rate - prev_success_rate
+        rate_color = '#2ecc71' if rate_diff >= 0 else '#e74c3c'
+        rate_sign = '+' if rate_diff >= 0 else ''
+        
+        if success_rate >= 80:
+            bar_color = '#2ecc71'
+            verdict = '🟢 定價能力優秀'
+        elif success_rate >= 60:
+            bar_color = '#f39c12'
+            verdict = '🟡 定價能力尚可'
+        else:
+            bar_color = '#e74c3c'
+            verdict = '🔴 定價能力待改善'
+            
+        st.markdown(f"""
+        <div style="background:#f8f9fa; border-radius:10px; padding:20px; margin-top:10px; border-left: 5px solid {bar_color};">
+            <p style="margin:0 0 8px 0; font-size:14px; color:#555;">
+                📐 <strong>高住房日定價成功率</strong>
+                <span style="font-size:12px; color:#aaa; margin-left:8px;">高OCC 天數共 {high_occ_total} 天，其中 {int(ideal_cnt)} 天 ADR 超過年純平基準</span>
+            </p>
+            <div style="display:flex; align-items:baseline; gap:15px; flex-wrap:wrap;">
+                <strong style="font-size:40px; color:{bar_color};">{success_rate:.1f}%</strong>
+                <span style="font-size:14px;">{verdict}</span>
+                <span style="font-size:14px; color:{rate_color}; font-weight:bold;">vs 上月 {prev_success_rate:.1f}% ({rate_sign}{rate_diff:.1f}%)</span>
+            </div>
+            <div style="background:#e0e0e0; border-radius:999px; height:10px; margin-top:10px;">
+                <div style="background:{bar_color}; width:{min(success_rate, 100):.1f}%; height:10px; border-radius:999px; transition: width 0.5s;"></div>
+            </div>
+            <p style="margin:8px 0 0 0; font-size:12px; color:#888;">💡 目標：讓「賤賣天數」每月減少 1-2 天，持續將成功率推向 80%</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+
     st.divider()
 
     # --- 新增：雙冠備戰行事曆 (Peak Demand Radar) ---
