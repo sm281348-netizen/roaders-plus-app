@@ -1339,9 +1339,7 @@ with tab_m:
                 dx=8,              # 向右偏移 8 像素，剛好落在右側 Y 軸線上
                 color='#000000',
                 fontSize=12,
-                fontWeight='bold',
-                stroke='white',
-                strokeWidth=1.5
+                fontWeight='bold'
             ).encode(
                 x=alt.X('label:O', sort=df['label'].tolist()),
                 y=alt.Y('adr_baseline:Q', scale=adr_scale),
@@ -1353,8 +1351,7 @@ with tab_m:
         if df.get('y_adr_baseline', pd.Series()).max() > 0:
             y_adr_rule = alt.Chart(df).mark_rule(color='#f1c40f', strokeWidth=1.5, strokeDash=[5, 5]).encode(y=alt.Y('y_adr_baseline:Q', scale=adr_scale))
             y_adr_text = alt.Chart(df).mark_text(
-                align='left', baseline='middle', dx=8, dy=-14, color='#000000', fontSize=11, fontWeight='bold',
-                stroke='white', strokeWidth=1.5
+                align='left', baseline='middle', dx=8, dy=-14, color='#000000', fontSize=11, fontWeight='bold'
             ).encode(
                 x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_adr_baseline:Q', scale=adr_scale), text='y_adr_text:N'
             )
