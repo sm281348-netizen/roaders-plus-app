@@ -1024,9 +1024,9 @@ with tab1:
     .kpi-value {{ font-size: 26px; font-weight: bold; }}
     </style>
     <div class="kpi-container">
-        <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{{occ_val}}%</div></div>
-        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {{safe_format_int(adr_val):,}}</div></div>
-        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {{safe_format_int(rev_val):,}}</div></div>
+        <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
+        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
+        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
     </div>
     """
     st.markdown(kpi_html, unsafe_allow_html=True)
