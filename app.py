@@ -2915,6 +2915,194 @@ with tab_p:
                             hide_index=True
                         )
                         
+                # --- 🎯 4. 單品食材消耗率與精準採購方案分析 ---
+                if 'analysis_df' in locals() and not analysis_df.empty:
+                    st.divider()
+                    st.subheader("🎯 單品食材消耗率與精準採購方案分析")
+                    st.caption("分析特定關鍵食材品項（如：蛋、高麗菜、海鮮等）的每客平均消耗量，並自動產出精準叫貨配比建議。")
+
+                    item_col = next((c for c in df_month.columns if any(k in c for k in ['品名', '項目', 'Item'])), None)
+                    qty_col = next((c for c in df_month.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+                    unit_col = next((c for c in df_month.columns if any(k in c for k in ['單位', 'Unit'])), None)
+                    price_col = next((c for c in df_month.columns if any(k in c for k in ['單價', 'Price', 'Rate'])), None)
+                    
+                    if item_col and qty_col:
+                        # 擷取常用關鍵字選項
+                        all_items = df_month[item_col].dropna().astype(str).str.strip()
+                        all_items = all_items[all_items != ""]
+                        
+                        common_keywords = ["蛋", "菜", "肉", "奶", "米", "麵", "油", "海鮮", "雞", "豬", "牛", "魚"]
+                        found_keywords = [k for k in common_keywords if any(k in x for x in all_items)]
+                        if not found_keywords:
+                            found_keywords = ["蛋"]
+                        
+                        c_sel1, c_sel2 = st.columns([1, 1])
+                        with c_sel1:
+                            selected_keyword = st.selectbox(
+                                "🔍 選擇分析品項關鍵字",
+                                options=found_keywords + ["(自訂輸入)"],
+                                index=0,
+                                key="item_analysis_keyword_select"
+                            )
+                        with c_sel2:
+                            if selected_keyword == "(自訂輸入)":
+                                search_term = st.text_input("✍️ 輸入自訂食材名稱 (例如: 高麗菜)", "蛋", key="item_analysis_custom_input")
+                            else:
+                                search_term = selected_keyword
+                        
+                        # 篩選匹配的採購項目
+                        item_mask = df_month[item_col].astype(str).str.contains(search_term, na=False, case=False)
+                        item_df = df_month[item_mask].copy()
+                        
+                        if not item_df.empty:
+                            # 數值清理
+                            item_df['cleaned_qty'] = pd.to_numeric(item_df[qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            item_df['cleaned_total'] = pd.to_numeric(item_df['小計'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            
+                            # 單位判斷
+                            most_common_unit = "單位"
+                            if unit_col in item_df.columns:
+                                most_common_unit = item_df[unit_col].mode().iloc[0] if not item_df[unit_col].empty else "單位"
+                            
+                            # 每日採購整合
+                            item_df['日期_obj'] = pd.to_datetime(item_df['日期']).dt.date
+                            daily_item_qty = item_df.groupby('日期_obj')['cleaned_qty'].sum().reset_index()
+                            daily_item_cost = item_df.groupby('日期_obj')['cleaned_total'].sum().reset_index()
+                            
+                            # 合併每日來客
+                            item_analysis_df = analysis_df[['日期_obj', 'effective_peak_guests']].copy()
+                            item_analysis_df = pd.merge(item_analysis_df, daily_item_qty, on='日期_obj', how='left').fillna(0)
+                            item_analysis_df = pd.merge(item_analysis_df, daily_item_cost, on='日期_obj', how='left').fillna(0)
+                            
+                            # 週彙總計算
+                            item_analysis_df['日期_dt'] = pd.to_datetime(item_analysis_df['日期_obj'])
+                            item_analysis_df['week_start'] = item_analysis_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                            
+                            weekly_item = item_analysis_df.groupby('week_start').agg(
+                                總採購量=('cleaned_qty', 'sum'),
+                                總費用=('cleaned_total', 'sum'),
+                                來客人數=('effective_peak_guests', 'sum')
+                            ).reset_index()
+                            
+                            weekly_item['週次'] = pd.to_datetime(weekly_item['week_start']).dt.strftime('W%V\n%m/%d')
+                            weekly_item['每客平均消耗量'] = weekly_item.apply(
+                                lambda r: r['總採購量'] / r['來客人數'] if r['來客人數'] > 0 else 0, axis=1
+                            )
+                            
+                            # 計算月平均與平均單價
+                            total_qty_month = weekly_item['總採購量'].sum()
+                            total_guests_month = weekly_item['來客人數'].sum()
+                            avg_rate_month = total_qty_month / total_guests_month if total_guests_month > 0 else 0
+                            avg_unit_price = item_df['cleaned_total'].sum() / item_df['cleaned_qty'].sum() if item_df['cleaned_qty'].sum() > 0 else 0
+                            
+                            st.write("")
+                            st.markdown(f"##### 📊 **「{search_term}」消耗數據指標**")
+                            
+                            c_m1, c_m2, c_m3 = st.columns(3)
+                            c_m1.metric("本月總採購量", f"{total_qty_month:,.1f} {most_common_unit}")
+                            c_m2.metric("每客平均消耗量 (使用率)", f"{avg_rate_month:.2f} {most_common_unit}/人", help="總採購量 / 總來客數")
+                            c_m3.metric("平均採購單價", f"NT$ {avg_unit_price:,.1f} /{most_common_unit}")
+                            
+                            # 圖表呈現
+                            st.write("")
+                            st.markdown(f"###### 📈 週來客數 vs 「{search_term}」採購量相對走勢")
+                            
+                            max_w_qty = weekly_item['總採購量'].max()
+                            max_w_guests = weekly_item['來客人數'].max()
+                            weekly_item['採購量(%)'] = (weekly_item['總採購量'] / max_w_qty * 100).round(1) if max_w_qty > 0 else 0
+                            weekly_item['來客(%)'] = (weekly_item['來客人數'] / max_w_guests * 100).round(1) if max_w_guests > 0 else 0
+                            
+                            melt_item_df = weekly_item.melt(
+                                id_vars=['週次', '總採購量', '來客人數', '總費用'],
+                                value_vars=['採購量(%)', '來客(%)'],
+                                var_name='指標', value_name='標準化數值'
+                            )
+                            
+                            item_color_map = {'採購量(%)': '#e67e22', '來客(%)': '#2980b9'}
+                            
+                            item_chart = alt.Chart(melt_item_df).mark_line(point=True, strokeWidth=2.5).encode(
+                                x=alt.X('週次:N', title='週次', sort=None),
+                                y=alt.Y('標準化數值:Q', title='相對比例 (% of max)', scale=alt.Scale(domain=[0, 110])),
+                                color=alt.Color('指標:N',
+                                    scale=alt.Scale(domain=list(item_color_map.keys()), range=list(item_color_map.values())),
+                                    legend=alt.Legend(title='指標', orient='bottom')
+                                ),
+                                tooltip=[
+                                    alt.Tooltip('週次:N', title='週次'),
+                                    alt.Tooltip('指標:N', title='指標'),
+                                    alt.Tooltip('總採購量:Q', title=f'總採購量 ({most_common_unit})', format=',.1f'),
+                                    alt.Tooltip('來客人數:Q', title='來客人數 (人)', format=',.0f'),
+                                    alt.Tooltip('總費用:Q', title='總費用 (NT$)', format=',.0f'),
+                                ]
+                            ).properties(height=200)
+                            
+                            st.altair_chart(item_chart, use_container_width=True)
+                            
+                            # 🔮 採購方案精算
+                            st.write("")
+                            st.markdown(f"##### 🔮 「{search_term}」精準採購方案預算機")
+                            st.write("設定您未來的預計來客數，系統會自動幫您推算最合理的採購量與叫貨時程建議。")
+                            
+                            col_calc1, col_calc2 = st.columns([1, 1])
+                            with col_calc1:
+                                input_guests = st.number_input(
+                                    "📅 未來一週預計總來客數",
+                                    min_value=10,
+                                    max_value=5000,
+                                    value=int(total_guests_month / 4) if total_guests_month > 0 else 500,
+                                    step=50,
+                                    key="item_calc_guests_input_widget"
+                                )
+                                
+                                # 分類叫貨週期提示
+                                vendor_type = "菜商"
+                                if any(x in search_term for x in ["蛋", "卵"]):
+                                    vendor_type = "蛋商"
+                                elif any(x in search_term for x in ["肉", "雞", "豬", "牛", "魚"]):
+                                    vendor_type = "肉商"
+                                elif any(x in search_term for x in ["雜", "油", "米", "麵"]):
+                                    vendor_type = "雜貨"
+                                
+                                st.info(
+                                    f"💡 **建議配比原則 ({vendor_type})**\n\n"
+                                    f"- 自動配比可防止單次進貨量過大導致新鮮度下降或報廢損耗。\n"
+                                    f"- 可依現行實際叫貨週期彈性調整叫貨。"
+                                )
+                                
+                            with col_calc2:
+                                # 包含 5% 安全庫存緩衝
+                                recommended_qty = input_guests * avg_rate_month * 1.05
+                                est_cost = recommended_qty * avg_unit_price
+                                
+                                st.markdown(
+                                    f"<div style='background:#2e437c15; border-left:4px solid #2e437c; padding:15px; border-radius:8px;'>"
+                                    f"<h4 style='margin:0; color:#2e437c;'>建議採購總量</h4>"
+                                    f"<h2 style='margin:5px 0; color:#2e437c;'>{recommended_qty:,.1f} {most_common_unit}</h2>"
+                                    f"<p style='margin:0; font-size:12px; color:#666;'>已包含 5% 安全庫存緩衝</p>"
+                                    f"<hr style='margin:10px 0; border:none; border-top:1px solid #ddd;'>"
+                                    f"<h5 style='margin:0; color:#333;'>預估採購費用: <strong style='font-size:18px;'>NT$ {int(est_cost):,}</strong></h5>"
+                                    f"</div>",
+                                    unsafe_allow_html=True
+                                )
+                                
+                                # 分週配送週期比例建議
+                                st.markdown("📋 **叫貨週期配送配比推薦**")
+                                if vendor_type == "蛋商":
+                                    st.markdown("- **週一 (40%)**：建議採購 **`{:.1f}`** {}（供週二、三、四消耗）".format(recommended_qty * 0.4, most_common_unit))
+                                    st.markdown("- **週三 (30%)**：建議採購 **`{:.1f}`** {}（供週五消耗）".format(recommended_qty * 0.3, most_common_unit))
+                                    st.markdown("- **週五 (30%)**：建議採購 **`{:.1f}`** {}（因應週末雙冠日高峰）".format(recommended_qty * 0.3, most_common_unit))
+                                elif vendor_type == "菜商":
+                                    st.markdown("- **平日每日均攤 (60%)**：每次到貨建議 **`{:.1f}`** {}".format(recommended_qty * 0.12, most_common_unit))
+                                    st.markdown("- **週五加強 (40%)**：一次叫足 **`{:.1f}`** {}（備戰週末雙冠日）".format(recommended_qty * 0.4, most_common_unit))
+                                else:
+                                    st.markdown("- **單次足額採購 (100%)**：於週一或合約到貨日一次性採購 **`{:.1f}`** {}".format(recommended_qty, most_common_unit))
+                                    
+                        else:
+                            st.warning(f"⚠️ 在目前的採購資料中，找不到含有「{search_term}」的品項名稱。")
+                            st.info("💡 請嘗試選擇其他常用關鍵字，或自訂輸入更精確的關鍵字（如：雞蛋、高麗菜）。")
+                    else:
+                        st.info("💡 採購分頁缺少「品名」或「數量」欄位，無法進行單品消耗率分析。")
+                        
             else:
                 st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
                 st.write(f"ℹ️ 在「**{used_name}**」分頁中總共發現 {len(df_purchase)} 筆資料，但沒有符合 {current_month_str} 的紀錄。")
