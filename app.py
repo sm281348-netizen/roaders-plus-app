@@ -2626,7 +2626,72 @@ with tab_p:
                         st.info("💡 需要至少 2 個月的數據才能顯示 CPG 趨勢圖。")
                     
                     st.divider()
+
+                    # --- 📊 採購花費 vs 早餐來客數 相關性驗證（以週為單位）---
+                    st.markdown("##### 📊 採購花費 vs 早餐來客數 相關性驗證（週）")
+                    st.caption("💡 兩條線的形狀應趨近一致。若某週「採購↑ 來客↓」或「採購↓ 來客↑」，代表食材控管可能有問題。")
+                    
+                    corr_df = analysis_df[['日期_obj', 'peak_cost', 'effective_peak_guests']].copy()
+                    corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'])
+                    corr_df['week'] = corr_df['日期_dt'].dt.isocalendar().week.astype(int)
+                    corr_df['year'] = corr_df['日期_dt'].dt.isocalendar().year.astype(int)
+                    corr_df['week_start'] = corr_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                    
+                    weekly_corr = corr_df.groupby('week_start').agg(
+                        採購金額=('peak_cost', 'sum'),
+                        來客人數=('effective_peak_guests', 'sum')
+                    ).reset_index()
+                    weekly_corr['週次'] = weekly_corr['week_start'].dt.strftime('W%V\n%m/%d')
+                    
+                    # 標準化成 0–100%（對各自最大值）
+                    max_cost = weekly_corr['採購金額'].max()
+                    max_guest = weekly_corr['來客人數'].max()
+                    weekly_corr['採購(%)'] = (weekly_corr['採購金額'] / max_cost * 100).round(1) if max_cost > 0 else 0
+                    weekly_corr['來客(%)'] = (weekly_corr['來客人數'] / max_guest * 100).round(1) if max_guest > 0 else 0
+                    weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
+                    
+                    if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
+                        # 轉成長格式給 Altair
+                        melt_df = weekly_corr.melt(
+                            id_vars=['週次', '背道而馳', '採購金額', '來客人數'],
+                            value_vars=['採購(%)', '來客(%)'],
+                            var_name='指標', value_name='標準化數值'
+                        )
+                        color_map = {'採購(%)': '#e67e22', '來客(%)': '#2980b9'}
+                        
+                        corr_chart = alt.Chart(melt_df).mark_line(point=True, strokeWidth=2.5).encode(
+                            x=alt.X('週次:N', title='週次', sort=None),
+                            y=alt.Y('標準化數值:Q', title='相對比例 (% of max)', scale=alt.Scale(domain=[0, 110])),
+                            color=alt.Color('指標:N',
+                                scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())),
+                                legend=alt.Legend(title='指標', orient='bottom')
+                            ),
+                            tooltip=[
+                                alt.Tooltip('週次:N', title='週次'),
+                                alt.Tooltip('指標:N', title='指標'),
+                                alt.Tooltip('採購金額:Q', title='採購金額 (NT$)', format=',.0f'),
+                                alt.Tooltip('來客人數:Q', title='來客人數 (人)', format=',.0f'),
+                                alt.Tooltip('背道而馳:N', title='健康狀態'),
+                            ]
+                        ).properties(height=220)
+                        
+                        st.altair_chart(corr_chart, use_container_width=True)
+                        
+                        # 標出背道而馳的週次
+                        bad_weeks = weekly_corr[weekly_corr['背道而馳'] == '⚠️ 異常']
+                        if not bad_weeks.empty:
+                            for _, bw in bad_weeks.iterrows():
+                                diff = bw['採購(%)'] - bw['來客(%)']
+                                direction = "採購偏高（來客少但食材買太多）" if diff > 0 else "來客偏高（來客多但食材買太少）"
+                                st.warning(f"⚠️ **{bw['週次'].replace(chr(10), ' ')}** 出現背道而馳！{direction}　採購 NT$ {int(bw['採購金額']):,} | 來客 {int(bw['來客人數'])} 人")
+                        else:
+                            st.success("✅ 本月各週採購花費與來客人數走勢一致，食材控管健康。")
+                    else:
+                        st.info("💡 本月資料不足，無法進行相關性分析。")
+
+                    st.divider()
                     c_ana1, c_ana2 = st.columns(2)
+
 
                     with c_ana1:
                         st.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
