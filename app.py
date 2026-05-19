@@ -1219,7 +1219,7 @@ with tab_m:
         df['y_pure_adr_text'] = ''
 
         if not df.empty:
-            if avg_adr > 0: df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,}"
+            if avg_adr > 0: df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,} (月)"
             if y_adr > 0: df.loc[df.index[-1], 'y_adr_text'] = f"${int(y_adr):,} (年)"
             if y_pure_adr > 0: df.loc[df.index[-1], 'y_pure_adr_text'] = f"${int(y_pure_adr):,} (純平)"
             
