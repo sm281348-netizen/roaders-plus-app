@@ -2561,7 +2561,73 @@ with tab_p:
                     total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
                     final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
 
+                    # --- 📈 The Peak CPG 月趨勢圖（過去 6 個月）---
+                    st.markdown("##### 📈 The Peak CPG 月趨勢（過去 6 個月）")
+                    
+                    trend_rows = []
+                    for n_back in range(5, -1, -1):  # 從 5 個月前到本月
+                        t_date = get_month_delta(selected_date, -n_back)
+                        t_label = t_date.strftime('%Y-%m')
+                        
+                        # 抓該月採購數據
+                        t_start = t_date.replace(day=1)
+                        import calendar as _cal
+                        _, t_last = _cal.monthrange(t_date.year, t_date.month)
+                        t_end = t_date.replace(day=t_last)
+                        df_t_purchase = df_purchase[(df_purchase['日期'] >= t_start) & (df_purchase['日期'] <= t_end)].copy()
+                        
+                        if not df_t_purchase.empty:
+                            df_t_purchase['小計'] = pd.to_numeric(df_t_purchase[total_col], errors='coerce').fillna(0)
+                        
+                        # 抓該月來客數
+                        t_m_data = fetch_month_summary(t_date.year, t_date.month)
+                        t_df = t_m_data.get('df', pd.DataFrame())
+                        t_guests = 0
+                        if not t_df.empty:
+                            for _c in ['rest_day_guests', 'bf_total_act', 'af_total_act']:
+                                if _c in t_df.columns:
+                                    t_df[_c] = pd.to_numeric(t_df[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            if 'rest_day_guests' in t_df.columns and t_df['rest_day_guests'].sum() > 0:
+                                t_guests = t_df['rest_day_guests'].sum()
+                            elif 'bf_total_act' in t_df.columns:
+                                t_guests = (t_df['bf_total_act'] + t_df.get('af_total_act', 0)).sum()
+                        
+                        # 篩選 The Peak 採購
+                        t_peak_cost = 0
+                        if not df_t_purchase.empty and dept_col in df_t_purchase.columns:
+                            t_all_depts = df_t_purchase[dept_col].astype(str).unique().tolist()
+                            t_hh = [d for d in t_all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY'])]
+                            t_peak_depts = [d for d in t_all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                            t_peak_cost = df_t_purchase[df_t_purchase[dept_col].isin(t_peak_depts)]['小計'].sum()
+                        
+                        t_cpg = t_peak_cost / t_guests if t_guests > 0 else None
+                        trend_rows.append({'月份': t_label, 'CPG': t_cpg, '目標': 150})
+                    
+                    trend_df = pd.DataFrame(trend_rows).dropna(subset=['CPG'])
+                    
+                    if not trend_df.empty and len(trend_df) >= 2:
+                        base = alt.Chart(trend_df)
+                        cpg_line = base.mark_line(point=True, strokeWidth=2.5, color='#1f2c56').encode(
+                            x=alt.X('月份:N', title='月份', sort=None),
+                            y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(zero=False)),
+                            tooltip=[alt.Tooltip('月份:N', title='月份'), alt.Tooltip('CPG:Q', title='CPG (NT$)', format=',.0f')]
+                        )
+                        target_line = alt.Chart(pd.DataFrame({'y': [150]})).mark_rule(
+                            color='#e74c3c', strokeDash=[6, 3], strokeWidth=1.5
+                        ).encode(y='y:Q')
+                        target_label = alt.Chart(pd.DataFrame({'y': [150], 'x': [trend_df['月份'].iloc[-1]], 'text': ['目標 $150']})).mark_text(
+                            align='right', dx=-4, dy=-8, color='#e74c3c', fontSize=11, fontWeight='bold'
+                        ).encode(x='x:N', y='y:Q', text='text:N')
+                        st.altair_chart(
+                            alt.layer(cpg_line, target_line, target_label).properties(height=220),
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("💡 需要至少 2 個月的數據才能顯示 CPG 趨勢圖。")
+                    
+                    st.divider()
                     c_ana1, c_ana2 = st.columns(2)
+
                     with c_ana1:
                         st.markdown(f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
                         st.markdown(f"**🏰 The Peak (餐廳)**")
