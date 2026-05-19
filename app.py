@@ -1366,7 +1366,6 @@ with tab_m:
                 {metric_diff_card("上月", diff_adr_p, prev_metrics['month_label'])}
                 {metric_diff_card("下月預期", diff_adr_n, next_metrics['month_label'])}
             </div>
-            
             <p style="margin:15px 0 0 0; font-size:14px; color:#666;">🏆 <strong>雙冠天數：前 20% 營收且高 ADR (本月: {curr_metrics['dual_match_days']} 天)</strong></p>
             <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
                 {metric_diff_card("前前月", diff_dual_pp, pprev_metrics['month_label'])}
@@ -1383,10 +1382,8 @@ with tab_m:
             <div style="margin-top: 20px;">
                 <p style="margin:0; font-size:13px; color:#999;">🔥 前 20% 營收日 (Top 20%) 平均營收</p>
                 <h3 style="margin: 5px 0 15px 0; color: #d35400;">NT$ {int(curr_metrics['top20_rev_avg']):,}</h3>
-                
                 <p style="margin:0; font-size:13px; color:#999;">❄️ 後 20% 營收日 (Bottom 20%) 平均營收</p>
                 <h3 style="margin: 5px 0 15px 0; color: #7f8c8d;">NT$ {int(curr_metrics['bot20_rev_avg']):,}</h3>
-                
                 <hr style="border: 0; border-top: 1px dashed #eee; margin: 15px 0;">
                 <p style="margin:0; font-size:12px; color:#888;">💡 <strong>解讀</strong>：當前後 20% 的平均營收差距擴大時，代表淡旺日的業績差距大，可針對淡日加強促銷。</p>
             </div>
