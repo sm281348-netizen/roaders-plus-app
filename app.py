@@ -2692,14 +2692,19 @@ with tab_p:
                             </div>
                             """, unsafe_allow_html=True)
                             
-                        # 顯示策略建議
+                        # 顯示策略建議（基於比例，而非絕對差值）
                         st.write("")
-                        if dual_cpg > normal_cpg + 5: # 允許微幅波動
-                            st.success(f"💡 **策略符合預期**：雙冠日 (高房價/高客量) 的單客成本比一般日多出 **NT$ {int(dual_cpg - normal_cpg):,}**，顯示有成功將高 ADR 溢價回饋在餐飲品質上，滿足高階客群期待。")
-                        elif normal_cpg > dual_cpg + 15: # 一般日異常高
-                            st.error(f"⚠️ **警告：食材控管異常！** 一般日的單客成本高達 NT$ {int(normal_cpg):,}，超越了雙冠日。請清查平日是否準備過多生鮮食材導致報廢，或是領用未確實盤點！")
+                        target_ratio = 1.10  # 雙冠日 CPG 應達到一般日的 110%
+                        actual_ratio = (dual_cpg / normal_cpg) if normal_cpg > 0 else 0
+                        ratio_pct = actual_ratio * 100
+                        
+                        if actual_ratio >= target_ratio:
+                            st.success(f"💡 **主動備戰策略成功！** 雙冠日的單客成本（NT$ {int(dual_cpg):,}）達到一般日（NT$ {int(normal_cpg):,}）的 **{ratio_pct:.0f}%**，超過 110% 目標。代表你在大日子前有主動備了更好的食材，與高房價形成正向配對。")
+                        elif actual_ratio >= 0.90:
+                            diff_to_target = int(normal_cpg * target_ratio - dual_cpg)
+                            st.info(f"⚖️ **採購尚未主動分級。** 雙冠日 CPG 為一般日的 {ratio_pct:.0f}%（目標 ≥ 110%）。由於週均攤讓旺日（人多）天然壓低 CPG，這個差距屬於合理的規模效應。建議在雙冠日當週多編列 NT$ {diff_to_target:,} / 人左右的品質預算，讓高端客感受得到差異。")
                         else:
-                            st.info(f"⚖️ **中性狀態**：雙冠日與一般日的單客成本相近 (差異 NT$ {int(abs(dual_cpg - normal_cpg)):,})。若能進一步將平日成本壓低，雙冠日微調品質，利潤會更極大化。")
+                            st.error(f"⚠️ **平日食材成本明顯偏高！** 雙冠日 CPG 僅為一般日的 {ratio_pct:.0f}%。這不一定是壞事（旺日人多規模效應），但同時請查看：平日是否備料過多？有無大量報廢？或是領用未確實盤點？")
                     else:
                         st.info("💡 本月目前無符合條件的雙冠日，無法進行對比分析。")
                         st.caption("💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
