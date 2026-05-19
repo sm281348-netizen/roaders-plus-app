@@ -1580,9 +1580,91 @@ with tab_m:
         </div>
         """, unsafe_allow_html=True)
     
+    # --- B3. OCC vs ADR 四象限定價診斷圖 ---
+    st.markdown("#### 🎯 定價策略診斷：住房率 vs 平均房價 四象限分析")
+    scatter_df = m_curr['df'].copy()
+    if not scatter_df.empty:
+        scatter_df['occ_val'] = pd.to_numeric(scatter_df['occ_rate'], errors='coerce').fillna(0)
+        scatter_df['adr_val'] = pd.to_numeric(scatter_df['adr'], errors='coerce').fillna(0)
+        scatter_df['day'] = pd.to_datetime(scatter_df['date']).dt.day
+
+        avg_adr_s = m_curr.get('avg_adr', scatter_df['adr_val'].mean())
+        occ_threshold = 75.0  # 高住房率門檻
+
+        def classify_quadrant(row):
+            hi_occ = row['occ_val'] >= occ_threshold
+            hi_adr = row['adr_val'] >= avg_adr_s
+            if hi_occ and hi_adr: return '🟠 理想（高OCC+高ADR）'
+            if hi_occ and not hi_adr: return '🔴 賤賣（高OCC+低ADR）'
+            if not hi_occ and hi_adr: return '🟡 定價偏高（低OCC+高ADR）'
+            return '🔵 淡季死水（低OCC+低ADR）'
+
+        scatter_df['象限'] = scatter_df.apply(classify_quadrant, axis=1)
+
+        color_map = {
+            '🟠 理想（高OCC+高ADR）': '#ff9f43',
+            '🔴 賤賣（高OCC+低ADR）': '#e74c3c',
+            '🟡 定價偏高（低OCC+高ADR）': '#f1c40f',
+            '🔵 淡季死水（低OCC+低ADR）': '#3498db',
+        }
+
+        scatter_chart = alt.Chart(scatter_df).mark_circle(size=100, opacity=0.8).encode(
+            x=alt.X('occ_val:Q', title='住房率 (%)', scale=alt.Scale(domain=[0, 105])),
+            y=alt.Y('adr_val:Q', title='平均房價 ADR (NT$)', scale=alt.Scale(zero=False)),
+            color=alt.Color('象限:N',
+                scale=alt.Scale(
+                    domain=list(color_map.keys()),
+                    range=list(color_map.values())
+                ),
+                legend=alt.Legend(title="象限分類", orient="bottom", columns=2)
+            ),
+            tooltip=[
+                alt.Tooltip('date:N', title='日期'),
+                alt.Tooltip('occ_val:Q', title='住房率 (%)', format='.1f'),
+                alt.Tooltip('adr_val:Q', title='ADR (NT$)', format=',.0f'),
+                alt.Tooltip('象限:N', title='象限'),
+            ]
+        )
+
+        # 月均 ADR 水平輔助線
+        adr_rule = alt.Chart(pd.DataFrame({'y': [avg_adr_s]})).mark_rule(
+            color='#e74c3c', strokeDash=[6, 3], strokeWidth=1.5
+        ).encode(y='y:Q')
+        adr_label = alt.Chart(pd.DataFrame({'y': [avg_adr_s], 'x': [105], 'text': [f'月均 ADR ${int(avg_adr_s):,}']})).mark_text(
+            align='right', dx=-4, dy=-8, color='#e74c3c', fontSize=11, fontWeight='bold'
+        ).encode(x='x:Q', y='y:Q', text='text:N')
+
+        # 75% OCC 垂直輔助線
+        occ_rule = alt.Chart(pd.DataFrame({'x': [occ_threshold]})).mark_rule(
+            color='#7f8c8d', strokeDash=[6, 3], strokeWidth=1.5
+        ).encode(x='x:Q')
+        occ_label = alt.Chart(pd.DataFrame({'x': [occ_threshold], 'y': [scatter_df['adr_val'].max() * 1.05], 'text': ['75% OCC 門檻']})).mark_text(
+            align='left', dx=4, color='#7f8c8d', fontSize=11, fontWeight='bold'
+        ).encode(x='x:Q', y='y:Q', text='text:N')
+
+        final_chart = alt.layer(scatter_chart, adr_rule, adr_label, occ_rule, occ_label).properties(
+            height=380,
+            title=f"{m_curr['month_label']} 每日定價位置診斷（每個點代表一天）"
+        )
+        st.altair_chart(final_chart, use_container_width=True)
+
+        # 各象限天數摘要
+        q_counts = scatter_df['象限'].value_counts()
+        q_cols = st.columns(4)
+        for i, (q_name, color) in enumerate(color_map.items()):
+            cnt = q_counts.get(q_name, 0)
+            q_cols[i].markdown(
+                f"<div style='background:{color}22; border-left:4px solid {color}; padding:10px; border-radius:6px; text-align:center;'>"
+                f"<p style='margin:0; font-size:12px; color:#555;'>{q_name}</p>"
+                f"<strong style='font-size:22px;'>{cnt} 天</strong></div>",
+                unsafe_allow_html=True
+            )
+        st.write("")
+
     st.divider()
 
     # --- 新增：雙冠備戰行事曆 (Peak Demand Radar) ---
+
     if curr_metrics.get('dual_match_dates'):
         st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
         st.info("💡 系統自動揪出本月符合「高營收」且「高均價」的雙冠日。請針對以下日期提早準備生鮮食材，並可適度放寬單客成本 (CPG) 以滿足高端客群期待。")
