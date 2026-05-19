@@ -2734,89 +2734,6 @@ with tab_p:
                     
                     st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
 
-                    # --- 本月接下來各週採購金額建議 ---
-                    st.divider()
-                    st.markdown("#### 📅 本月接下來各週採購金額建議")
-                    
-                    from datetime import date as dt_date, timedelta as dt_timedelta
-                    import calendar as cal_lib
-                    today_dt = dt_date.today()
-                    _, last_day_num2 = cal_lib.monthrange(selected_date.year, selected_date.month)
-                    month_end_dt = dt_date(selected_date.year, selected_date.month, last_day_num2)
-                    
-                    is_current_or_future = (selected_date.year, selected_date.month) >= (today_dt.year, today_dt.month)
-                    
-                    if is_current_or_future:
-                        # 月均日來客數作為預估基準（只取有來客的天）
-                        active_days_df = analysis_df[analysis_df['effective_peak_guests'] > 0]
-                        avg_daily_guests_fw = active_days_df['effective_peak_guests'].mean() if not active_days_df.empty else 0
-                        guest_source_label = f"本月實際 ({len(active_days_df)} 天記錄)"
-                        
-                        # 備援：本月無資料時，改用上個月平均
-                        if avg_daily_guests_fw == 0:
-                            prev_rest_data = m_prev.get('df', pd.DataFrame())
-                            if not prev_rest_data.empty and 'bf_total_act' in prev_rest_data.columns:
-                                prev_rest_data = prev_rest_data.copy()
-                                for _c in ['bf_total_act', 'af_total_act', 'rest_day_guests']:
-                                    if _c in prev_rest_data.columns:
-                                        prev_rest_data[_c] = pd.to_numeric(prev_rest_data[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                                prev_bf = prev_rest_data[prev_rest_data['bf_total_act'] > 0]['bf_total_act']
-                                if not prev_bf.empty:
-                                    avg_daily_guests_fw = prev_bf.mean()
-                                    guest_source_label = f"⚠️ 以上月平均推估（本月尚無餐廳資料）"
-                        
-                        dual_dates_set_fw = set(dual_match_dates) if dual_match_dates else set()
-                        
-                        # 從今天開始到月底，逐週生成
-                        week_plans = []
-                        cursor = today_dt
-                        seen_starts = set()
-                        while cursor <= month_end_dt:
-                            monday = cursor - dt_timedelta(days=cursor.weekday())
-                            sunday = monday + dt_timedelta(days=6)
-                            week_start = max(monday, dt_date(selected_date.year, selected_date.month, 1))
-                            week_end = min(sunday, month_end_dt)
-                            
-                            if week_start not in seen_starts and week_end >= today_dt:
-                                seen_starts.add(week_start)
-                                week_dates_str = [
-                                    (week_start + dt_timedelta(days=i)).strftime('%Y-%m-%d')
-                                    for i in range((week_end - week_start).days + 1)
-                                ]
-                                has_dual = any(d in dual_dates_set_fw for d in week_dates_str)
-                                active_day_count = len(week_dates_str)
-                                target_cpg_fw = 150 * 1.15 if has_dual else 150
-                                recommended = int(target_cpg_fw * avg_daily_guests_fw * active_day_count)
-                                dual_labels = [d[5:] for d in week_dates_str if d in dual_dates_set_fw]
-                                
-                                week_plans.append({
-                                    'label': f"{week_start.strftime('%m/%d')} ～ {week_end.strftime('%m/%d')}",
-                                    'has_dual': has_dual,
-                                    'recommended': recommended,
-                                    'dual_labels': dual_labels,
-                                    'active_day_count': active_day_count,
-                                })
-                            cursor = sunday + dt_timedelta(days=1)
-                        
-                        if avg_daily_guests_fw > 0 and week_plans:
-                            st.caption(f"💡 預估基準：每日平均來客數 **{avg_daily_guests_fw:.1f} 人**（{guest_source_label}）。雙冠週採購上限自動提高 15%。")
-                            for wp in week_plans:
-                                color = '#e67e22' if wp['has_dual'] else '#2980b9'
-                                dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
-                                c1, c2 = st.columns([2, 1])
-                                c1.markdown(f"**{wp['label']}**{dual_note}")
-                                c2.markdown(
-                                    f"<div style='background:{color}22; border-left:3px solid {color}; padding:8px 12px; border-radius:6px; text-align:center;'>"
-                                    f"<strong style='font-size:16px;'>NT$ {wp['recommended']:,}</strong>"
-                                    f"<br><span style='font-size:11px; color:#666;'>建議週採購上限 ({wp['active_day_count']}天)</span>"
-                                    f"</div>",
-                                    unsafe_allow_html=True
-                                )
-                        else:
-                            st.info("💡 尚無足夠的來客數據來估算週採購預算，請先確認餐廳來客數已完整填寫。")
-                    else:
-                        st.info(f"💡 「週採購建議」僅適用於當月或未來月份。")
-
                 else:
                     st.info("尚未偵測到本月的餐廳來客數據，無法進行成本效益分析。")
                 
@@ -2883,6 +2800,91 @@ with tab_p:
             st.error(f"讀取採購數據出錯: {e}")
         import traceback
         st.expander("錯誤詳細資訊").code(traceback.format_exc())
+
+# --- 📅 本月接下來各週採購金額建議（獨立區塊，不依賴採購數據）---
+with tab_p:
+    st.divider()
+    st.markdown("#### 📅 本月接下來各週採購金額建議")
+    
+    from datetime import date as dt_date, timedelta as dt_timedelta
+    import calendar as cal_lib
+    today_dt2 = dt_date.today()
+    _, last_day_num2 = cal_lib.monthrange(selected_date.year, selected_date.month)
+    month_end_dt2 = dt_date(selected_date.year, selected_date.month, last_day_num2)
+    
+    is_cur_or_fut = (selected_date.year, selected_date.month) >= (today_dt2.year, today_dt2.month)
+    
+    if is_cur_or_fut:
+        # 1. 優先用本月餐廳數據
+        fw_m_data = fetch_month_summary(selected_date.year, selected_date.month)
+        fw_df = fw_m_data.get('df', pd.DataFrame())
+        avg_fw = 0
+        fw_label = ''
+        if not fw_df.empty and 'bf_total_act' in fw_df.columns:
+            fw_df = fw_df.copy()
+            fw_df['_bf'] = pd.to_numeric(fw_df['bf_total_act'].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+            active_fw = fw_df[fw_df['_bf'] > 0]['_bf']
+            if not active_fw.empty:
+                avg_fw = active_fw.mean()
+                fw_label = f"本月實際 ({len(active_fw)} 天記錄)"
+        
+        # 2. 備援：改用上個月早餐來客數
+        if avg_fw == 0:
+            fw_prev = fetch_month_summary(m_prev['year'], m_prev['month']) if 'year' in m_prev else {}
+            fw_prev_df = fw_prev.get('df', pd.DataFrame()) if fw_prev else pd.DataFrame()
+            if not fw_prev_df.empty and 'bf_total_act' in fw_prev_df.columns:
+                fw_prev_df = fw_prev_df.copy()
+                fw_prev_df['_bf'] = pd.to_numeric(fw_prev_df['bf_total_act'].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+                prev_active = fw_prev_df[fw_prev_df['_bf'] > 0]['_bf']
+                if not prev_active.empty:
+                    avg_fw = prev_active.mean()
+                    fw_label = f"⚠️ 以上月平均推估（本月尚無餐廳資料）"
+        
+        # 3. 雙冠日清單（來自 tab_m 的 calc_key_metrics）
+        fw_curr_metrics = calc_key_metrics(fw_m_data)
+        fw_dual_dates = set(fw_curr_metrics.get('dual_match_dates', []))
+        
+        # 4. 逐週生成
+        fw_week_plans = []
+        fw_cursor = today_dt2
+        fw_seen = set()
+        while fw_cursor <= month_end_dt2:
+            mon = fw_cursor - dt_timedelta(days=fw_cursor.weekday())
+            sun = mon + dt_timedelta(days=6)
+            ws = max(mon, dt_date(selected_date.year, selected_date.month, 1))
+            we = min(sun, month_end_dt2)
+            if ws not in fw_seen and we >= today_dt2:
+                fw_seen.add(ws)
+                wdates = [(ws + dt_timedelta(days=i)).strftime('%Y-%m-%d') for i in range((we - ws).days + 1)]
+                has_d = any(d in fw_dual_dates for d in wdates)
+                days_cnt = len(wdates)
+                fw_week_plans.append({
+                    'label': f"{ws.strftime('%m/%d')} ～ {we.strftime('%m/%d')}",
+                    'has_dual': has_d,
+                    'recommended': int((150 * 1.15 if has_d else 150) * avg_fw * days_cnt),
+                    'dual_labels': [d[5:] for d in wdates if d in fw_dual_dates],
+                    'days_cnt': days_cnt,
+                })
+            fw_cursor = sun + dt_timedelta(days=1)
+        
+        if avg_fw > 0 and fw_week_plans:
+            st.caption(f"💡 預估基準：每日平均來客數 **{avg_fw:.1f} 人**（{fw_label}）。雙冠週採購上限自動提高 15%。")
+            for wp in fw_week_plans:
+                color = '#e67e22' if wp['has_dual'] else '#2980b9'
+                dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
+                c1, c2 = st.columns([2, 1])
+                c1.markdown(f"**{wp['label']}**{dual_note}")
+                c2.markdown(
+                    f"<div style='background:{color}22; border-left:3px solid {color}; padding:8px 12px; border-radius:6px; text-align:center;'>"
+                    f"<strong style='font-size:16px;'>NT$ {wp['recommended']:,}</strong>"
+                    f"<br><span style='font-size:11px; color:#666;'>建議週採購上限 ({wp['days_cnt']}天)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("💡 尚無足夠的來客數據來估算週採購預算。請確認上個月的餐廳早餐來客數已填寫。")
+    else:
+        st.info("💡 「週採購建議」僅適用於當月或未來月份。")
 
 with tab7:
     st.header("👥 人事概況")
