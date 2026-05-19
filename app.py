@@ -2704,7 +2704,30 @@ with tab_p:
                             diff_to_target = int(normal_cpg * target_ratio - dual_cpg)
                             st.info(f"⚖️ **採購尚未主動分級。** 雙冠日 CPG 為一般日的 {ratio_pct:.0f}%（目標 ≥ 110%）。由於週均攤讓旺日（人多）天然壓低 CPG，這個差距屬於合理的規模效應。建議在雙冠日當週多編列 NT$ {diff_to_target:,} / 人左右的品質預算，讓高端客感受得到差異。")
                         else:
-                            st.error(f"⚠️ **平日食材成本明顯偏高！** 雙冠日 CPG 僅為一般日的 {ratio_pct:.0f}%。這不一定是壞事（旺日人多規模效應），但同時請查看：平日是否備料過多？有無大量報廢？或是領用未確實盤點？")
+                            # 計算行動指引數據
+                            avg_normal_guests = (normal_peak_guests / len(df_normal)) if len(df_normal) > 0 else 0
+                            peak_target_cpg = 150  # 目標 CPG 上限（與前面財務目標一致）
+                            # 建議週採購上限：目標 CPG × 一般日平均每日來客數 × 7 天
+                            recommended_weekly_budget = int(peak_target_cpg * avg_normal_guests * 7)
+                            # 本月實際週均採購
+                            total_weeks = max(1, round(len(df_normal) / 7))
+                            actual_weekly_avg = int(normal_peak_cost / total_weeks) if total_weeks > 0 else 0
+                            overrun = actual_weekly_avg - recommended_weekly_budget
+                            
+                            st.error(
+                                f"⚠️ **平日食材成本明顯偏高（雙冠日 CPG 僅為一般日的 {ratio_pct:.0f}%）**\n\n"
+                                f"📊 **一般日數據**\n"
+                                f"- 一般日平均每日來客數：**{avg_normal_guests:.1f} 人**\n"
+                                f"- 一般日單客食材成本 (CPG)：**NT$ {int(normal_cpg):,}**\n\n"
+                                f"💰 **週採購建議**\n"
+                                f"- 以目標 CPG $150 計算，建議每週 The Peak 採購上限：**NT$ {recommended_weekly_budget:,}**\n"
+                                f"- 本月實際週均採購：**NT$ {actual_weekly_avg:,}**\n"
+                                f"- {'🔴 超出建議上限：NT$ ' + f'{overrun:,}' if overrun > 0 else '🟢 在目標範圍內'}\n\n"
+                                f"📋 **可能原因（請擇一追查）**\n"
+                                f"1. 平日來客數也偏高，被迫追加採購（合理，可對照 OCC 確認）\n"
+                                f"2. 平日備料過多，有生鮮報廢（須檢視）\n"
+                                f"3. 領用未確實盤點（須追查）"
+                            )
                     else:
                         st.info("💡 本月目前無符合條件的雙冠日，無法進行對比分析。")
                         st.caption("💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
