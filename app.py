@@ -2734,6 +2734,74 @@ with tab_p:
                     
                     st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
 
+                    # --- 本月接下來各週採購金額建議 ---
+                    st.divider()
+                    st.markdown("#### 📅 本月接下來各週採購金額建議")
+                    
+                    from datetime import date as dt_date, timedelta as dt_timedelta
+                    import calendar as cal_lib
+                    today_dt = dt_date.today()
+                    _, last_day_num2 = cal_lib.monthrange(selected_date.year, selected_date.month)
+                    month_end_dt = dt_date(selected_date.year, selected_date.month, last_day_num2)
+                    
+                    is_current_or_future = (selected_date.year, selected_date.month) >= (today_dt.year, today_dt.month)
+                    
+                    if is_current_or_future:
+                        # 月均日來客數作為預估基準（只取有來客的天）
+                        active_days_df = analysis_df[analysis_df['effective_peak_guests'] > 0]
+                        avg_daily_guests_fw = active_days_df['effective_peak_guests'].mean() if not active_days_df.empty else 0
+                        dual_dates_set_fw = set(dual_match_dates) if dual_match_dates else set()
+                        
+                        # 從今天開始到月底，逐週生成
+                        week_plans = []
+                        cursor = today_dt
+                        seen_starts = set()
+                        while cursor <= month_end_dt:
+                            monday = cursor - dt_timedelta(days=cursor.weekday())
+                            sunday = monday + dt_timedelta(days=6)
+                            week_start = max(monday, dt_date(selected_date.year, selected_date.month, 1))
+                            week_end = min(sunday, month_end_dt)
+                            
+                            if week_start not in seen_starts and week_end >= today_dt:
+                                seen_starts.add(week_start)
+                                week_dates_str = [
+                                    (week_start + dt_timedelta(days=i)).strftime('%Y-%m-%d')
+                                    for i in range((week_end - week_start).days + 1)
+                                ]
+                                has_dual = any(d in dual_dates_set_fw for d in week_dates_str)
+                                active_day_count = len(week_dates_str)
+                                target_cpg_fw = 150 * 1.15 if has_dual else 150
+                                recommended = int(target_cpg_fw * avg_daily_guests_fw * active_day_count)
+                                dual_labels = [d[5:] for d in week_dates_str if d in dual_dates_set_fw]
+                                
+                                week_plans.append({
+                                    'label': f"{week_start.strftime('%m/%d')} ～ {week_end.strftime('%m/%d')}",
+                                    'has_dual': has_dual,
+                                    'recommended': recommended,
+                                    'dual_labels': dual_labels,
+                                    'active_day_count': active_day_count,
+                                })
+                            cursor = sunday + dt_timedelta(days=1)
+                        
+                        if avg_daily_guests_fw > 0 and week_plans:
+                            st.caption(f"💡 以本月平均每日來客數 **{avg_daily_guests_fw:.1f} 人** 為預估基準，雙冠週採購上限提高 15%。")
+                            for wp in week_plans:
+                                color = '#e67e22' if wp['has_dual'] else '#2980b9'
+                                dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
+                                c1, c2 = st.columns([2, 1])
+                                c1.markdown(f"**{wp['label']}**{dual_note}")
+                                c2.markdown(
+                                    f"<div style='background:{color}22; border-left:3px solid {color}; padding:8px 12px; border-radius:6px; text-align:center;'>"
+                                    f"<strong style='font-size:16px;'>NT$ {wp['recommended']:,}</strong>"
+                                    f"<br><span style='font-size:11px; color:#666;'>建議週採購上限 ({wp['active_day_count']}天)</span>"
+                                    f"</div>",
+                                    unsafe_allow_html=True
+                                )
+                        else:
+                            st.info("💡 尚無足夠的來客數據來估算週採購預算，請先確認餐廳來客數已完整填寫。")
+                    else:
+                        st.info(f"💡 「週採購建議」僅適用於當月或未來月份。")
+
                 else:
                     st.info("尚未偵測到本月的餐廳來客數據，無法進行成本效益分析。")
                 
