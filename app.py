@@ -1302,28 +1302,96 @@ with tab_m:
     with col_chart3: render_occ_chart(m_curr, "(本月)")
     with col_chart4: render_occ_chart(m_next, "(下月)")
     
-    # --- B. 每日住房率 - 關鍵差異 ---
-    st.markdown("#### 🔍 每日住房率：關鍵差異分析 (與各月比對)")
-    diff_curr_prev_prev = m_curr['occ90_days'] - m_prev_prev['occ90_days']
-    diff_curr_prev = m_curr['occ90_days'] - m_prev['occ90_days']
-    diff_curr_next = m_curr['occ90_days'] - m_next['occ90_days']
+    # --- B. 關鍵表現數據分析 ---
+    st.markdown("#### 🌟 關鍵表現數據分析")
     
-    def occ_diff_card(label, diff, target_label):
+    def calc_key_metrics(m_data):
+        df = m_data.get('df', pd.DataFrame())
+        res = {'high_adr_days': 0, 'top20_rev_avg': 0, 'bot20_rev_avg': 0, 'dual_match_days': 0, 'month_label': m_data.get('month_label', '')}
+        if df is None or df.empty: return res
+        
+        avg_adr = m_data.get('avg_adr', 0)
+        
+        # 確保數值正確
+        df['adr_val'] = pd.to_numeric(df['adr'], errors='coerce').fillna(0)
+        df['rev_val'] = pd.to_numeric(df['revenue'], errors='coerce').fillna(0)
+        
+        # 高於當月平均 ADR 天數
+        df['is_high_adr'] = df['adr_val'] > avg_adr
+        res['high_adr_days'] = int(df['is_high_adr'].sum())
+        
+        # 八二法則 (前 20% 與後 20%)
+        n_days = len(df)
+        n_top = max(1, int(round(n_days * 0.2)))
+        
+        df_sorted = df.sort_values('rev_val', ascending=False)
+        top20_df = df_sorted.head(n_top)
+        bot20_df = df_sorted.tail(n_top)
+        
+        res['top20_rev_avg'] = top20_df['rev_val'].mean() if not top20_df.empty else 0
+        res['bot20_rev_avg'] = bot20_df['rev_val'].mean() if not bot20_df.empty else 0
+        
+        # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
+        res['dual_match_days'] = int(top20_df['is_high_adr'].sum())
+        
+        return res
+
+    curr_metrics = calc_key_metrics(m_curr)
+    prev_metrics = calc_key_metrics(m_prev)
+    pprev_metrics = calc_key_metrics(m_prev_prev)
+    next_metrics = calc_key_metrics(m_next)
+    
+    def metric_diff_card(label, diff, target_label, unit="天"):
         color = '#2ecc71' if diff >= 0 else '#e74c3c'
         status = '本月多' if diff > 0 else '較少' if diff < 0 else '持平'
-        return f'<div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;"><p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p><div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;"><strong style="font-size:18px; color:{color};">{abs(diff)} 天</strong><span style="font-size:11px; color:#666;">({status})</span></div></div>'
+        return f'<div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;"><p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p><div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;"><strong style="font-size:18px; color:{color};">{abs(diff)} {unit}</strong><span style="font-size:11px; color:#666;">({status})</span></div></div>'
 
-    html_content = f"""
-    <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
-        <p style="margin:0; font-size:14px; color:#666;">📊 <strong>達 90% 住房率天數比對 (本月: {m_curr['occ90_days']} 天)</strong></p>
-        <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
-            {occ_diff_card("前前月", diff_curr_prev_prev, m_prev_prev['month_label'])}
-            {occ_diff_card("上月", diff_curr_prev, m_prev['month_label'])}
-            {occ_diff_card("下月預期", diff_curr_next, m_next['month_label'])}
+    # 天數差異
+    diff_adr_pp = curr_metrics['high_adr_days'] - pprev_metrics['high_adr_days']
+    diff_adr_p = curr_metrics['high_adr_days'] - prev_metrics['high_adr_days']
+    diff_adr_n = curr_metrics['high_adr_days'] - next_metrics['high_adr_days']
+    
+    diff_dual_pp = curr_metrics['dual_match_days'] - pprev_metrics['dual_match_days']
+    diff_dual_p = curr_metrics['dual_match_days'] - prev_metrics['dual_match_days']
+    diff_dual_n = curr_metrics['dual_match_days'] - next_metrics['dual_match_days']
+
+    kp_col1, kp_col2 = st.columns([1.5, 1])
+    
+    with kp_col1:
+        st.markdown(f"""
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
+            <p style="margin:0; font-size:14px; color:#666;">📈 <strong>高於當月平均 ADR 天數 (本月: {curr_metrics['high_adr_days']} 天)</strong></p>
+            <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                {metric_diff_card("前前月", diff_adr_pp, pprev_metrics['month_label'])}
+                {metric_diff_card("上月", diff_adr_p, prev_metrics['month_label'])}
+                {metric_diff_card("下月預期", diff_adr_n, next_metrics['month_label'])}
+            </div>
+            
+            <p style="margin:15px 0 0 0; font-size:14px; color:#666;">🏆 <strong>雙冠天數：前 20% 營收且高 ADR (本月: {curr_metrics['dual_match_days']} 天)</strong></p>
+            <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                {metric_diff_card("前前月", diff_dual_pp, pprev_metrics['month_label'])}
+                {metric_diff_card("上月", diff_dual_p, prev_metrics['month_label'])}
+                {metric_diff_card("下月預期", diff_dual_n, next_metrics['month_label'])}
+            </div>
         </div>
-    </div>
-    """
-    st.write(html_content, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+        
+    with kp_col2:
+        st.markdown(f"""
+        <div style="background: #fffcf5; padding: 15px; border-radius: 10px; border-left: 5px solid #f39c12; margin-bottom: 20px; height: 100%;">
+            <p style="margin:0; font-size:14px; color:#666;">📊 <strong>八二法則：極端值分析 (本月)</strong></p>
+            <div style="margin-top: 20px;">
+                <p style="margin:0; font-size:13px; color:#999;">🔥 前 20% 營收日 (Top 20%) 平均營收</p>
+                <h3 style="margin: 5px 0 15px 0; color: #d35400;">NT$ {int(curr_metrics['top20_rev_avg']):,}</h3>
+                
+                <p style="margin:0; font-size:13px; color:#999;">❄️ 後 20% 營收日 (Bottom 20%) 平均營收</p>
+                <h3 style="margin: 5px 0 15px 0; color: #7f8c8d;">NT$ {int(curr_metrics['bot20_rev_avg']):,}</h3>
+                
+                <hr style="border: 0; border-top: 1px dashed #eee; margin: 15px 0;">
+                <p style="margin:0; font-size:12px; color:#888;">💡 <strong>解讀</strong>：當前後 20% 的平均營收差距擴大時，代表淡旺日的業績差距大，可針對淡日加強促銷。</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.divider()
 
@@ -2199,6 +2267,8 @@ with tab_p:
                         st.metric("本月總採購額", f"NT$ {int(total_hh_cost):,}")
                         st.metric("本月總來客數", f"{int(total_hh_guests):,} 人")
                         st.metric("平均每客服務成本", f"NT$ {int(final_hh_cpg):,}")
+                        if total_hh_cost > 0 and total_hh_guests == 0:
+                            st.warning("⚠️ 有產生 HH 採購費用但總來客數為 0！請至「🍽️ 餐廳數據」補登以計算每客服務成本 (CPG)。")
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     st.write("")
