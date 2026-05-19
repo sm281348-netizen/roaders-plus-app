@@ -1476,7 +1476,9 @@ with tab_m:
         res['bot20_rev_avg'] = bot20_df['rev_val'].mean() if not bot20_df.empty else 0
         
         # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
-        res['dual_match_days'] = int(top20_df['is_high_adr'].sum())
+        dual_match_df = top20_df[top20_df['is_high_adr']]
+        res['dual_match_days'] = int(len(dual_match_df))
+        res['dual_match_dates'] = dual_match_df['date'].sort_values().tolist() if not dual_match_df.empty else []
         
         return res
 
@@ -1535,6 +1537,30 @@ with tab_m:
         """, unsafe_allow_html=True)
     
     st.divider()
+
+    # --- 新增：雙冠備戰行事曆 (Peak Demand Radar) ---
+    if curr_metrics.get('dual_match_dates'):
+        st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
+        st.info("💡 系統自動揪出本月符合「高營收」且「高均價」的雙冠日。請針對以下日期提早準備生鮮食材，並可適度放寬單客成本 (CPG) 以滿足高端客群期待。")
+        
+        radar_cols = st.columns(min(max(len(curr_metrics['dual_match_dates']), 1), 5))
+        for i, d_date in enumerate(curr_metrics['dual_match_dates']):
+            day_row = m_curr['df'][m_curr['df']['date'] == d_date]
+            bf_count = 0
+            if not day_row.empty:
+                bf_col = 'bf_total_act' if 'bf_total_act' in day_row.columns and pd.to_numeric(day_row['bf_total_act'].iloc[0], errors='coerce') > 0 else 'bf_total_est'
+                if bf_col in day_row.columns:
+                    bf_count = pd.to_numeric(day_row[bf_col], errors='coerce').fillna(0).iloc[0]
+                    
+            c = radar_cols[i % 5]
+            c.markdown(f"""
+            <div style="background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <h4 style="margin:0; color:#e74c3c;">{d_date[5:]}</h4>
+                <p style="margin:5px 0 0 0; font-size:12px; color:#666;">早餐預估: <strong>{int(bf_count)}</strong> 人</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        st.divider()
 
     # --- B2. 即將到來的重大活動與假日警報 ---
     st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
@@ -2452,6 +2478,62 @@ with tab_p:
                         )
                         
                         st.altair_chart(alt.layer(hh_bar, hh_guest_line).resolve_scale(y='independent').properties(title="Happy Hour 累計趨勢 (長條:成本, 虛線:人數)", height=300), use_container_width=True)
+                        
+                    # --- 新增：雙冠日食材消耗對比分析 (Dynamic CPG Analysis) ---
+                    st.divider()
+                    st.markdown("#### 🎯 雙冠日 vs 一般日：食材消耗對比分析")
+                    
+                    # 獲取雙冠日清單
+                    curr_metrics = calc_key_metrics(m_data)
+                    dual_match_dates = curr_metrics.get('dual_match_dates', [])
+                    
+                    if dual_match_dates:
+                        # 將日期標記為雙冠日
+                        analysis_df['is_dual_match'] = analysis_df['日期_str'].isin(dual_match_dates)
+                        
+                        df_dual = analysis_df[analysis_df['is_dual_match']]
+                        df_normal = analysis_df[~analysis_df['is_dual_match']]
+                        
+                        # 計算雙冠日 CPG
+                        dual_peak_cost = df_dual['peak_cost'].sum()
+                        dual_peak_guests = df_dual['effective_peak_guests'].sum()
+                        dual_cpg = dual_peak_cost / dual_peak_guests if dual_peak_guests > 0 else 0
+                        
+                        # 計算一般日 CPG
+                        normal_peak_cost = df_normal['peak_cost'].sum()
+                        normal_peak_guests = df_normal['effective_peak_guests'].sum()
+                        normal_cpg = normal_peak_cost / normal_peak_guests if normal_peak_guests > 0 else 0
+                        
+                        cpg_col1, cpg_col2 = st.columns(2)
+                        
+                        with cpg_col1:
+                            st.markdown(f"""
+                            <div style="background:#fff5e6; border-left:4px solid #e67e22; padding:15px; border-radius:8px;">
+                                <p style="margin:0; font-size:13px; color:#e67e22; font-weight:bold;">🏆 雙冠日 (共 {len(df_dual)} 天)</p>
+                                <h3 style="margin:5px 0;">NT$ {int(dual_cpg):,} / 客</h3>
+                                <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(dual_peak_cost):,} | 服務客數: {int(dual_peak_guests):,} 人</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                        with cpg_col2:
+                            st.markdown(f"""
+                            <div style="background:#f8f9fa; border-left:4px solid #95a5a6; padding:15px; border-radius:8px;">
+                                <p style="margin:0; font-size:13px; color:#7f8c8d; font-weight:bold;">📉 一般日 (共 {len(df_normal)} 天)</p>
+                                <h3 style="margin:5px 0;">NT$ {int(normal_cpg):,} / 客</h3>
+                                <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(normal_peak_cost):,} | 服務客數: {int(normal_peak_guests):,} 人</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                        # 顯示策略建議
+                        st.write("")
+                        if dual_cpg > normal_cpg + 5: # 允許微幅波動
+                            st.success(f"💡 **策略符合預期**：雙冠日 (高房價/高客量) 的單客成本比一般日多出 **NT$ {int(dual_cpg - normal_cpg):,}**，顯示有成功將高 ADR 溢價回饋在餐飲品質上，滿足高階客群期待。")
+                        elif normal_cpg > dual_cpg + 15: # 一般日異常高
+                            st.error(f"⚠️ **警告：食材控管異常！** 一般日的單客成本高達 NT$ {int(normal_cpg):,}，超越了雙冠日。請清查平日是否準備過多生鮮食材導致報廢，或是領用未確實盤點！")
+                        else:
+                            st.info(f"⚖️ **中性狀態**：雙冠日與一般日的單客成本相近 (差異 NT$ {int(abs(dual_cpg - normal_cpg)):,})。若能進一步將平日成本壓低，雙冠日微調品質，利潤會更極大化。")
+                    else:
+                        st.info("💡 本月目前無符合條件的雙冠日，無法進行對比分析。")
                         st.caption("💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
                     
                     st.info("💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
