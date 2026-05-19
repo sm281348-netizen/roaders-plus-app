@@ -435,6 +435,50 @@ def fetch_month_summary(year, month):
         
     return res
 
+@st.cache_data(ttl=3600)
+def fetch_yearly_metrics(year):
+    try:
+        df_all = conn.read(worksheet="daily_data", ttl="10m")
+        if df_all is None or df_all.empty: return 0.0, 0.0
+        df_all = standardize_df_dates(df_all)
+        df_all = df_all.drop_duplicates(subset='date', keep='last')
+        
+        y_start = f"{year}-01-01"
+        y_end = f"{year}-12-31"
+        df = df_all[(df_all['date'] >= y_start) & (df_all['date'] <= y_end)].copy()
+        if df.empty: return 0.0, 0.0
+        
+        num_cols = ['revenue', 'total_rooms']
+        for c in num_cols:
+            if c in df.columns:
+                df[c] = df[c].astype(str).str.replace(',', '').str.replace('%', '')
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+                
+        tot_rev = df['revenue'].sum()
+        tot_rms = df['total_rooms'].sum()
+        yearly_adr = (tot_rev / tot_rms) if tot_rms > 0 else 0.0
+        
+        taipei_events_df = fetch_taipei_events()
+        e_dates = set(taipei_events_df['date'].unique()) if not taipei_events_df.empty else set()
+        
+        h_dates = set()
+        for m in range(1, 13):
+            h_dict = fetch_holidays_for_month(year, m)
+            for d_str, info in h_dict.items():
+                if info['flags']: h_dates.add(d_str)
+                
+        df['is_e'] = df['date'].isin(e_dates)
+        df['is_h'] = df['date'].isin(h_dates)
+        df_pure = df[~df['is_e'] & ~df['is_h']]
+        
+        p_rev = df_pure['revenue'].sum()
+        p_rms = df_pure['total_rooms'].sum()
+        yearly_pure_adr = (p_rev / p_rms) if p_rms > 0 else 0.0
+        
+        return yearly_adr, yearly_pure_adr
+    except Exception:
+        return 0.0, 0.0
+
 # -- 側邊欄：進階日期選擇器 --
 st.sidebar.caption(f"🚀 最後更新時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 st.sidebar.header("📅 日期選擇")
@@ -1137,8 +1181,17 @@ with tab_m:
         avg_adr = month_data.get('avg_adr', 0)
         df['adr_baseline'] = avg_adr
         df['adr_baseline_text'] = ''
-        if not df.empty and avg_adr > 0:
-            df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,}"
+        
+        y_adr, y_pure_adr = fetch_yearly_metrics(int(month_data['month_label'].split('-')[0]))
+        df['y_adr_baseline'] = y_adr
+        df['y_adr_text'] = ''
+        df['y_pure_adr_baseline'] = y_pure_adr
+        df['y_pure_adr_text'] = ''
+
+        if not df.empty:
+            if avg_adr > 0: df.loc[df.index[-1], 'adr_baseline_text'] = f"${int(avg_adr):,}"
+            if y_adr > 0: df.loc[df.index[-1], 'y_adr_text'] = f"${int(y_adr):,} (年)"
+            if y_pure_adr > 0: df.loc[df.index[-1], 'y_pure_adr_text'] = f"${int(y_pure_adr):,} (純平)"
             
         dt = pd.to_datetime(df['date'])
         df['day'] = dt.dt.day
@@ -1237,9 +1290,17 @@ with tab_m:
             adr_max = 8000
             
         avg_adr = month_data.get('avg_adr', 0)
+        y_adr, y_pure_adr = fetch_yearly_metrics(int(month_data['month_label'].split('-')[0]))
+        
         if avg_adr > 0:
             adr_min = min(adr_min, int(avg_adr * 0.9))
             adr_max = max(adr_max, int(avg_adr * 1.1))
+        if y_adr > 0:
+            adr_min = min(adr_min, int(y_adr * 0.9))
+            adr_max = max(adr_max, int(y_adr * 1.1))
+        if y_pure_adr > 0:
+            adr_min = min(adr_min, int(y_pure_adr * 0.9))
+            adr_max = max(adr_max, int(y_pure_adr * 1.1))
             
         adr_scale = alt.Scale(domain=[adr_min, adr_max], zero=False)
         
@@ -1285,6 +1346,22 @@ with tab_m:
                 text='text:N' if 'text' in df.columns else 'adr_baseline_text:N'
             )
             adr_layers.extend([baseline_rule, baseline_text])
+            
+        # 繪製年 ADR 黃色基準線
+        if df.get('y_adr_baseline', pd.Series()).max() > 0:
+            y_adr_rule = alt.Chart(df).mark_rule(color='#f1c40f', strokeWidth=1.5, strokeDash=[5, 5]).encode(y=alt.Y('y_adr_baseline:Q', scale=adr_scale))
+            y_adr_text = alt.Chart(df).mark_text(align='left', baseline='middle', dx=8, dy=-14, color='#d4ac0d', fontSize=11, fontWeight='bold').encode(
+                x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_adr_baseline:Q', scale=adr_scale), text='y_adr_text:N'
+            )
+            adr_layers.extend([y_adr_rule, y_adr_text])
+            
+        # 繪製年純平日 ADR 黑色基準線
+        if df.get('y_pure_adr_baseline', pd.Series()).max() > 0:
+            yp_adr_rule = alt.Chart(df).mark_rule(color='#000000', strokeWidth=1.5, strokeDash=[5, 5]).encode(y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale))
+            yp_adr_text = alt.Chart(df).mark_text(align='left', baseline='middle', dx=8, dy=14, color='#000000', fontSize=11, fontWeight='bold').encode(
+                x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale), text='y_pure_adr_text:N'
+            )
+            adr_layers.extend([yp_adr_rule, yp_adr_text])
             
         adr_chart = alt.layer(*adr_layers)
         
