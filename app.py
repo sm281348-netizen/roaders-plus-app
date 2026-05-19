@@ -2500,17 +2500,46 @@ with tab_p:
                         if item_col:
                             df_hh_purchase = df_month[df_month[item_col].astype(str).str.upper().str.contains('HH|HAPPY|歡樂時光', na=False)].copy()
                     
-                    # 計算每日採購總額
-                    daily_peak_cost = df_peak_purchase.groupby('日期')['小計'].sum().reset_index()
-                    daily_hh_cost = df_hh_purchase.groupby('日期')['小計'].sum().reset_index()
-                    
-                    # 合併來客數與成本 (對齊日期)
+                    # 計算每日採購總額（改用『以週為單位均攤』修正採購日 vs 消耗日失真）
                     df_daily_rest['日期_obj'] = pd.to_datetime(df_daily_rest['date']).dt.date
+                    df_daily_rest['日期_dt'] = pd.to_datetime(df_daily_rest['date'])
                     
-                    analysis_df = pd.merge(df_daily_rest[['日期_obj', 'effective_peak_guests', 'rest_hh_guests', 'revenue']], daily_peak_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
-                    analysis_df.rename(columns={'小計': 'peak_cost'}, inplace=True)
-                    analysis_df = pd.merge(analysis_df, daily_hh_cost, left_on='日期_obj', right_on='日期', how='left').fillna(0)
-                    analysis_df.rename(columns={'小計': 'hh_cost'}, inplace=True)
+                    def spread_weekly_cost(df_purchase, df_daily_base):
+                        """將採購費用以週為單位，均攤到當週有來客的每一天"""
+                        if df_purchase.empty or df_daily_base.empty:
+                            return pd.Series(0, index=df_daily_base['日期_obj'])
+                        
+                        # 加上 ISO 週別
+                        df_purchase = df_purchase.copy()
+                        df_purchase['week'] = pd.to_datetime(df_purchase['日期']).dt.isocalendar().week.astype(int)
+                        df_purchase['year'] = pd.to_datetime(df_purchase['日期']).dt.isocalendar().year.astype(int)
+                        weekly_cost = df_purchase.groupby(['year', 'week'])['小計'].sum().reset_index()
+                        
+                        df_base = df_daily_base.copy()
+                        df_base['week'] = df_base['日期_dt'].dt.isocalendar().week.astype(int)
+                        df_base['year'] = df_base['日期_dt'].dt.isocalendar().year.astype(int)
+                        df_base['has_guest'] = df_base['effective_peak_guests'] > 0
+                        
+                        # 每週有來客的天數
+                        days_per_week = df_base.groupby(['year', 'week'])['has_guest'].sum().reset_index()
+                        days_per_week.columns = ['year', 'week', 'active_days']
+                        days_per_week['active_days'] = days_per_week['active_days'].replace(0, 1)  # 防零除
+                        
+                        # 合併週成本
+                        df_base = pd.merge(df_base, weekly_cost, on=['year', 'week'], how='left').fillna(0)
+                        df_base = pd.merge(df_base, days_per_week, on=['year', 'week'], how='left')
+                        df_base['spread_cost'] = df_base['小計'] / df_base['active_days']
+                        
+                        return df_base.set_index('日期_obj')['spread_cost']
+                    
+                    # 用週均攤計算每日成本
+                    peak_spread = spread_weekly_cost(df_peak_purchase, df_daily_rest)
+                    hh_spread = spread_weekly_cost(df_hh_purchase, df_daily_rest)
+                    
+                    # 合併來客數與週均攤成本
+                    analysis_df = df_daily_rest[['日期_obj', 'effective_peak_guests', 'rest_hh_guests', 'revenue']].copy()
+                    analysis_df['peak_cost'] = analysis_df['日期_obj'].map(peak_spread).fillna(0)
+                    analysis_df['hh_cost'] = analysis_df['日期_obj'].map(hh_spread).fillna(0)
                     
                     # --- 累計分析邏輯：計算本月至今的累積數據 ---
                     analysis_df = analysis_df.sort_values('日期_obj')
