@@ -3438,7 +3438,48 @@ with tab_s:
         else:
             st.info("💡 叫貨戰略建議需要至少兩期資料才能比對。下一次菜單收到後，貼到 `supplier_prices` 分頁即可自動產生建議。")
 
-        # ── E. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
+        # ── E. 食材風險防禦分級 (價格波動度分析) ──────────────────
+        st.divider()
+        st.markdown("#### 🛡️ 食材風險防禦分級 (價格波動度分析)")
+        if 'ytd_stats' in locals() and not ytd_stats.empty:
+            st.info("💡 **波動率 = (歷史最高價 - 歷史最低價) / 歷史最低價**。代表該食材在今年內可能暴漲的最大幅度。\n\n👉 **戰略建議**：主廚在雙冠日應盡量避開右側的高風險食材，多使用左側的高防禦食材來穩定 CPG。")
+            
+            vol_df = ytd_stats[ytd_stats['ytd_min'] > 0].copy()
+            vol_df['volatility'] = (vol_df['ytd_max'] - vol_df['ytd_min']) / vol_df['ytd_min'] * 100
+            
+            high_risk = vol_df[vol_df['volatility'] > 50].sort_values('volatility', ascending=False)
+            low_risk = vol_df[vol_df['volatility'] <= 20].sort_values('volatility', ascending=True)
+            
+            vc1, vc2 = st.columns(2)
+            with vc1:
+                st.markdown("##### 🛡️ 高防禦避風港 (波動極低 ≤ 20%)")
+                if not low_risk.empty:
+                    for _, r in low_risk.head(10).iterrows():
+                        st.markdown(
+                            f"<div style='background:#f2fdf5; border-left:4px solid #2ecc71; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                            f"<strong>{r['item_name']}</strong> <span style='color:#888; font-size:12px;'>最大漲幅: <span style='color:#2ecc71;'>{r['volatility']:.0f}%</span></span>"
+                            f"<br><span style='font-size:12px; color:#666;'>區間: {r['ytd_min']:.0f} ~ {r['ytd_max']:.0f} 元/{r['unit']} (均 {r['ytd_avg']:.0f})</span></div>",
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.write("目前尚無低波動食材")
+                    
+            with vc2:
+                st.markdown("##### 🚨 高風險地雷區 (波動劇烈 > 50%)")
+                if not high_risk.empty:
+                    for _, r in high_risk.head(10).iterrows():
+                        st.markdown(
+                            f"<div style='background:#fdf2f2; border-left:4px solid #e74c3c; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                            f"<strong>{r['item_name']}</strong> <span style='color:#888; font-size:12px;'>最大漲幅: <span style='color:#e74c3c;'>{r['volatility']:.0f}%</span></span>"
+                            f"<br><span style='font-size:12px; color:#666;'>區間: {r['ytd_min']:.0f} ~ {r['ytd_max']:.0f} 元/{r['unit']} (均 {r['ytd_avg']:.0f})</span></div>",
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.write("目前尚無高波動食材")
+        else:
+            st.info("💡 需要至少兩期資料才能分析食材的價格波動度。")
+
+        # ── F. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
         st.divider()
         # 由於需要讀取月度數據，直接從 m_curr (在 tab_m 已加載的本月數據) 中重新計算
         if 'm_curr' in locals() or 'm_curr' in globals():
