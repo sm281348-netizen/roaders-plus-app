@@ -3277,8 +3277,8 @@ with tab_s:
 
         if n_periods >= 2:
             prev_period = periods_available[-2]
-            prev_df = sp_df[sp_df['period_dt'] == prev_period][['item_name', 'price']].rename(columns={'price': 'prev_price'})
-            latest_df = latest_df.merge(prev_df, on='item_name', how='left')
+            prev_df = sp_df[sp_df['period_dt'] == prev_period][['item_name', 'unit', 'price']].rename(columns={'price': 'prev_price'})
+            latest_df = latest_df.merge(prev_df, on=['item_name', 'unit'], how='left')
             latest_df['change'] = latest_df['price'] - latest_df['prev_price']
             latest_df['change_pct'] = (latest_df['change'] / latest_df['prev_price'] * 100).round(1)
 
