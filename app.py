@@ -3247,6 +3247,11 @@ with tab_s:
             latest_df['change'] = latest_df['price'] - latest_df['prev_price']
             latest_df['change_pct'] = (latest_df['change'] / latest_df['prev_price'] * 100).round(1)
 
+            # --- 新增：計算今年至今(全歷史)的純平基準與極值 ---
+            ytd_stats = sp_df.groupby(['item_name', 'unit'])['price'].agg(['mean', 'max', 'min']).reset_index()
+            ytd_stats.rename(columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min'}, inplace=True)
+            latest_df = latest_df.merge(ytd_stats, on=['item_name', 'unit'], how='left')
+
             def fmt_change(row):
                 if pd.isna(row.get('change')):
                     return '—'
@@ -3256,7 +3261,31 @@ with tab_s:
                 return f"<span style='color:{color};font-weight:bold;'>{arrow} {sign}{row['change_pct']:.1f}%</span>"
 
             latest_df['漲跌'] = latest_df.apply(fmt_change, axis=1)
-            display_cols = ['item_name', 'unit', 'price', '漲跌']
+
+            def fmt_ytd(row):
+                if pd.isna(row.get('ytd_avg')): return '—'
+                avg_p = row['ytd_avg']
+                curr_p = row['price']
+                if pd.isna(curr_p) or avg_p == 0: return '—'
+                
+                # 計算與年平均的差距 %
+                diff_pct = ((curr_p - avg_p) / avg_p * 100)
+                sign = '+' if diff_pct > 0 else ''
+                color = '#e74c3c' if diff_pct > 0 else ('#2ecc71' if diff_pct < 0 else '#888')
+                text = f"<span style='color:{color};'>{sign}{diff_pct:.1f}%</span>"
+                
+                # 極值徽章 (排除只有1期或變動為0的無意義標籤)
+                badges = ""
+                if row['ytd_max'] > row['ytd_min']:
+                    if curr_p >= row['ytd_max']:
+                        badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史天價</span>"
+                    elif curr_p <= row['ytd_min']:
+                        badges = " <span style='background:#2ecc71;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史低點</span>"
+                        
+                return f"均 {avg_p:.1f} ({text}){badges}"
+                
+            latest_df['純平基準對照'] = latest_df.apply(fmt_ytd, axis=1)
+            display_cols = ['item_name', 'unit', 'price', '漲跌', '純平基準對照']
             col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})'}
         else:
             display_cols = ['item_name', 'unit', 'price']
@@ -3347,33 +3376,63 @@ with tab_s:
             alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values('change_pct', ascending=False)
             # 明顯降價：跌幅 > 5%
             alert_down = ranked_all[ranked_all['change_pct'] < -5].sort_values('change_pct')
-            # 平穩：±5% 內
-            alert_stable = ranked_all[ranked_all['change_pct'].abs() <= 5]
+            
+            # 歷史天價警報 (目前價格等於全歷史最高價，且歷史有波動)
+            alert_all_time_high = ranked_all[(ranked_all['price'] >= ranked_all['ytd_max']) & (ranked_all['ytd_max'] > ranked_all['ytd_min'])]
+            # 歷史低點警報
+            alert_all_time_low = ranked_all[(ranked_all['price'] <= ranked_all['ytd_min']) & (ranked_all['ytd_max'] > ranked_all['ytd_min'])]
 
+            if not alert_all_time_high.empty:
+                high_items = '、'.join(alert_all_time_high['item_name'].head(5).tolist())
+                st.error(f"🚨 **【歷史天價警報】**：{high_items} 目前為今年最高價！\n\n👉 強烈建議：全面停用或切換至高防禦(穩定)食材，直到價格回落。")
+            
             if not alert_up.empty:
                 up_items = '、'.join(alert_up['item_name'].head(5).tolist())
-                st.warning(f"📈 **漲幅警示（>{5}%）**：{up_items}\n\n👉 建議：評估替代食材，或提前確認這週用量是否能縮減。")
-            if not alert_down.empty:
+                st.warning(f"📈 **短期漲幅警示（>{5}%）**：{up_items}\n\n👉 建議：評估替代食材，或提前確認這週用量是否能縮減。")
+                
+            if not alert_all_time_low.empty:
+                low_items = '、'.join(alert_all_time_low['item_name'].head(5).tolist())
+                st.success(f"✅ **【歷史低點進場】**：{low_items} 目前來到今年低價！\n\n👉 建議：可在不超庫存、確保新鮮的前提下多囤貨，鎖住 CPG。")
+            elif not alert_down.empty:
                 down_items = '、'.join(alert_down['item_name'].head(5).tolist())
-                st.success(f"📉 **降價機會（>{5}%↓）**：{down_items}\n\n👉 建議：這批相對便宜，可在不超庫存的前提下適量多叫，壓低本週 CPG。")
-            if alert_up.empty and alert_down.empty:
+                st.success(f"📉 **短期降價機會（>{5}%↓）**：{down_items}\n\n👉 建議：這批相對便宜，可適量多叫。")
+                
+            if alert_up.empty and alert_down.empty and alert_all_time_high.empty and alert_all_time_low.empty:
                 st.info("✅ 本期菜價整體穩定，無明顯異常波動，按原採購計畫執行即可。")
 
             # 彙整摘要表
             with st.expander("📋 完整戰略摘要表"):
                 summary_rows = []
                 for _, r in ranked_all.iterrows():
-                    if r['change_pct'] > 5:
-                        strategy = "⚠️ 漲價，考慮替代或縮量"
+                    is_ath = (r['price'] >= r['ytd_max']) and (r['ytd_max'] > r['ytd_min'])
+                    is_atl = (r['price'] <= r['ytd_min']) and (r['ytd_max'] > r['ytd_min'])
+                    
+                    if is_ath:
+                        strategy = "🚨 歷史天價！強烈建議停用"
+                    elif is_atl:
+                        strategy = "✅ 歷史低點！建議囤貨"
+                    elif r['change_pct'] > 5:
+                        strategy = "⚠️ 短期漲價，考慮替代"
                     elif r['change_pct'] < -5:
-                        strategy = "✅ 降價，可考慮增量"
+                        strategy = "📉 短期降價，可增量"
                     else:
                         strategy = "─ 穩定，照常叫貨"
+                    
+                    ytd_avg = r.get('ytd_avg', 0)
+                    if pd.isna(ytd_avg) or ytd_avg == 0:
+                        ytd_str = '—'
+                    else:
+                        diff_pct = ((r['price'] - ytd_avg) / ytd_avg * 100)
+                        ytd_str = f"均 {ytd_avg:.1f} ({'+' if diff_pct>0 else ''}{diff_pct:.1f}%)"
+                        if is_ath: ytd_str += " [天價]"
+                        elif is_atl: ytd_str += " [低點]"
+
                     summary_rows.append({
                         '品項': r['item_name'],
                         '本期單價': f"{r['price']:.0f} 元/{r['unit']}",
-                        '漲跌': f"{'+' if r['change_pct']>0 else ''}{r['change_pct']:.1f}%",
-                        '建議': strategy
+                        '短期漲跌': f"{'+' if r['change_pct']>0 else ''}{r['change_pct']:.1f}%",
+                        '純平基準對照': ytd_str,
+                        '戰略建議': strategy
                     })
                 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
         else:
