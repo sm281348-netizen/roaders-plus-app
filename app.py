@@ -3286,11 +3286,77 @@ with tab_s:
                 
                 base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(strokeDash=[5, 5], color='gray').encode(y='y:Q')
                 st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
-            
             st.divider()
 
-        # ── B. 本期菜價總覽 ──────────────────────────────
-        st.markdown("#### 📋 B. 本期菜價總覽")
+        # ── B. 總採購預算逆推與動態配額 ──────────────────────────────
+        st.markdown("#### 💰 B. 總採購預算逆推與動態配額")
+        
+        # 抓取本月總早餐人數 (從 m_curr)
+        total_bf_guests = 0
+        current_month_str = ""
+        if 'm_curr' in locals() and m_curr.get('df') is not None and not m_curr['df'].empty:
+            m_df = m_curr['df']
+            current_month_str = m_curr.get('month_label', '')
+            for _, r in m_df.iterrows():
+                act = pd.to_numeric(r.get('bf_total_act', 0), errors='coerce')
+                est = pd.to_numeric(r.get('bf_total_est', 0), errors='coerce')
+                if pd.isna(act): act = 0
+                if pd.isna(est): est = 0
+                total_bf_guests += act if act > 0 else est
+                
+        if total_bf_guests > 0:
+            bc1, bc2 = st.columns([1, 2])
+            with bc1:
+                target_cpg = st.number_input("🎯 目標 CPG (單客成本預算)", min_value=0, value=150, step=5, help="預設為 150 元，主管可依據大盤指數彈性放寬或緊縮。")
+                total_budget = total_bf_guests * target_cpg
+                st.metric(f"本月預估總備餐 ({current_month_str})", f"{int(total_bf_guests):,} 人")
+                st.metric("本月食材總預算 (Budget)", f"${int(total_budget):,}", help="總備餐人數 × 目標 CPG")
+                
+            with bc2:
+                # 根據 latest_idx 決定配額
+                if n_periods >= 2:
+                    if latest_idx > 105:
+                        status = "🚨 市場通膨惡化 (大盤 > 105)"
+                        def_pct, norm_pct, risk_pct = 0.70, 0.20, 0.10
+                        advice = "強烈建議將 70% 預算鎖定在「高防禦」避風港食材，嚴格限縮高風險食材採購。"
+                    elif latest_idx < 95:
+                        status = "📉 市場低點 (大盤 < 95)"
+                        def_pct, norm_pct, risk_pct = 0.40, 0.30, 0.30
+                        advice = "目前處於買方市場，可釋放 30% 預算「抄底」囤貨原本偏貴的高風險食材。"
+                    else:
+                        status = "⚖️ 市場平穩"
+                        def_pct, norm_pct, risk_pct = 0.50, 0.30, 0.20
+                        advice = "市場波動正常，維持標準 5:3:2 採購比例。"
+                else:
+                    status = "—"
+                    def_pct, norm_pct, risk_pct = 0.50, 0.30, 0.20
+                    advice = "資料不足，維持標準比例。"
+                    
+                st.markdown(f"**市場判定：{status}**")
+                st.caption(f"💡 戰略建議：{advice}")
+                
+                # 畫進度條
+                st.markdown(f"""
+                <div style='display:flex; height:24px; border-radius:12px; overflow:hidden; margin-bottom:10px;'>
+                    <div style='width:{def_pct*100}%; background-color:#2ecc71; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:bold;'>防禦 {def_pct*100:.0f}%</div>
+                    <div style='width:{norm_pct*100}%; background-color:#f1c40f; display:flex; align-items:center; justify-content:center; color:#333; font-size:12px; font-weight:bold;'>一般 {norm_pct*100:.0f}%</div>
+                    <div style='width:{risk_pct*100}%; background-color:#e74c3c; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:bold;'>風險 {risk_pct*100:.0f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # 配額金額
+                col_d, col_n, col_r = st.columns(3)
+                col_d.metric("🛡️ 避風港配額", f"${int(total_budget * def_pct):,}")
+                col_n.metric("🥬 一般配額", f"${int(total_budget * norm_pct):,}")
+                col_r.metric("🚨 高風險配額", f"${int(total_budget * risk_pct):,}")
+                
+        else:
+            st.info("💡 目前查無本月預估總早餐人數，無法試算總預算。請確認上方月分析已載入當月資料。")
+            
+        st.divider()
+
+        # ── C. 本期菜價總覽 ──────────────────────────────
+        st.markdown("#### 📋 C. 本期菜價總覽")
         latest_period = periods_available[-1]
         latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
 
@@ -3359,9 +3425,9 @@ with tab_s:
 
         st.divider()
 
-        # ── C. 本期 vs 上期漲跌排行 ──────────────────────
+        # ── D. 本期 vs 上期漲跌排行 ──────────────────────
         if n_periods >= 2:
-            st.markdown("#### 📊 C. 本期 vs 上期：漲跌排行")
+            st.markdown("#### 📊 D. 本期 vs 上期：漲跌排行")
             ranked = latest_df.dropna(subset=['change']).copy()
             ranked = ranked.sort_values('change_pct', ascending=False)
 
@@ -3390,9 +3456,9 @@ with tab_s:
                         )
             st.divider()
 
-        # ── D. 品項趨勢圖 ────────────────────────────────
+        # ── E. 品項趨勢圖 ────────────────────────────────
         if n_periods >= 2:
-            st.markdown("#### 📈 D. 品項歷期趨勢")
+            st.markdown("#### 📈 E. 品項歷期趨勢")
             all_items = sorted(sp_df['item_name'].unique().tolist())
             selected_items = st.multiselect(
                 "選擇品項（可多選）",
@@ -3422,8 +3488,8 @@ with tab_s:
             st.info("💡 目前只有一期資料，累積下一期菜單後即可查看趨勢圖與漲跌比對。")
             st.divider()
 
-        # ── E. 叫貨戰略建議 ──────────────────────────────
-        st.markdown("#### 🎯 E. 叫貨戰略建議")
+        # ── F. 叫貨戰略建議 ──────────────────────────────
+        st.markdown("#### 🎯 F. 叫貨戰略建議")
         if n_periods >= 2:
             ranked_all = latest_df.dropna(subset=['change_pct']).copy()
             # 持續漲價：漲幅 > 5%
@@ -3492,9 +3558,9 @@ with tab_s:
         else:
             st.info("💡 叫貨戰略建議需要至少兩期資料才能比對。下一次菜單收到後，貼到 `supplier_prices` 分頁即可自動產生建議。")
 
-        # ── F. 食材風險防禦分級 (價格波動度分析) ──────────────────
+        # ── G. 食材風險防禦分級 (價格波動度分析) ──────────────────
         st.divider()
-        st.markdown("#### 🛡️ F. 食材風險防禦分級 (價格波動度分析)")
+        st.markdown("#### 🛡️ G. 食材風險防禦分級 (價格波動度分析)")
         if 'ytd_stats' in locals() and not ytd_stats.empty:
             st.info("💡 **波動率 = (歷史最高價 - 歷史最低價) / 歷史最低價**。代表該食材在今年內可能暴漲的最大幅度。\n\n👉 **戰略建議**：主廚在雙冠日應盡量避開右側的高風險食材，多使用左側的高防禦食材來穩定 CPG。")
             
@@ -3533,13 +3599,13 @@ with tab_s:
         else:
             st.info("💡 需要至少兩期資料才能分析食材的價格波動度。")
 
-        # ── G. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
+        # ── H. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
         st.divider()
         # 由於需要讀取月度數據，直接從 m_curr (在 tab_m 已加載的本月數據) 中重新計算
         if 'm_curr' in locals() or 'm_curr' in globals():
             s_curr_metrics = calc_key_metrics(m_curr)
             if s_curr_metrics.get('dual_match_dates'):
-                st.markdown("#### 🎯 G. 雙冠備戰行事曆 (Peak Demand Radar)")
+                st.markdown("#### 🎯 H. 雙冠備戰行事曆 (Peak Demand Radar)")
                 st.info("💡 這是系統自動揪出本月符合「高營收」且「高均價」的雙冠日。**請現場採購人員特別注意這幾天的菜價與備料！** 隔天早餐高峰期人數預估如下，可考慮採用單價較低或正在降價的替代葉菜，來維持高品質又守住 CPG 目標。")
                 
                 # 合併本月與下月資料集
