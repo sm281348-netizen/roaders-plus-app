@@ -3307,35 +3307,34 @@ with tab_s:
             base_period = periods_available[0]
             
             if not index_df.empty:
-            
-            latest_idx = index_df.iloc[-1]['index']
-            prev_idx = index_df.iloc[-2]['index']
-            diff_idx = latest_idx - prev_idx
-            
-            ic1, ic2 = st.columns([1, 3])
-            with ic1:
-                st.metric(label="本期大盤指數", value=f"{latest_idx:.1f}", delta=f"{diff_idx:+.1f} 點 (vs上期)", delta_color="inverse")
-                st.caption(f"基準期：{base_period} (=100)")
-            with ic2:
-                # 取得折線圖的上下限，並包含 100
-                all_idx_vals = index_df['index'].tolist() + [100]
-                idx_min = max(0, int(min(all_idx_vals) * 0.98))
-                idx_max = int(max(all_idx_vals) * 1.02)
+                latest_idx = index_df.iloc[-1]['index']
+                prev_idx = index_df.iloc[-2]['index']
+                diff_idx = latest_idx - prev_idx
                 
-                line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
-                    x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
-                    y=alt.Y('index:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
-                    tooltip=[
-                        alt.Tooltip('period_str:N', title='期別'),
-                        alt.Tooltip('index:Q', title='大盤指數', format='.1f'),
-                    ]
-                )
-                
-                base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(strokeDash=[5, 5], color='gray').encode(y='y:Q')
-                st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
-            st.divider()
-        else:
-            index_df = pd.DataFrame()
+                ic1, ic2 = st.columns([1, 3])
+                with ic1:
+                    st.metric(label="本期大盤指數", value=f"{latest_idx:.1f}", delta=f"{diff_idx:+.1f} 點 (vs上期)", delta_color="inverse")
+                    st.caption(f"基準期：{base_period} (=100)")
+                with ic2:
+                    # 取得折線圖的上下限，並包含 100
+                    all_idx_vals = index_df['index'].tolist() + [100]
+                    idx_min = max(0, int(min(all_idx_vals) * 0.98))
+                    idx_max = int(max(all_idx_vals) * 1.02)
+                    
+                    line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
+                        x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
+                        y=alt.Y('index:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
+                        tooltip=[
+                            alt.Tooltip('period_str:N', title='期別'),
+                            alt.Tooltip('index:Q', title='大盤指數', format='.1f'),
+                        ]
+                    )
+                    
+                    base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(strokeDash=[5, 5], color='gray').encode(y='y:Q')
+                    st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
+                st.divider()
+            else:
+                index_df = pd.DataFrame()
 
         # ── B. 本月食材安全預算範圍 ──────────────────────────────
         st.markdown("#### 💰 B. 本月食材安全預算範圍")
