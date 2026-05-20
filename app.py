@@ -64,18 +64,20 @@ def fetch_supplier_prices():
         df = df.dropna(subset=['price'])
         df['item_name'] = df['item_name'].astype(str).str.strip()
         df['unit'] = df['unit'].astype(str).str.strip()
-        # period 日期解析 (支援 YYYY/M/D 與 YYYY-MM-DD)
+        # period 日期解析 (支援 YYYY/M/D, YYYY-MM-DD, Timestamp, float 等各種格式)
         def parse_period(v):
-            v = str(v).strip()
-            for fmt in ('%Y/%m/%d', '%Y-%m-%d', '%Y/%m/%d', '%Y%m%d'):
-                try:
-                    return datetime.datetime.strptime(v, fmt).date()
-                except:
-                    pass
+            # 若已是 date/datetime，直接轉
+            if isinstance(v, datetime.date):
+                return v if not isinstance(v, datetime.datetime) else v.date()
+            # 若是 pandas Timestamp
+            if isinstance(v, pd.Timestamp):
+                return v.date()
+            # 嘗試 pd.to_datetime (最萬用，處理 float 序號、各種字串格式)
             try:
                 return pd.to_datetime(v, dayfirst=False).date()
             except:
-                return None
+                pass
+            return None
         df['period_dt'] = df['period'].apply(parse_period)
         df = df.dropna(subset=['period_dt'])
         df = df.sort_values('period_dt').reset_index(drop=True)
