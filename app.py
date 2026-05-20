@@ -83,6 +83,39 @@ def fetch_supplier_prices():
     except Exception as e:
         return pd.DataFrame()
 
+def get_market_index_df(sp_df):
+    """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame"""
+    if sp_df is None or sp_df.empty:
+        return pd.DataFrame()
+        
+    periods_available = sorted(sp_df['period_dt'].unique())
+    if len(periods_available) < 2:
+        return pd.DataFrame()
+        
+    base_period = periods_available[0]
+    base_df = sp_df[sp_df['period_dt'] == base_period]
+    base_dict = base_df.set_index(['item_name', 'unit'])['price'].to_dict()
+    
+    index_data = []
+    for p in periods_available:
+        curr_df = sp_df[sp_df['period_dt'] == p]
+        ratios = []
+        for _, r in curr_df.iterrows():
+            key = (r['item_name'], r['unit'])
+            if key in base_dict and base_dict[key] > 0 and pd.notna(r['price']):
+                ratios.append(r['price'] / base_dict[key])
+        
+        idx_val = (sum(ratios) / len(ratios) * 100) if ratios else 100
+        index_data.append({
+            'period_dt': p, 
+            'period_str': str(p), 
+            'month_label': p.strftime('%Y-%m'), 
+            'index': round(idx_val, 1)
+        })
+        
+    return pd.DataFrame(index_data)
+
+
 @st.cache_data(ttl=86400 * 30)
 def translate_to_zh(text):
     if not text: return text
@@ -2575,8 +2608,9 @@ with tab_p:
                     total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
                     final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
 
-                    # --- 📈 The Peak CPG 月趨勢圖（過去 6 個月）---
-                    st.markdown("##### 📈 The Peak CPG 月趨勢（過去 6 個月）")
+                    # --- 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數) ---
+                    st.markdown("##### 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數)")
+                    st.caption("💡 **防禦力判定**：若紅虛線(菜價)上升，但藍實線(CPG)持平或下降，代表採購防禦成功！")
                     
                     trend_rows = []
                     for n_back in range(5, -1, -1):  # 從 5 個月前到本月
@@ -2620,24 +2654,53 @@ with tab_p:
                     trend_df = pd.DataFrame(trend_rows).dropna(subset=['CPG'])
                     
                     if not trend_df.empty and len(trend_df) >= 2:
+                        # 取得大盤指數並與 trend_df 合併
+                        sp_df = fetch_supplier_prices()
+                        idx_df = get_market_index_df(sp_df)
+                        
+                        if not idx_df.empty:
+                            # 若同個月份有多期指數，取平均
+                            idx_monthly = idx_df.groupby('month_label')['index'].mean().reset_index()
+                            trend_df = trend_df.merge(idx_monthly, left_on='月份', right_on='month_label', how='left')
+                        else:
+                            trend_df['index'] = None
+                            
                         base = alt.Chart(trend_df)
-                        cpg_line = base.mark_line(point=True, strokeWidth=2.5, color='#1f2c56').encode(
+                        
+                        # 左軸：CPG 藍實線
+                        cpg_line = base.mark_line(point=True, strokeWidth=3, color='#1f2c56').encode(
                             x=alt.X('月份:N', title='月份', sort=None),
-                            y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(zero=False)),
-                            tooltip=[alt.Tooltip('月份:N', title='月份'), alt.Tooltip('CPG:Q', title='CPG (NT$)', format=',.0f')]
+                            y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#1f2c56')),
+                            tooltip=[
+                                alt.Tooltip('月份:N', title='月份'), 
+                                alt.Tooltip('CPG:Q', title='CPG (NT$)', format=',.0f'),
+                                alt.Tooltip('index:Q', title='菜商指數', format=',.1f') if 'index' in trend_df.columns else alt.Tooltip('月份:N') # 避免 KeyError
+                            ]
                         )
+                        
                         target_line = alt.Chart(pd.DataFrame({'y': [150]})).mark_rule(
-                            color='#e74c3c', strokeDash=[6, 3], strokeWidth=1.5
+                            color='#1f2c56', strokeDash=[6, 3], strokeWidth=1.5, opacity=0.5
                         ).encode(y='y:Q')
                         target_label = alt.Chart(pd.DataFrame({'y': [150], 'x': [trend_df['月份'].iloc[-1]], 'text': ['目標 $150']})).mark_text(
-                            align='right', dx=-4, dy=-8, color='#e74c3c', fontSize=11, fontWeight='bold'
+                            align='right', dx=-4, dy=-8, color='#1f2c56', fontSize=11, fontWeight='bold', opacity=0.8
                         ).encode(x='x:N', y='y:Q', text='text:N')
-                        st.altair_chart(
-                            alt.layer(cpg_line, target_line, target_label).properties(height=220),
-                            use_container_width=True
-                        )
+                        
+                        cpg_layer = alt.layer(cpg_line, target_line, target_label)
+                        
+                        # 右軸：大盤指數 紅虛線
+                        if 'index' in trend_df.columns and not trend_df['index'].isna().all():
+                            idx_line = base.mark_line(point={'color': '#e74c3c'}, strokeDash=[5, 5], strokeWidth=2, color='#e74c3c').encode(
+                                x=alt.X('月份:N', sort=None),
+                                y=alt.Y('index:Q', title='菜商大盤指數 (100=基準)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#e74c3c'))
+                            )
+                            chart = alt.layer(cpg_layer, idx_line).resolve_scale(y='independent')
+                        else:
+                            chart = cpg_layer
+                            
+                        st.altair_chart(chart.properties(height=280), use_container_width=True)
                     else:
                         st.info("💡 需要至少 2 個月的數據才能顯示 CPG 趨勢圖。")
+
                     
                     st.divider()
 
@@ -3240,26 +3303,10 @@ with tab_s:
             st.markdown("#### 📈 A. 菜商物價指數")
             st.info("💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**")
             
+            index_df = get_market_index_df(sp_df)
             base_period = periods_available[0]
-            base_df = sp_df[sp_df['period_dt'] == base_period]
-            base_dict = base_df.set_index(['item_name', 'unit'])['price'].to_dict()
             
-            index_data = []
-            for p in periods_available:
-                curr_df = sp_df[sp_df['period_dt'] == p]
-                ratios = []
-                for _, r in curr_df.iterrows():
-                    key = (r['item_name'], r['unit'])
-                    if key in base_dict and base_dict[key] > 0 and pd.notna(r['price']):
-                        ratios.append(r['price'] / base_dict[key])
-                
-                if ratios:
-                    idx_val = sum(ratios) / len(ratios) * 100
-                else:
-                    idx_val = 100
-                index_data.append({'period_dt': p, 'period_str': str(p), 'index': round(idx_val, 1)})
-                
-            index_df = pd.DataFrame(index_data)
+            if not index_df.empty:
             
             latest_idx = index_df.iloc[-1]['index']
             prev_idx = index_df.iloc[-2]['index']
@@ -3287,6 +3334,8 @@ with tab_s:
                 base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(strokeDash=[5, 5], color='gray').encode(y='y:Q')
                 st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
             st.divider()
+        else:
+            index_df = pd.DataFrame()
 
         # ── B. 本月食材安全預算範圍 ──────────────────────────────
         st.markdown("#### 💰 B. 本月食材安全預算範圍")
