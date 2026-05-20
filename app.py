@@ -2673,8 +2673,7 @@ with tab_p:
                             y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#1f2c56')),
                             tooltip=[
                                 alt.Tooltip('月份:N', title='月份'), 
-                                alt.Tooltip('CPG:Q', title='CPG (NT$)', format=',.0f'),
-                                alt.Tooltip('index:Q', title='菜商指數', format=',.1f') if 'index' in trend_df.columns else alt.Tooltip('月份:N') # 避免 KeyError
+                                alt.Tooltip('CPG:Q', title='CPG (NT$)', format=',.0f')
                             ]
                         )
                         
@@ -2688,12 +2687,23 @@ with tab_p:
                         cpg_layer = alt.layer(cpg_line, target_line, target_label)
                         
                         # 右軸：大盤指數 紅虛線
+                        has_index_data = False
                         if 'index' in trend_df.columns and not trend_df['index'].isna().all():
-                            idx_line = base.mark_line(point={'color': '#e74c3c'}, strokeDash=[5, 5], strokeWidth=2, color='#e74c3c').encode(
+                            valid_idx_count = trend_df['index'].notna().sum()
+                            has_index_data = True
+                            
+                            idx_line = base.mark_line(point={'color': '#e74c3c', 'size': 60}, strokeDash=[5, 5], strokeWidth=2, color='#e74c3c').encode(
                                 x=alt.X('月份:N', sort=None),
-                                y=alt.Y('index:Q', title='菜商大盤指數 (100=基準)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#e74c3c'))
+                                y=alt.Y('index:Q', title='菜商大盤指數 (100=基準)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#e74c3c')),
+                                tooltip=[
+                                    alt.Tooltip('月份:N', title='月份'),
+                                    alt.Tooltip('index:Q', title='菜商指數', format=',.1f')
+                                ]
                             )
                             chart = alt.layer(cpg_layer, idx_line).resolve_scale(y='independent')
+                            
+                            if valid_idx_count < 2:
+                                st.info("💡 提醒：大盤指數（紅虛線）的對應月份不足 2 個月，因此目前圖表上僅會顯示一個紅色點點。請在「菜單分析」分頁補齊過去月份的菜價資料以顯示完整折線。")
                         else:
                             chart = cpg_layer
                             
