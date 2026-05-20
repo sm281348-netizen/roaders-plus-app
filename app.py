@@ -1586,7 +1586,7 @@ with tab_m:
     with kp_col2:
         st.markdown(f"""
         <div style="background: #fffcf5; padding: 15px; border-radius: 10px; border-left: 5px solid #f39c12; margin-bottom: 20px; height: 100%;">
-            <p style="margin:0; font-size:14px; color:#666;">📊 <strong>八二法則：極端值分析 (本月)</strong></p>
+            <p style="margin:0; font-size:14px; color:#666;">📊 <strong>高低營收分析 (本月)</strong></p>
             <div style="margin-top: 20px;">
                 <p style="margin:0; font-size:13px; color:#999;">🔥 前 20% 營收日 (Top 20%) 平均營收</p>
                 <h3 style="margin: 5px 0 15px 0; color: #d35400;">NT$ {int(curr_metrics['top20_rev_avg']):,}</h3>
