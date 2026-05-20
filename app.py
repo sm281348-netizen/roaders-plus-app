@@ -3235,9 +3235,9 @@ with tab_s:
 
         st.caption(f"📋 目前共有 **{n_periods}** 期菜價資料（{periods_str[0]} ～ {periods_str[-1]}）｜共 {len(sp_df['item_name'].unique())} 個品項")
 
-        # ── A. 飯店採購大盤物價指數 ──────────────────────────────
+        # ── A. 菜商物價指數 ──────────────────────────────
         if n_periods >= 2:
-            st.markdown("#### 📈 A. 飯店採購大盤物價指數")
+            st.markdown("#### 📈 A. 菜商物價指數")
             st.info("💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**")
             
             base_period = periods_available[0]
