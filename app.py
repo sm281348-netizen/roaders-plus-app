@@ -1560,7 +1560,7 @@ with tab_m:
         """, unsafe_allow_html=True)
     
     # --- B3. OCC vs ADR 四象限定價診斷圖 ---
-    st.markdown("#### 🎯 定價策略診斷：住房率 vs 平均房價 四象限分析")
+    st.markdown("#### 🎯 定價水位診斷：住房率 vs 平均房價 四象限分析（以年純平 ADR 為底線基準）")
     scatter_df = m_curr['df'].copy()
     if not scatter_df.empty:
         scatter_df['occ_val'] = pd.to_numeric(scatter_df['occ_rate'], errors='coerce').fillna(0)
@@ -1627,7 +1627,7 @@ with tab_m:
 
         final_chart = alt.layer(scatter_chart, adr_rule, adr_label, occ_rule, occ_label).properties(
             height=380,
-            title=f"{m_curr['month_label']} 每日定價位置診斷（每個點代表一天）"
+            title=f"{m_curr['month_label']} 每日定價水位診斷（每個點代表一天，以年純平 ADR 為底線）"
         )
         st.altair_chart(final_chart, use_container_width=True)
 

@@ -1,9 +1,15 @@
-import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 import streamlit as st
+import json
 
-conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(worksheet="daily_data", ttl="0")
-df_may = df[df['date'].str.startswith('2026-05', na=False)]
-print("May data:")
-print(df_may[['date', 'rest_month_rev', 'bf_total_act']])
+secrets_dict = {}
+for k, v in st.secrets.items():
+    try:
+        secrets_dict[k] = dict(v)
+    except:
+        secrets_dict[k] = str(v)
+
+with open("secrets_dump.json", "w") as f:
+    json.dump(secrets_dict, f, indent=4)
+
+st.write("Secrets dumped successfully!")
+st.write(secrets_dict)
