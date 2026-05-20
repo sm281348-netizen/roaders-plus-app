@@ -44,6 +44,45 @@ def fetch_taipei_events():
         # 如果分頁不存在或讀取失敗，回傳空 DataFrame
         return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
     return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
+
+@st.cache_data(ttl=600)
+def fetch_supplier_prices():
+    """讀取菜價表 supplier_prices 分頁，回傳標準化 DataFrame"""
+    try:
+        df = conn.read(worksheet="supplier_prices", ttl="10m")
+        if df is None or df.empty:
+            return pd.DataFrame()
+        # 欄位名稱標準化 (item name → item_name)
+        df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
+        # 必要欄位檢查
+        required = {'period', 'item_name', 'unit', 'price'}
+        if not required.issubset(set(df.columns)):
+            return pd.DataFrame()
+        # 清理資料
+        df = df.dropna(subset=['item_name', 'price'])
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
+        df = df.dropna(subset=['price'])
+        df['item_name'] = df['item_name'].astype(str).str.strip()
+        df['unit'] = df['unit'].astype(str).str.strip()
+        # period 日期解析 (支援 YYYY/M/D 與 YYYY-MM-DD)
+        def parse_period(v):
+            v = str(v).strip()
+            for fmt in ('%Y/%m/%d', '%Y-%m-%d', '%Y/%m/%d', '%Y%m%d'):
+                try:
+                    return datetime.datetime.strptime(v, fmt).date()
+                except:
+                    pass
+            try:
+                return pd.to_datetime(v, dayfirst=False).date()
+            except:
+                return None
+        df['period_dt'] = df['period'].apply(parse_period)
+        df = df.dropna(subset=['period_dt'])
+        df = df.sort_values('period_dt').reset_index(drop=True)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 @st.cache_data(ttl=86400 * 30)
 def translate_to_zh(text):
     if not text: return text
@@ -925,7 +964,7 @@ def parse_and_save_restaurant(file, current_year):
 st.title("路徒Plus行旅站前館營運日誌")
 
 # 主畫面
-tab1, tab_m, tab6, tab_p, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
+tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
 
 with tab1:
@@ -3214,6 +3253,166 @@ with tab_p:
             st.info("💡 尚無足夠的來客數據來估算週採購預算。請確認上個月的餐廳早餐來客數已填寫。")
     else:
         st.info("💡 「週採購建議」僅適用於當月或未來月份。")
+
+# =====================================================
+# 🛒 菜價分析 tab_s
+# =====================================================
+with tab_s:
+    st.header("🛒 菜價分析")
+    sp_df = fetch_supplier_prices()
+
+    if sp_df.empty:
+        st.warning("⚠️ 尚未讀取到菜價資料。請確認 Google Sheets 中已建立 `supplier_prices` 分頁，且 `period`、`item_name`、`unit`、`price` 欄位已填寫。")
+    else:
+        periods_available = sorted(sp_df['period_dt'].unique())
+        periods_str = [str(p) for p in periods_available]
+        n_periods = len(periods_available)
+
+        st.caption(f"📋 目前共有 **{n_periods}** 期菜價資料（{periods_str[0]} ～ {periods_str[-1]}）｜共 {len(sp_df['item_name'].unique())} 個品項")
+
+        # ── A. 本期菜價總覽 ──────────────────────────────
+        st.markdown("#### 📋 本期菜價總覽")
+        latest_period = periods_available[-1]
+        latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
+
+        if n_periods >= 2:
+            prev_period = periods_available[-2]
+            prev_df = sp_df[sp_df['period_dt'] == prev_period][['item_name', 'price']].rename(columns={'price': 'prev_price'})
+            latest_df = latest_df.merge(prev_df, on='item_name', how='left')
+            latest_df['change'] = latest_df['price'] - latest_df['prev_price']
+            latest_df['change_pct'] = (latest_df['change'] / latest_df['prev_price'] * 100).round(1)
+
+            def fmt_change(row):
+                if pd.isna(row.get('change')):
+                    return '—'
+                sign = '+' if row['change'] > 0 else ''
+                color = '#e74c3c' if row['change'] > 0 else ('#2ecc71' if row['change'] < 0 else '#888')
+                arrow = '▲' if row['change'] > 0 else ('▼' if row['change'] < 0 else '─')
+                return f"<span style='color:{color};font-weight:bold;'>{arrow} {sign}{row['change_pct']:.1f}%</span>"
+
+            latest_df['漲跌'] = latest_df.apply(fmt_change, axis=1)
+            display_cols = ['item_name', 'unit', 'price', '漲跌']
+            col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})'}
+        else:
+            display_cols = ['item_name', 'unit', 'price']
+            col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})'}
+
+        show_df = latest_df[display_cols].rename(columns=col_rename)
+
+        # 搜尋過濾
+        search_kw = st.text_input("🔍 搜尋品項", placeholder="輸入關鍵字，如：高麗菜")
+        if search_kw:
+            show_df = show_df[show_df['品項'].str.contains(search_kw, na=False)]
+
+        if n_periods >= 2:
+            st.write(show_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+        else:
+            st.dataframe(show_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # ── B. 本期 vs 上期漲跌排行 ──────────────────────
+        if n_periods >= 2:
+            st.markdown("#### 📊 本期 vs 上期：漲跌排行")
+            ranked = latest_df.dropna(subset=['change']).copy()
+            ranked = ranked.sort_values('change_pct', ascending=False)
+
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                st.markdown("**🔴 漲幅最大 Top 5**")
+                top_up = ranked.head(5)
+                for _, r in top_up.iterrows():
+                    if r['change_pct'] > 0:
+                        st.markdown(
+                            f"<div style='background:#fdf2f2; border-left:4px solid #e74c3c; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                            f"<strong>{r['item_name']}</strong> <span style='color:#e74c3c; font-size:13px;'>▲ +{r['change_pct']:.1f}%</span>"
+                            f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
+                            unsafe_allow_html=True
+                        )
+            with bc2:
+                st.markdown("**🟢 跌幅最大 Top 5**")
+                top_down = ranked.tail(5).iloc[::-1]
+                for _, r in top_down.iterrows():
+                    if r['change_pct'] < 0:
+                        st.markdown(
+                            f"<div style='background:#f2fdf5; border-left:4px solid #2ecc71; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                            f"<strong>{r['item_name']}</strong> <span style='color:#2ecc71; font-size:13px;'>▼ {r['change_pct']:.1f}%</span>"
+                            f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
+                            unsafe_allow_html=True
+                        )
+            st.divider()
+
+        # ── C. 品項趨勢圖 ────────────────────────────────
+        if n_periods >= 2:
+            st.markdown("#### 📈 品項歷期趨勢")
+            all_items = sorted(sp_df['item_name'].unique().tolist())
+            selected_items = st.multiselect(
+                "選擇品項（可多選）",
+                options=all_items,
+                default=all_items[:3] if len(all_items) >= 3 else all_items,
+                placeholder="請選擇要比對的品項"
+            )
+            if selected_items:
+                trend_df = sp_df[sp_df['item_name'].isin(selected_items)].copy()
+                trend_df['period_str'] = trend_df['period_dt'].astype(str)
+                price_min = int(trend_df['price'].min() * 0.85)
+                price_max = int(trend_df['price'].max() * 1.15)
+                trend_chart = alt.Chart(trend_df).mark_line(point=True, strokeWidth=2).encode(
+                    x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
+                    y=alt.Y('price:Q', title='單價', scale=alt.Scale(domain=[price_min, price_max], zero=False)),
+                    color=alt.Color('item_name:N', legend=alt.Legend(title='品項')),
+                    tooltip=[
+                        alt.Tooltip('period_str:N', title='期別'),
+                        alt.Tooltip('item_name:N', title='品項'),
+                        alt.Tooltip('price:Q', title='單價', format='.1f'),
+                        alt.Tooltip('unit:N', title='單位'),
+                    ]
+                ).properties(height=380)
+                st.altair_chart(trend_chart, use_container_width=True)
+            st.divider()
+        else:
+            st.info("💡 目前只有一期資料，累積下一期菜單後即可查看趨勢圖與漲跌比對。")
+            st.divider()
+
+        # ── D. 叫貨戰略建議 ──────────────────────────────
+        st.markdown("#### 🎯 叫貨戰略建議")
+        if n_periods >= 2:
+            ranked_all = latest_df.dropna(subset=['change_pct']).copy()
+            # 持續漲價：漲幅 > 5%
+            alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values('change_pct', ascending=False)
+            # 明顯降價：跌幅 > 5%
+            alert_down = ranked_all[ranked_all['change_pct'] < -5].sort_values('change_pct')
+            # 平穩：±5% 內
+            alert_stable = ranked_all[ranked_all['change_pct'].abs() <= 5]
+
+            if not alert_up.empty:
+                up_items = '、'.join(alert_up['item_name'].head(5).tolist())
+                st.warning(f"📈 **漲幅警示（>{5}%）**：{up_items}\n\n👉 建議：評估替代食材，或提前確認這週用量是否能縮減。")
+            if not alert_down.empty:
+                down_items = '、'.join(alert_down['item_name'].head(5).tolist())
+                st.success(f"📉 **降價機會（>{5}%↓）**：{down_items}\n\n👉 建議：這批相對便宜，可在不超庫存的前提下適量多叫，壓低本週 CPG。")
+            if alert_up.empty and alert_down.empty:
+                st.info("✅ 本期菜價整體穩定，無明顯異常波動，按原採購計畫執行即可。")
+
+            # 彙整摘要表
+            with st.expander("📋 完整戰略摘要表"):
+                summary_rows = []
+                for _, r in ranked_all.iterrows():
+                    if r['change_pct'] > 5:
+                        strategy = "⚠️ 漲價，考慮替代或縮量"
+                    elif r['change_pct'] < -5:
+                        strategy = "✅ 降價，可考慮增量"
+                    else:
+                        strategy = "─ 穩定，照常叫貨"
+                    summary_rows.append({
+                        '品項': r['item_name'],
+                        '本期單價': f"{r['price']:.0f} 元/{r['unit']}",
+                        '漲跌': f"{'+' if r['change_pct']>0 else ''}{r['change_pct']:.1f}%",
+                        '建議': strategy
+                    })
+                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("💡 叫貨戰略建議需要至少兩期資料才能比對。下一次菜單收到後，貼到 `supplier_prices` 分頁即可自動產生建議。")
 
 with tab7:
     st.header("👥 人事概況")
