@@ -1702,22 +1702,32 @@ with tab_m:
 
     if curr_metrics.get('dual_match_dates'):
         st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
-        st.info("💡 系統自動揪出本月符合「高營收」且「高均價」的雙冠日。請針對以下日期提早準備生鮮食材，並可適度放寬單客成本 (CPG) 以滿足高端客群期待。")
+        st.info("💡 系統自動揪出本月符合「高營收」且「高均價」的雙冠日。當晚入住的客人**隔天**才會用早餐——卡片顯示的是隔天的備餐需求，請針對備餐日提早備料，並可適度放寬 CPG 以滿足高端客群期待。")
+        
+        # 合併本月與下月資料集，方便查詢月底雙冠日的隔天早餐數
+        df_combined = pd.concat([m_curr['df'], m_next['df']], ignore_index=True) if not m_next['df'].empty else m_curr['df'].copy()
         
         radar_cols = st.columns(min(max(len(curr_metrics['dual_match_dates']), 1), 5))
         for i, d_date in enumerate(curr_metrics['dual_match_dates']):
-            day_row = m_curr['df'][m_curr['df']['date'] == d_date]
+            # 隔天日期（備餐日）
+            next_day = (datetime.datetime.strptime(d_date, '%Y-%m-%d') + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            next_day_row = df_combined[df_combined['date'] == next_day]
+            
             bf_count = 0
-            if not day_row.empty:
-                bf_col = 'bf_total_act' if 'bf_total_act' in day_row.columns and pd.to_numeric(day_row['bf_total_act'].iloc[0], errors='coerce') > 0 else 'bf_total_est'
-                if bf_col in day_row.columns:
-                    bf_count = pd.to_numeric(day_row[bf_col], errors='coerce').fillna(0).iloc[0]
+            if not next_day_row.empty:
+                bf_col = 'bf_total_act' if 'bf_total_act' in next_day_row.columns and pd.to_numeric(next_day_row['bf_total_act'].iloc[0], errors='coerce') > 0 else 'bf_total_est'
+                if bf_col in next_day_row.columns:
+                    bf_count = pd.to_numeric(next_day_row[bf_col], errors='coerce').fillna(0).iloc[0]
                     
             c = radar_cols[i % 5]
             c.markdown(f"""
             <div style="background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                <h4 style="margin:0; color:#e74c3c;">{d_date[5:]}</h4>
-                <p style="margin:5px 0 0 0; font-size:12px; color:#666;">早餐預估: <strong>{int(bf_count)}</strong> 人</p>
+                <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🏨 雙冠入住日</p>
+                <h4 style="margin:4px 0; color:#e74c3c;">{d_date[5:]}</h4>
+                <hr style="border:0; border-top:1px dashed #eee; margin:8px 0;">
+                <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🥐 備餐日（早餐高峰）</p>
+                <p style="margin:4px 0; font-size:14px; color:#333; font-weight:bold;">{next_day[5:]}</p>
+                <p style="margin:4px 0 0 0; font-size:12px; color:#666;">預估備餐: <strong style="color:#e74c3c;">{int(bf_count)}</strong> 人</p>
             </div>
             """, unsafe_allow_html=True)
             
