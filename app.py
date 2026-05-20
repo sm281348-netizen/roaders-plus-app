@@ -3235,8 +3235,62 @@ with tab_s:
 
         st.caption(f"📋 目前共有 **{n_periods}** 期菜價資料（{periods_str[0]} ～ {periods_str[-1]}）｜共 {len(sp_df['item_name'].unique())} 個品項")
 
-        # ── A. 本期菜價總覽 ──────────────────────────────
-        st.markdown("#### 📋 本期菜價總覽")
+        # ── A. 飯店採購大盤物價指數 ──────────────────────────────
+        if n_periods >= 2:
+            st.markdown("#### 📈 A. 飯店採購大盤物價指數")
+            st.info("💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**")
+            
+            base_period = periods_available[0]
+            base_df = sp_df[sp_df['period_dt'] == base_period]
+            base_dict = base_df.set_index(['item_name', 'unit'])['price'].to_dict()
+            
+            index_data = []
+            for p in periods_available:
+                curr_df = sp_df[sp_df['period_dt'] == p]
+                ratios = []
+                for _, r in curr_df.iterrows():
+                    key = (r['item_name'], r['unit'])
+                    if key in base_dict and base_dict[key] > 0 and pd.notna(r['price']):
+                        ratios.append(r['price'] / base_dict[key])
+                
+                if ratios:
+                    idx_val = sum(ratios) / len(ratios) * 100
+                else:
+                    idx_val = 100
+                index_data.append({'period_dt': p, 'period_str': str(p), 'index': round(idx_val, 1)})
+                
+            index_df = pd.DataFrame(index_data)
+            
+            latest_idx = index_df.iloc[-1]['index']
+            prev_idx = index_df.iloc[-2]['index']
+            diff_idx = latest_idx - prev_idx
+            
+            ic1, ic2 = st.columns([1, 3])
+            with ic1:
+                st.metric(label="本期大盤指數", value=f"{latest_idx:.1f}", delta=f"{diff_idx:+.1f} 點 (vs上期)", delta_color="inverse")
+                st.caption(f"基準期：{base_period} (=100)")
+            with ic2:
+                # 取得折線圖的上下限，並包含 100
+                all_idx_vals = index_df['index'].tolist() + [100]
+                idx_min = max(0, int(min(all_idx_vals) * 0.98))
+                idx_max = int(max(all_idx_vals) * 1.02)
+                
+                line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
+                    x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
+                    y=alt.Y('index:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
+                    tooltip=[
+                        alt.Tooltip('period_str:N', title='期別'),
+                        alt.Tooltip('index:Q', title='大盤指數', format='.1f'),
+                    ]
+                )
+                
+                base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(strokeDash=[5, 5], color='gray').encode(y='y:Q')
+                st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
+            
+            st.divider()
+
+        # ── B. 本期菜價總覽 ──────────────────────────────
+        st.markdown("#### 📋 B. 本期菜價總覽")
         latest_period = periods_available[-1]
         latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
 
@@ -3305,9 +3359,9 @@ with tab_s:
 
         st.divider()
 
-        # ── B. 本期 vs 上期漲跌排行 ──────────────────────
+        # ── C. 本期 vs 上期漲跌排行 ──────────────────────
         if n_periods >= 2:
-            st.markdown("#### 📊 本期 vs 上期：漲跌排行")
+            st.markdown("#### 📊 C. 本期 vs 上期：漲跌排行")
             ranked = latest_df.dropna(subset=['change']).copy()
             ranked = ranked.sort_values('change_pct', ascending=False)
 
@@ -3336,9 +3390,9 @@ with tab_s:
                         )
             st.divider()
 
-        # ── C. 品項趨勢圖 ────────────────────────────────
+        # ── D. 品項趨勢圖 ────────────────────────────────
         if n_periods >= 2:
-            st.markdown("#### 📈 品項歷期趨勢")
+            st.markdown("#### 📈 D. 品項歷期趨勢")
             all_items = sorted(sp_df['item_name'].unique().tolist())
             selected_items = st.multiselect(
                 "選擇品項（可多選）",
@@ -3368,8 +3422,8 @@ with tab_s:
             st.info("💡 目前只有一期資料，累積下一期菜單後即可查看趨勢圖與漲跌比對。")
             st.divider()
 
-        # ── D. 叫貨戰略建議 ──────────────────────────────
-        st.markdown("#### 🎯 叫貨戰略建議")
+        # ── E. 叫貨戰略建議 ──────────────────────────────
+        st.markdown("#### 🎯 E. 叫貨戰略建議")
         if n_periods >= 2:
             ranked_all = latest_df.dropna(subset=['change_pct']).copy()
             # 持續漲價：漲幅 > 5%
@@ -3438,9 +3492,9 @@ with tab_s:
         else:
             st.info("💡 叫貨戰略建議需要至少兩期資料才能比對。下一次菜單收到後，貼到 `supplier_prices` 分頁即可自動產生建議。")
 
-        # ── E. 食材風險防禦分級 (價格波動度分析) ──────────────────
+        # ── F. 食材風險防禦分級 (價格波動度分析) ──────────────────
         st.divider()
-        st.markdown("#### 🛡️ 食材風險防禦分級 (價格波動度分析)")
+        st.markdown("#### 🛡️ F. 食材風險防禦分級 (價格波動度分析)")
         if 'ytd_stats' in locals() and not ytd_stats.empty:
             st.info("💡 **波動率 = (歷史最高價 - 歷史最低價) / 歷史最低價**。代表該食材在今年內可能暴漲的最大幅度。\n\n👉 **戰略建議**：主廚在雙冠日應盡量避開右側的高風險食材，多使用左側的高防禦食材來穩定 CPG。")
             
@@ -3479,13 +3533,13 @@ with tab_s:
         else:
             st.info("💡 需要至少兩期資料才能分析食材的價格波動度。")
 
-        # ── F. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
+        # ── G. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
         st.divider()
         # 由於需要讀取月度數據，直接從 m_curr (在 tab_m 已加載的本月數據) 中重新計算
         if 'm_curr' in locals() or 'm_curr' in globals():
             s_curr_metrics = calc_key_metrics(m_curr)
             if s_curr_metrics.get('dual_match_dates'):
-                st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
+                st.markdown("#### 🎯 G. 雙冠備戰行事曆 (Peak Demand Radar)")
                 st.info("💡 這是系統自動揪出本月符合「高營收」且「高均價」的雙冠日。**請現場採購人員特別注意這幾天的菜價與備料！** 隔天早餐高峰期人數預估如下，可考慮採用單價較低或正在降價的替代葉菜，來維持高品質又守住 CPG 目標。")
                 
                 # 合併本月與下月資料集
