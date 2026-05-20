@@ -1735,42 +1735,7 @@ with tab_m:
         """, unsafe_allow_html=True)
         st.write("")
 
-    st.divider()
 
-    # --- 新增：雙冠備戰行事曆 (Peak Demand Radar) ---
-
-    if curr_metrics.get('dual_match_dates'):
-        st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
-        st.info("💡 系統自動揪出本月符合「高營收」且「高均價」的雙冠日。當晚入住的客人**隔天**才會用早餐——卡片顯示的是隔天的備餐需求，請針對備餐日提早備料，並可適度放寬 CPG 以滿足高端客群期待。")
-        
-        # 合併本月與下月資料集，方便查詢月底雙冠日的隔天早餐數
-        df_combined = pd.concat([m_curr['df'], m_next['df']], ignore_index=True) if not m_next['df'].empty else m_curr['df'].copy()
-        
-        radar_cols = st.columns(min(max(len(curr_metrics['dual_match_dates']), 1), 5))
-        for i, d_date in enumerate(curr_metrics['dual_match_dates']):
-            # 隔天日期（備餐日）
-            next_day = (datetime.datetime.strptime(d_date, '%Y-%m-%d') + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-            next_day_row = df_combined[df_combined['date'] == next_day]
-            
-            bf_count = 0
-            if not next_day_row.empty:
-                bf_col = 'bf_total_act' if 'bf_total_act' in next_day_row.columns and pd.to_numeric(next_day_row['bf_total_act'].iloc[0], errors='coerce') > 0 else 'bf_total_est'
-                if bf_col in next_day_row.columns:
-                    bf_count = pd.to_numeric(next_day_row[bf_col], errors='coerce').fillna(0).iloc[0]
-                    
-            c = radar_cols[i % 5]
-            c.markdown(f"""
-            <div style="background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🏨 雙冠入住日</p>
-                <h4 style="margin:4px 0; color:#e74c3c;">{d_date[5:]}</h4>
-                <hr style="border:0; border-top:1px dashed #eee; margin:8px 0;">
-                <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🥐 備餐日（早餐高峰）</p>
-                <p style="margin:4px 0; font-size:14px; color:#333; font-weight:bold;">{next_day[5:]}</p>
-                <p style="margin:4px 0 0 0; font-size:12px; color:#666;">預估備餐: <strong style="color:#e74c3c;">{int(bf_count)}</strong> 人</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        st.divider()
 
     # --- B2. 即將到來的重大活動與假日警報 ---
     st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
@@ -3413,6 +3378,42 @@ with tab_s:
                 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
         else:
             st.info("💡 叫貨戰略建議需要至少兩期資料才能比對。下一次菜單收到後，貼到 `supplier_prices` 分頁即可自動產生建議。")
+
+        # ── E. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
+        st.divider()
+        # 由於需要讀取月度數據，直接從 m_curr (在 tab_m 已加載的本月數據) 中重新計算
+        if 'm_curr' in locals() or 'm_curr' in globals():
+            s_curr_metrics = calc_key_metrics(m_curr)
+            if s_curr_metrics.get('dual_match_dates'):
+                st.markdown("#### 🎯 雙冠備戰行事曆 (Peak Demand Radar)")
+                st.info("💡 這是系統自動揪出本月符合「高營收」且「高均價」的雙冠日。**請現場採購人員特別注意這幾天的菜價與備料！** 隔天早餐高峰期人數預估如下，可考慮採用單價較低或正在降價的替代葉菜，來維持高品質又守住 CPG 目標。")
+                
+                # 合併本月與下月資料集
+                s_df_combined = pd.concat([m_curr['df'], m_next['df']], ignore_index=True) if 'm_next' in locals() and not m_next['df'].empty else m_curr['df'].copy()
+                
+                s_radar_cols = st.columns(min(max(len(s_curr_metrics['dual_match_dates']), 1), 5))
+                for i, d_date in enumerate(s_curr_metrics['dual_match_dates']):
+                    # 隔天日期
+                    next_day = (datetime.datetime.strptime(d_date, '%Y-%m-%d') + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                    next_day_row = s_df_combined[s_df_combined['date'] == next_day]
+                    
+                    bf_count = 0
+                    if not next_day_row.empty:
+                        bf_col = 'bf_total_act' if 'bf_total_act' in next_day_row.columns and pd.to_numeric(next_day_row['bf_total_act'].iloc[0], errors='coerce') > 0 else 'bf_total_est'
+                        if bf_col in next_day_row.columns:
+                            bf_count = pd.to_numeric(next_day_row[bf_col], errors='coerce').fillna(0).iloc[0]
+                            
+                    c = s_radar_cols[i % 5]
+                    c.markdown(f"""
+                    <div style="background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                        <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🏨 雙冠入住日</p>
+                        <h4 style="margin:4px 0; color:#e74c3c;">{d_date[5:]}</h4>
+                        <hr style="border:0; border-top:1px dashed #eee; margin:8px 0;">
+                        <p style="margin:0; font-size:10px; color:#aaa; letter-spacing:0.5px;">🥐 備餐日（早餐高峰）</p>
+                        <p style="margin:4px 0; font-size:14px; color:#333; font-weight:bold;">{next_day[5:]}</p>
+                        <p style="margin:4px 0 0 0; font-size:12px; color:#666;">預估備餐: <strong style="color:#e74c3c;">{int(bf_count)}</strong> 人</p>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 with tab7:
     st.header("👥 人事概況")
