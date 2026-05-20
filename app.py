@@ -3278,7 +3278,7 @@ with tab_s:
                 badges = ""
                 if row['ytd_max'] > row['ytd_min']:
                     if curr_p >= row['ytd_max']:
-                        badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史天價</span>"
+                        badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史高點</span>"
                     elif curr_p <= row['ytd_min']:
                         badges = " <span style='background:#2ecc71;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史低點</span>"
                         
@@ -3384,7 +3384,7 @@ with tab_s:
 
             if not alert_all_time_high.empty:
                 high_items = '、'.join(alert_all_time_high['item_name'].head(5).tolist())
-                st.error(f"🚨 **【歷史天價警報】**：{high_items} 目前為今年最高價！\n\n👉 強烈建議：全面停用或切換至高防禦(穩定)食材，直到價格回落。")
+                st.error(f"🚨 **【歷史高點警報】**：{high_items} 目前為今年最高價！\n\n👉 強烈建議：全面停用或切換至高防禦(穩定)食材，直到價格回落。")
             
             if not alert_up.empty:
                 up_items = '、'.join(alert_up['item_name'].head(5).tolist())
@@ -3408,7 +3408,7 @@ with tab_s:
                     is_atl = (r['price'] <= r['ytd_min']) and (r['ytd_max'] > r['ytd_min'])
                     
                     if is_ath:
-                        strategy = "🚨 歷史天價！強烈建議停用"
+                        strategy = "🚨 歷史高點！強烈建議停用"
                     elif is_atl:
                         strategy = "✅ 歷史低點！建議囤貨"
                     elif r['change_pct'] > 5:
@@ -3424,7 +3424,7 @@ with tab_s:
                     else:
                         diff_pct = ((r['price'] - ytd_avg) / ytd_avg * 100)
                         ytd_str = f"均 {ytd_avg:.1f} ({'+' if diff_pct>0 else ''}{diff_pct:.1f}%)"
-                        if is_ath: ytd_str += " [天價]"
+                        if is_ath: ytd_str += " [高點]"
                         elif is_atl: ytd_str += " [低點]"
 
                     summary_rows.append({
