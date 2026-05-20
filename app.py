@@ -3288,8 +3288,8 @@ with tab_s:
                 st.altair_chart((base_line + line_chart).properties(height=250), use_container_width=True)
             st.divider()
 
-        # ── B. 總採購預算逆推與動態配額 ──────────────────────────────
-        st.markdown("#### 💰 B. 總採購預算逆推與動態配額")
+        # ── B. 本月食材安全預算範圍 ──────────────────────────────
+        st.markdown("#### 💰 B. 本月食材安全預算範圍")
         
         # 抓取本月總早餐人數 (從 m_curr)
         total_bf_guests = 0
