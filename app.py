@@ -996,7 +996,7 @@ def parse_and_save_restaurant(file, current_year):
         return False
 
 # 頁面標題
-st.title("路徒Plus行旅站前館營運日誌")
+st.title("Hotel Master")
 
 # 主畫面
 tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7 = st.tabs(["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
