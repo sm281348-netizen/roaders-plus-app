@@ -257,8 +257,13 @@ if "authenticated" not in st.session_state:
 # -----------------------------
 
 # -- 資料庫連線初始化 (Google Sheets 版) --
-conn = st.connection("gsheets", type=GSheetsConnection)
+# -- 資料庫連線動態初始化 (根據登入密碼自動認親) --
+current_hotel = st.session_state.get("hotel_type", "站前館")
 
+if current_hotel == "主題館":
+    conn = st.connection("gsheets_theme", type=GSheetsConnection)
+else:
+    conn = st.connection("gsheets_station", type=GSheetsConnection)
 
 def init_db():
     """
