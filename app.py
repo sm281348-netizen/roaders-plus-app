@@ -239,20 +239,28 @@ if "authenticated" not in st.session_state:
                 unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 2, 1])
+password_station = st.secrets.get("admin_password", "roaders123")
+password_theme = st.secrets.get("theme_password", "theme456")
+
+if "authenticated" not in st.session_state:
+    st.markdown("<h2 style='text-align: center;'>🔒 Welcome to Hotel Master</h2>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         pwd = st.text_input("管理員通行碼", type="password")
         if pwd:
-            password_station = st.secrets.get("admin_password", "roaders123")
-            password_theme = st.secrets.get("theme_password", "theme456")
-
-        if pwd == password_station:
-            st.session_state["authenticated"] = True
-            st.session_state["hotel_type"] = "站前館"
-        elif pwd == password_theme:
-            st.session_state["authenticated"] = True
-            st.session_state["hotel_type"] = "主題館"
+            if pwd == password_station:
+                st.session_state["authenticated"] = True
+                st.session_state["hotel_type"] = "站前館"
+                st.rerun()
+            elif pwd == password_theme:
+                st.session_state["authenticated"] = True
+                st.session_state["hotel_type"] = "主題館"
+                st.rerun()
+            else:
+                st.error("❌ 密碼錯誤，請重新輸入")
+                st.stop()
         else:
-            st.error("❌ 密碼錯誤，請重新輸入")
             st.stop()
 # -----------------------------
 
