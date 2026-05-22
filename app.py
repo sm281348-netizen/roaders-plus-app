@@ -231,14 +231,6 @@ def fetch_upcoming_holidays(start_date, days=30):
 # 設定頁面資訊
 st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="wide")
 
-# --- 安全防護：全站密碼攔截 ---
-if "authenticated" not in st.session_state:
-    st.markdown("<h2 style='text-align: center;'>🔒 Welcome to Hotel Master</h2>",
-                unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #666;'>為了保護營業機密，請輸入管理員通行碼進入系統。</p>",
-                unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([1, 2, 1])
 password_station = st.secrets.get("admin_password", "roaders123")
 password_theme = st.secrets.get("theme_password", "theme456")
 
