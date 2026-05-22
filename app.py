@@ -2846,7 +2846,7 @@ with tab_p:
                         st.markdown("#### 🥂 Happy Hour 累計成本分析")
                         
                         # 顯示累計人數 vs 累計成本
-                        hh_chart_base = alt.Chart(analysis_df).encode(x=alt.X('日期_str:T', title='日期'))
+                        hh_chart_base = alt.Chart(analysis_df).encode(x=alt.X('日期_str:O', title='日期'))
                         
                         # 長條圖顯示累計 CPG
                         hh_bar = hh_chart_base.mark_bar(color='#ff9f43', opacity=0.7).encode(
