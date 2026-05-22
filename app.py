@@ -2832,7 +2832,7 @@ with tab_p:
                     analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
                     
                     # 整合圖表
-                    base_chart = alt.Chart(analysis_df).encode(x=alt.X('日期_str:T', title='日期'))
+                    base_chart = alt.Chart(analysis_df).encode(x=alt.X('日期_str:O', title='日期'))
                     
                     peak_line = base_chart.mark_line(point=True, color='#1f2c56', strokeWidth=3).encode(
                         y=alt.Y('cum_peak_cpg:Q', title='累計平均成本 (NT$)'),
