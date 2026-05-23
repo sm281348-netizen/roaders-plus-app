@@ -255,86 +255,12 @@ if "authenticated" not in st.session_state:
             st.stop()
 # -----------------------------
 
-# -- 資料庫連線初始化 (Google Sheets 版) --
-# -- 資料庫連線動態初始化 (根據登入密碼自動認親) --
-
-
-def init_db():
-    """
-    確保 Google Sheets 中有正確的分頁與標題行。
-    由於 st-gsheets-connection 的運作機制，初次使用時需確保 Sheets 存在。
-    """
-    # 這裡我們不撰寫複雜的初始化代碼，因為使用者需先建立 Sheet。
-    # 但我們可以預定義欄位給後續寫入使用。
-    pass
-
-
-init_db()
-
-
-def get_google_sheet_error_hint(exc):
-    msg = str(exc)
-    if "UnsupportedOperationError" in msg or "cannot be written to" in msg:
-        return "目前仍是 public spreadsheet 模式，這種模式無法寫入 Google Sheets。請改成 Service Account 驗證。"
-    if "401" in msg or "Unauthorized" in msg:
-        return "Google Sheets 驗證失敗：請確認 .streamlit/secrets.toml 是否已設定 Service Account 憑證，或重新檢查 spreadsheet 分享權限。"
-    if "Spreadsheet must be specified" in msg:
-        return "連線設定缺少 spreadsheet。請確認 [connections.gsheets_station] / [connections.gsheets_theme] 是否存在。"
-    if "WorksheetNotFound" in msg or "worksheet" in msg and "not found" in msg.lower():
-        return "找不到指定的 worksheet。請確認 daily_data / daily_logs 的分頁名稱是否正確。"
-    return ""
-
-# 💡 終極必勝解法：使用官方認證的 service_account_info 包裝方式，直接繞過所有引數衝突與唯讀機制！
+# 💡 改用標準連線，讓 Secrets 自動處理所有憑證，不再傳遞 service_account_info 參數
 try:
     if current_hotel == "主題館":
-        # 1. 複製後台主題館的原始 secrets
-        theme_cfg = dict(st.secrets["connections"]["gsheets_theme"])
-        
-        # 2. 將多行陣列用系統換行符號結合
-        if "private_key_lines" in theme_cfg:
-            theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
-            
-        # 3. 打包成 Google 元件最喜歡的官方標準字典
-        sa_info = {
-            "type": "service_account",
-            "project_id": theme_cfg.get("project_id"),
-            "private_key_id": theme_cfg.get("private_key_id"),
-            "private_key": theme_cfg.get("private_key"),
-            "client_email": theme_cfg.get("client_email"),
-            "client_id": theme_cfg.get("client_id"),
-            "auth_uri": theme_cfg.get("auth_uri"),
-            "token_uri": theme_cfg.get("token_uri"),
-            "auth_provider_x509_cert_url": theme_cfg.get("auth_provider_x509_cert_url"),
-            "client_x509_cert_url": theme_cfg.get("client_x509_cert_url")
-        }
-        
-        # 4. 安全送進連線 (網址的部分系統會自己去 st.secrets 找，完全不外掛餵它)
-        conn = st.connection("gsheets_theme", type=GSheetsConnection, service_account_info=sa_info)
+        conn = st.connection("gsheets_theme", type=GSheetsConnection)
     else:
-        # 1. 複製後台站前館的原始 secrets
-        station_cfg = dict(st.secrets["connections"]["gsheets_station"])
-        
-        # 2. 將多行陣列用系統換行符號結合
-        if "private_key_lines" in station_cfg:
-            station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
-            
-        # 3. 打包成 Google 元件最喜歡的官方標準字典
-        sa_info = {
-            "type": "service_account",
-            "project_id": station_cfg.get("project_id"),
-            "private_key_id": station_cfg.get("private_key_id"),
-            "private_key": station_cfg.get("private_key"),
-            "client_email": station_cfg.get("client_email"),
-            "client_id": station_cfg.get("client_id"),
-            "auth_uri": station_cfg.get("auth_uri"),
-            "token_uri": station_cfg.get("token_uri"),
-            "auth_provider_x509_cert_url": station_cfg.get("auth_provider_x509_cert_url"),
-            "client_x509_cert_url": station_cfg.get("client_x509_cert_url")
-        }
-        
-        # 4. 安全送進連線
-        conn = st.connection("gsheets_station", type=GSheetsConnection, service_account_info=sa_info)
-
+        conn = st.connection("gsheets_station", type=GSheetsConnection)
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
     err_msg = f"無法建立 Google Sheets 連線: {e}"
