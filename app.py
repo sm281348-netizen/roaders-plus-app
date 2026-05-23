@@ -284,9 +284,17 @@ def get_google_sheet_error_hint(exc):
         return "找不到指定的 worksheet。請確認 daily_data / daily_logs 的分頁名稱是否正確。"
     return ""
 
+# -- 資料庫連線初始化 (Google Sheets 版) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 建立 Google Sheets 連線（捕捉例外以便顯示友善錯誤訊息）
+# 💡 終極防錯機制：將後台平鋪的陣列，動態用換行符號結合回標準 PEM 字串
+if "connections" in st.secrets:
+    for conn_name in ["gsheets_station", "gsheets_theme"]:
+        if conn_name in st.secrets["connections"] and "private_key_lines" in st.secrets["connections"][conn_name]:
+            lines = st.secrets["connections"][conn_name]["private_key_lines"]
+            st.secrets["connections"][conn_name]["private_key"] = "\n".join(lines)
+
+# 建立 Google Sheets 連線
 try:
     if current_hotel == "主題館":
         conn = st.connection("gsheets_theme", type=GSheetsConnection)
@@ -297,7 +305,6 @@ except Exception as e:
     err_msg = f"無法建立 Google Sheets 連線: {e}"
     if hint:
         err_msg += f"\n建議: {hint}"
-    # 顯示錯誤並停止，避免後續程式因 conn 為未定義而崩潰
     st.error(err_msg)
     st.stop()
 
