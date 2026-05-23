@@ -287,7 +287,7 @@ def get_google_sheet_error_hint(exc):
 # -- 資料庫連線初始化 (Google Sheets 版) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 💡 終極解法：清除字典內重複的 type 欄位，徹底解決衝突！
+# 💡 終極完美解法：除了 type，連 spreadsheet 參數也一併從外掛字典抽離，避免內部語法衝突！
 try:
     if current_hotel == "主題館":
         # 1. 複製設定並動態結合金鑰
@@ -295,8 +295,9 @@ try:
         if "private_key_lines" in theme_cfg:
             theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
         
-        # 2. 🔥 關鍵：把 Secrets 裡面的 type="service_account" 拔掉，避免跟後面的 GSheetsConnection 衝突
+        # 2. 🔥 關鍵：把會引起內部衝突的 type 和 spreadsheet 統統移出外掛字典
         theme_cfg.pop("type", None)
+        theme_cfg.pop("spreadsheet", None)
         
         # 3. 完美連線
         conn = st.connection("gsheets_theme", type=GSheetsConnection, **theme_cfg)
@@ -306,8 +307,9 @@ try:
         if "private_key_lines" in station_cfg:
             station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
             
-        # 2. 🔥 關鍵：把 Secrets 裡面的 type="service_account" 拔掉，避免跟後面的 GSheetsConnection 衝突
+        # 2. 🔥 關鍵：把會引起內部衝突的 type 和 spreadsheet 統統移出外掛字典
         station_cfg.pop("type", None)
+        station_cfg.pop("spreadsheet", None)
         
         # 3. 完美連線
         conn = st.connection("gsheets_station", type=GSheetsConnection, **station_cfg)
