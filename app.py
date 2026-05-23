@@ -37,13 +37,12 @@ def fetch_taipei_events():
     """讀取試算表中的台北重大活動分頁"""
     try:
         # 讀取試算表中的 taipei_events 分頁
-        df = conn.read(worksheet="taipei_events", ttl="10m")
+        df = read_google_sheet("taipei_events", ttl="10m")
         if df is not None and not df.empty:
             df = standardize_df_dates(df)
             return df
     except Exception:
-        # 如果分頁不存在或讀取失敗，回傳空 DataFrame
-        return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
+        pass
     return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
 
 
@@ -51,7 +50,7 @@ def fetch_taipei_events():
 def fetch_supplier_prices():
     """讀取菜價表 supplier_prices 分頁，回傳標準化 DataFrame"""
     try:
-        df = conn.read(worksheet="supplier_prices", ttl="10m")
+        df = read_google_sheet("supplier_prices", ttl="10m")
         if df is None or df.empty:
             return pd.DataFrame()
         # 欄位名稱標準化 (item name → item_name)
@@ -260,12 +259,20 @@ if "authenticated" not in st.session_state:
 # -- 資料庫連線動態初始化 (根據登入密碼自動認親) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-if current_hotel == "主題館":
-    # 這裡直接強制指定主題館的 Google Sheet 網址
-    conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet="https://docs.google.com/spreadsheets/d/1zigbiXDK362v8pvkpFxEkLmBR6R4pCNy_qg7CCmcF0I/edit?usp=sharing")
-else:
-    # 這裡維持讀取 secrets.toml 預設的站前館網址
-    conn = st.connection("gsheets", type=GSheetsConnection)
+# 建立 Google Sheets 連線（捕捉例外以便顯示友善錯誤訊息）
+try:
+    if current_hotel == "主題館":
+        conn = st.connection("gsheets_theme", type=GSheetsConnection)
+    else:
+        conn = st.connection("gsheets_station", type=GSheetsConnection)
+except Exception as e:
+    hint = get_google_sheet_error_hint(e)
+    err_msg = f"無法建立 Google Sheets 連線: {e}"
+    if hint:
+        err_msg += f"\n建議: {hint}"
+    # 顯示錯誤並停止，避免後續程式因 conn 為未定義而崩潰
+    st.error(err_msg)
+    st.stop()
 
 def init_db():
     """
@@ -278,6 +285,32 @@ def init_db():
 
 
 init_db()
+
+
+def get_google_sheet_error_hint(exc):
+    msg = str(exc)
+    if "UnsupportedOperationError" in msg or "cannot be written to" in msg:
+        return "目前仍是 public spreadsheet 模式，這種模式無法寫入 Google Sheets。請改成 Service Account 驗證。"
+    if "401" in msg or "Unauthorized" in msg:
+        return "Google Sheets 驗證失敗：請確認 .streamlit/secrets.toml 是否已設定 Service Account 憑證，或重新檢查 spreadsheet 分享權限。"
+    if "Spreadsheet must be specified" in msg:
+        return "連線設定缺少 spreadsheet。請確認 [connections.gsheets_station] / [connections.gsheets_theme] 是否存在。"
+    if "WorksheetNotFound" in msg or "worksheet" in msg and "not found" in msg.lower():
+        return "找不到指定的 worksheet。請確認 daily_data / daily_logs 的分頁名稱是否正確。"
+    return ""
+
+
+def read_google_sheet(worksheet, ttl="1m"):
+    try:
+        return conn.read(worksheet=worksheet, ttl=ttl)
+    except Exception as e:
+        hint = get_google_sheet_error_hint(e)
+        msg = f"Google Sheet 讀取失敗：{worksheet} ({e})"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
+        return None
+
 
 # -- 基本資料庫讀寫函數 (需優先定義以供導航邏輯使用) --
 
@@ -323,7 +356,7 @@ def standardize_df_dates(df):
 def get_daily_data(d_str):
     try:
         # 讀取完整表單 (快取設定為 1 分鐘)
-        df = conn.read(worksheet="daily_data", ttl="1m")
+        df = read_google_sheet("daily_data", ttl="1m")
         if df is not None and not df.empty:
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             df = standardize_df_dates(df)
@@ -345,8 +378,12 @@ def get_daily_data(d_str):
                     if col in data_dict and (pd.isna(data_dict[col]) or data_dict[col] is None):
                         data_dict[col] = 0
                 return data_dict
-    except Exception:
-        pass
+    except Exception as e:
+        hint = get_google_sheet_error_hint(e)
+        msg = f"讀取 daily_data 失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
     return {}
 
 
@@ -369,19 +406,29 @@ def save_daily_data(d_str, data_dict):
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_data", data=df.fillna(""))
         st.cache_data.clear()
+        return True
     except Exception as e:
-        st.error(f"儲存失敗: {e}")
+        hint = get_google_sheet_error_hint(e)
+        msg = f"儲存失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
+        return False
 
 
 def get_monthly_target(month_str):
     try:
-        df = conn.read(worksheet="targets", ttl="1m")
+        df = read_google_sheet("targets", ttl="1m")
         if df is not None and not df.empty:
             res = df[df['month'] == month_str]
             if not res.empty:
                 return int(res.iloc[0]['target_revenue'])
-    except Exception:
-        pass
+    except Exception as e:
+        hint = get_google_sheet_error_hint(e)
+        msg = f"讀取 targets 失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
     return 0
 
 
@@ -407,22 +454,30 @@ def save_monthly_target(month_str, target):
 
 def get_daily_log(d_str):
     try:
-        df = conn.read(worksheet="daily_logs", ttl="1m")
+        df = read_google_sheet("daily_logs", ttl="1m")
         if df is not None and not df.empty:
             res = df[df['date'] == d_str]
             if not res.empty:
                 return str(res.iloc[0]['log']).strip()
-    except:
-        pass
+    except Exception as e:
+        hint = get_google_sheet_error_hint(e)
+        msg = f"讀取 daily_logs 失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
     # Fallback to daily_data if not found in daily_logs (backward compatibility)
     try:
-        df_old = conn.read(worksheet="daily_data", ttl="1m")
+        df_old = read_google_sheet("daily_data", ttl="1m")
         if df_old is not None and not df_old.empty:
             res = df_old[df_old['date'] == d_str]
             if not res.empty and 'daily_work_log' in res.columns:
                 return str(res.iloc[0]['daily_work_log']).strip()
-    except:
-        pass
+    except Exception as e:
+        hint = get_google_sheet_error_hint(e)
+        msg = f"讀取 daily_data (fallback) 失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
     return ""
 
 
@@ -451,8 +506,11 @@ def save_daily_log(d_str, log_text):
         st.toast(f"✅ {d_str} 日誌已自動對齊 Google Sheet！")
         return True
     except Exception as e:
-        # 這裡不使用 st.error 以免干擾輸入，但可以列印到日誌或使用 toast
-        print(f"DEBUG: 日誌儲存失敗: {e}")
+        hint = get_google_sheet_error_hint(e)
+        msg = f"日誌儲存失敗: {e}"
+        if hint:
+            msg += f"\n{hint}"
+        st.error(msg)
         return False
 
 
