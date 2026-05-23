@@ -287,7 +287,7 @@ def get_google_sheet_error_hint(exc):
 # -- 資料庫連線初始化 (Google Sheets 版) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 💡 終極完美解法：除了 type，連 spreadsheet 參數也一併從外掛字典抽離，避免內部語法衝突！
+# 💡 終極必勝解法：只把重組好的 service_account 核心憑證餵進去，徹底杜絕所有 unexpected keyword 衝突！
 try:
     if current_hotel == "主題館":
         # 1. 複製設定並動態結合金鑰
@@ -295,24 +295,30 @@ try:
         if "private_key_lines" in theme_cfg:
             theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
         
-        # 2. 🔥 關鍵：把會引起內部衝突的 type 和 spreadsheet 統統移出外掛字典
-        theme_cfg.pop("type", None)
-        theme_cfg.pop("spreadsheet", None)
+        # 2. 🔥 關鍵：只留下 st.connection 認得的憑證核心欄位，把 project_id、spreadsheet 等雜質全部剔除
+        clean_cfg = {
+            "type": "service_account",
+            "private_key": theme_cfg.get("private_key"),
+            "client_email": theme_cfg.get("client_email")
+        }
         
         # 3. 完美連線
-        conn = st.connection("gsheets_theme", type=GSheetsConnection, **theme_cfg)
+        conn = st.connection("gsheets_theme", type=GSheetsConnection, **clean_cfg)
     else:
         # 1. 複製設定並動態結合金鑰
         station_cfg = dict(st.secrets["connections"]["gsheets_station"])
         if "private_key_lines" in station_cfg:
             station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
             
-        # 2. 🔥 關鍵：把會引起內部衝突的 type 和 spreadsheet 統統移出外掛字典
-        station_cfg.pop("type", None)
-        station_cfg.pop("spreadsheet", None)
+        # 2. 🔥 關鍵：只留下 st.connection 認得的憑證核心欄位，把 project_id、spreadsheet 等雜質全部剔除
+        clean_cfg = {
+            "type": "service_account",
+            "private_key": station_cfg.get("private_key"),
+            "client_email": station_cfg.get("client_email")
+        }
         
         # 3. 完美連線
-        conn = st.connection("gsheets_station", type=GSheetsConnection, **station_cfg)
+        conn = st.connection("gsheets_station", type=GSheetsConnection, **clean_cfg)
 
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
