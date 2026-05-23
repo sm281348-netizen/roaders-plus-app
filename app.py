@@ -285,28 +285,31 @@ def get_google_sheet_error_hint(exc):
     return ""
 
 # -- 資料庫連線初始化 (Google Sheets 版) --
-# -- 資料庫連線初始化 (Google Sheets 版) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 💡 終極解法：建立一個全新的記憶體字典，繞過 Streamlit Secrets 唯讀限制！
+# 💡 終極解法：清除字典內重複的 type 欄位，徹底解決衝突！
 try:
     if current_hotel == "主題館":
-        # 1. 複製後台主題館的原始設定
+        # 1. 複製設定並動態結合金鑰
         theme_cfg = dict(st.secrets["connections"]["gsheets_theme"])
-        # 2. 如果有陣列，在記憶體裡動態接起來，完全不弄髒原始 secrets
         if "private_key_lines" in theme_cfg:
             theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
         
-        # 3. 強迫 connection 直接吃我們準備好的完美設定
+        # 2. 🔥 關鍵：把 Secrets 裡面的 type="service_account" 拔掉，避免跟後面的 GSheetsConnection 衝突
+        theme_cfg.pop("type", None)
+        
+        # 3. 完美連線
         conn = st.connection("gsheets_theme", type=GSheetsConnection, **theme_cfg)
     else:
-        # 1. 複製後台站前館的原始設定
+        # 1. 複製設定並動態結合金鑰
         station_cfg = dict(st.secrets["connections"]["gsheets_station"])
-        # 2. 在記憶體裡動態接起來
         if "private_key_lines" in station_cfg:
             station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
             
-        # 3. 強迫 connection 直接吃我們準備好的完美設定
+        # 2. 🔥 關鍵：把 Secrets 裡面的 type="service_account" 拔掉，避免跟後面的 GSheetsConnection 衝突
+        station_cfg.pop("type", None)
+        
+        # 3. 完美連線
         conn = st.connection("gsheets_station", type=GSheetsConnection, **station_cfg)
 
 except Exception as e:
