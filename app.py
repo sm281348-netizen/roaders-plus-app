@@ -284,41 +284,56 @@ def get_google_sheet_error_hint(exc):
         return "找不到指定的 worksheet。請確認 daily_data / daily_logs 的分頁名稱是否正確。"
     return ""
 
-# -- 資料庫連線初始化 (Google Sheets 版) --
-current_hotel = st.session_state.get("hotel_type", "站前館")
-
-# 💡 終極必勝解法：只把重組好的 service_account 核心憑證餵進去，徹底杜絕所有 unexpected keyword 衝突！
+# 💡 終極必勝解法：使用官方認證的 service_account_info 包裝方式，直接繞過所有引數衝突與唯讀機制！
 try:
     if current_hotel == "主題館":
-        # 1. 複製設定並動態結合金鑰
+        # 1. 複製後台主題館的原始 secrets
         theme_cfg = dict(st.secrets["connections"]["gsheets_theme"])
+        
+        # 2. 將多行陣列用系統換行符號結合
         if "private_key_lines" in theme_cfg:
             theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
-        
-        # 2. 🔥 關鍵：只留下 st.connection 認得的憑證核心欄位，把 project_id、spreadsheet 等雜質全部剔除
-        clean_cfg = {
+            
+        # 3. 打包成 Google 元件最喜歡的官方標準字典
+        sa_info = {
             "type": "service_account",
+            "project_id": theme_cfg.get("project_id"),
+            "private_key_id": theme_cfg.get("private_key_id"),
             "private_key": theme_cfg.get("private_key"),
-            "client_email": theme_cfg.get("client_email")
+            "client_email": theme_cfg.get("client_email"),
+            "client_id": theme_cfg.get("client_id"),
+            "auth_uri": theme_cfg.get("auth_uri"),
+            "token_uri": theme_cfg.get("token_uri"),
+            "auth_provider_x509_cert_url": theme_cfg.get("auth_provider_x509_cert_url"),
+            "client_x509_cert_url": theme_cfg.get("client_x509_cert_url")
         }
         
-        # 3. 完美連線
-        conn = st.connection("gsheets_theme", type=GSheetsConnection, **clean_cfg)
+        # 4. 安全送進連線 (網址的部分系統會自己去 st.secrets 找，完全不外掛餵它)
+        conn = st.connection("gsheets_theme", type=GSheetsConnection, service_account_info=sa_info)
     else:
-        # 1. 複製設定並動態結合金鑰
+        # 1. 複製後台站前館的原始 secrets
         station_cfg = dict(st.secrets["connections"]["gsheets_station"])
+        
+        # 2. 將多行陣列用系統換行符號結合
         if "private_key_lines" in station_cfg:
             station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
             
-        # 2. 🔥 關鍵：只留下 st.connection 認得的憑證核心欄位，把 project_id、spreadsheet 等雜質全部剔除
-        clean_cfg = {
+        # 3. 打包成 Google 元件最喜歡的官方標準字典
+        sa_info = {
             "type": "service_account",
+            "project_id": station_cfg.get("project_id"),
+            "private_key_id": station_cfg.get("private_key_id"),
             "private_key": station_cfg.get("private_key"),
-            "client_email": station_cfg.get("client_email")
+            "client_email": station_cfg.get("client_email"),
+            "client_id": station_cfg.get("client_id"),
+            "auth_uri": station_cfg.get("auth_uri"),
+            "token_uri": station_cfg.get("token_uri"),
+            "auth_provider_x509_cert_url": station_cfg.get("auth_provider_x509_cert_url"),
+            "client_x509_cert_url": station_cfg.get("client_x509_cert_url")
         }
         
-        # 3. 完美連線
-        conn = st.connection("gsheets_station", type=GSheetsConnection, **clean_cfg)
+        # 4. 安全送進連線
+        conn = st.connection("gsheets_station", type=GSheetsConnection, service_account_info=sa_info)
 
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
