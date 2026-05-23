@@ -257,22 +257,7 @@ if "authenticated" not in st.session_state:
 
 # -- 資料庫連線初始化 (Google Sheets 版) --
 # -- 資料庫連線動態初始化 (根據登入密碼自動認親) --
-current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 建立 Google Sheets 連線（捕捉例外以便顯示友善錯誤訊息）
-try:
-    if current_hotel == "主題館":
-        conn = st.connection("gsheets_theme", type=GSheetsConnection)
-    else:
-        conn = st.connection("gsheets_station", type=GSheetsConnection)
-except Exception as e:
-    hint = get_google_sheet_error_hint(e)
-    err_msg = f"無法建立 Google Sheets 連線: {e}"
-    if hint:
-        err_msg += f"\n建議: {hint}"
-    # 顯示錯誤並停止，避免後續程式因 conn 為未定義而崩潰
-    st.error(err_msg)
-    st.stop()
 
 def init_db():
     """
@@ -299,6 +284,22 @@ def get_google_sheet_error_hint(exc):
         return "找不到指定的 worksheet。請確認 daily_data / daily_logs 的分頁名稱是否正確。"
     return ""
 
+current_hotel = st.session_state.get("hotel_type", "站前館")
+
+# 建立 Google Sheets 連線（捕捉例外以便顯示友善錯誤訊息）
+try:
+    if current_hotel == "主題館":
+        conn = st.connection("gsheets_theme", type=GSheetsConnection)
+    else:
+        conn = st.connection("gsheets_station", type=GSheetsConnection)
+except Exception as e:
+    hint = get_google_sheet_error_hint(e)
+    err_msg = f"無法建立 Google Sheets 連線: {e}"
+    if hint:
+        err_msg += f"\n建議: {hint}"
+    # 顯示錯誤並停止，避免後續程式因 conn 為未定義而崩潰
+    st.error(err_msg)
+    st.stop()
 
 def read_google_sheet(worksheet, ttl="1m"):
     try:
