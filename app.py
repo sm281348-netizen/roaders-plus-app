@@ -261,9 +261,11 @@ if "authenticated" not in st.session_state:
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
 if current_hotel == "主題館":
-    conn = st.connection("gsheets_theme", type=GSheetsConnection)
+    # 這裡直接強制指定主題館的 Google Sheet 網址
+    conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet="https://docs.google.com/spreadsheets/d/1zigbiXDK362v8pvkpFxEkLmBR6R4pCNy_qg7CCmcF0I/edit?usp=sharing")
 else:
-    conn = st.connection("gsheets_station", type=GSheetsConnection)
+    # 這裡維持讀取 secrets.toml 預設的站前館網址
+    conn = st.connection("gsheets", type=GSheetsConnection)
 
 def init_db():
     """
