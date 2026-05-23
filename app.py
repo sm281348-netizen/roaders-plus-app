@@ -285,21 +285,30 @@ def get_google_sheet_error_hint(exc):
     return ""
 
 # -- 資料庫連線初始化 (Google Sheets 版) --
+# -- 資料庫連線初始化 (Google Sheets 版) --
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
-# 💡 終極防錯機制：將後台平鋪的陣列，動態用換行符號結合回標準 PEM 字串
-if "connections" in st.secrets:
-    for conn_name in ["gsheets_station", "gsheets_theme"]:
-        if conn_name in st.secrets["connections"] and "private_key_lines" in st.secrets["connections"][conn_name]:
-            lines = st.secrets["connections"][conn_name]["private_key_lines"]
-            st.secrets["connections"][conn_name]["private_key"] = "\n".join(lines)
-
-# 建立 Google Sheets 連線
+# 💡 終極解法：建立一個全新的記憶體字典，繞過 Streamlit Secrets 唯讀限制！
 try:
     if current_hotel == "主題館":
-        conn = st.connection("gsheets_theme", type=GSheetsConnection)
+        # 1. 複製後台主題館的原始設定
+        theme_cfg = dict(st.secrets["connections"]["gsheets_theme"])
+        # 2. 如果有陣列，在記憶體裡動態接起來，完全不弄髒原始 secrets
+        if "private_key_lines" in theme_cfg:
+            theme_cfg["private_key"] = "\n".join(theme_cfg["private_key_lines"])
+        
+        # 3. 強迫 connection 直接吃我們準備好的完美設定
+        conn = st.connection("gsheets_theme", type=GSheetsConnection, **theme_cfg)
     else:
-        conn = st.connection("gsheets_station", type=GSheetsConnection)
+        # 1. 複製後台站前館的原始設定
+        station_cfg = dict(st.secrets["connections"]["gsheets_station"])
+        # 2. 在記憶體裡動態接起來
+        if "private_key_lines" in station_cfg:
+            station_cfg["private_key"] = "\n".join(station_cfg["private_key_lines"])
+            
+        # 3. 強迫 connection 直接吃我們準備好的完美設定
+        conn = st.connection("gsheets_station", type=GSheetsConnection, **station_cfg)
+
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
     err_msg = f"無法建立 Google Sheets 連線: {e}"
