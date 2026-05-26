@@ -275,14 +275,21 @@ def get_google_sheet_error_hint(e):
     return None
 
 
-# 明確傳入 spreadsheet URL，避免 st-gsheets-connection 抓不到 Secrets 裡的 spreadsheet 參數
+# 試算表 URL（非敏感資訊，hardcode 作為 fallback 確保可靠）
+_STATION_SPREADSHEET = st.secrets.get(
+    "station_spreadsheet_url",
+    "https://docs.google.com/spreadsheets/d/190DAPuSoorfuQzLb1f8E-jAVCnmm6gXC7YrahxCL-VQ/edit"
+)
+_THEME_SPREADSHEET = st.secrets.get(
+    "theme_spreadsheet_url",
+    "https://docs.google.com/spreadsheets/d/1zigbiXDK362v8pvkpFxEkLmBR6R4pCNy_qg7CCmcF0I/edit"
+)
+
 try:
     if current_hotel == "主題館":
-        _spreadsheet_url = st.secrets["connections"]["gsheets_theme"]["spreadsheet"]
-        conn = st.connection("gsheets_theme", type=GSheetsConnection, spreadsheet=_spreadsheet_url)
+        conn = st.connection("gsheets_theme", type=GSheetsConnection, spreadsheet=_THEME_SPREADSHEET)
     else:
-        _spreadsheet_url = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        conn = st.connection("gsheets_station", type=GSheetsConnection, spreadsheet=_spreadsheet_url)
+        conn = st.connection("gsheets_station", type=GSheetsConnection, spreadsheet=_STATION_SPREADSHEET)
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
     err_msg = f"無法建立 Google Sheets 連線: {e}"
@@ -290,6 +297,7 @@ except Exception as e:
         err_msg += f"\n建議: {hint}"
     st.error(err_msg)
     st.stop()
+
 
 def read_google_sheet(worksheet, ttl="1m"):
     try:
