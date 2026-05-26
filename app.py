@@ -275,12 +275,14 @@ def get_google_sheet_error_hint(e):
     return None
 
 
-# 💡 改用標準連線，讓 Secrets 自動處理所有憑證，不再傳遞 service_account_info 參數
+# 明確傳入 spreadsheet URL，避免 st-gsheets-connection 抓不到 Secrets 裡的 spreadsheet 參數
 try:
     if current_hotel == "主題館":
-        conn = st.connection("gsheets_theme", type=GSheetsConnection)
+        _spreadsheet_url = st.secrets["connections"]["gsheets_theme"]["spreadsheet"]
+        conn = st.connection("gsheets_theme", type=GSheetsConnection, spreadsheet=_spreadsheet_url)
     else:
-        conn = st.connection("gsheets_station", type=GSheetsConnection)
+        _spreadsheet_url = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        conn = st.connection("gsheets_station", type=GSheetsConnection, spreadsheet=_spreadsheet_url)
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
     err_msg = f"無法建立 Google Sheets 連線: {e}"
