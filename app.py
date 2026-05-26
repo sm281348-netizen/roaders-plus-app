@@ -284,12 +284,28 @@ _THEME_SPREADSHEET = st.secrets.get(
     "theme_spreadsheet_url",
     "https://docs.google.com/spreadsheets/d/1zigbiXDK362v8pvkpFxEkLmBR6R4pCNy_qg7CCmcF0I/edit"
 )
+_ACTIVE_SPREADSHEET = _THEME_SPREADSHEET if current_hotel == "主題館" else _STATION_SPREADSHEET
+
+
+class _ConnWrapper:
+    """包住 GSheetsConnection，讓所有 read()/update() 自動帶 spreadsheet URL"""
+    def __init__(self, raw_conn, spreadsheet_url):
+        self._raw = raw_conn
+        self._url = spreadsheet_url
+
+    def read(self, worksheet=None, spreadsheet=None, **kwargs):
+        return self._raw.read(worksheet=worksheet, spreadsheet=spreadsheet or self._url, **kwargs)
+
+    def update(self, worksheet=None, data=None, spreadsheet=None, **kwargs):
+        return self._raw.update(worksheet=worksheet, data=data, spreadsheet=spreadsheet or self._url, **kwargs)
+
 
 try:
     if current_hotel == "主題館":
-        conn = st.connection("gsheets_theme", type=GSheetsConnection, spreadsheet=_THEME_SPREADSHEET)
+        _raw_conn = st.connection("gsheets_theme", type=GSheetsConnection)
     else:
-        conn = st.connection("gsheets_station", type=GSheetsConnection, spreadsheet=_STATION_SPREADSHEET)
+        _raw_conn = st.connection("gsheets_station", type=GSheetsConnection)
+    conn = _ConnWrapper(_raw_conn, _ACTIVE_SPREADSHEET)
 except Exception as e:
     hint = get_google_sheet_error_hint(e)
     err_msg = f"無法建立 Google Sheets 連線: {e}"
