@@ -255,6 +255,26 @@ if "authenticated" not in st.session_state:
             st.stop()
 # -----------------------------
 
+# 取得目前館別（必須在連線前定義）
+current_hotel = st.session_state.get("hotel_type", "站前館")
+
+
+def get_google_sheet_error_hint(e):
+    """根據 Google Sheets 連線錯誤類型回傳對應的中文建議"""
+    msg = str(e)
+    if "invalid_grant" in msg or "Token" in msg or "oauth" in msg.lower():
+        return "🔑 憑證已過期或無效，請至 Streamlit Cloud Secrets 重新設定 Google Service Account。"
+    if "quota" in msg.lower() or "rate limit" in msg.lower() or "429" in msg:
+        return "⏳ API 配額已超限，請稍後再試。"
+    if "403" in msg or "forbidden" in msg.lower() or "permission" in msg.lower():
+        return "🚫 沒有權限，請確認 Google Sheet 已與 Service Account Email 共用編輯權限。"
+    if "404" in msg or "not found" in msg.lower():
+        return "❓ 找不到試算表，請確認 Secrets 中的 spreadsheet URL 是否正確。"
+    if "Worksheet" in msg and "not found" in msg:
+        return "📋 找不到該分頁名稱，請確認分頁名稱拼寫是否正確。"
+    return None
+
+
 # 💡 改用標準連線，讓 Secrets 自動處理所有憑證，不再傳遞 service_account_info 參數
 try:
     if current_hotel == "主題館":
