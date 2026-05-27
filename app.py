@@ -2952,8 +2952,8 @@ with tab_p:
                     # 篩選 The Peak 與 Happy Hour 採購 (強力模糊匹配)
                     all_depts_list = dept_summary['部門'].astype(str).tolist()
 
-                    # HH 匹配：包含 'HH' 或 'HAPPY'
-                    hh_matched = [d for d in all_depts_list if any(
+                    # HH 匹配：包含 '4'、'HH' 或 'HAPPY'
+                    hh_matched = [d for d in all_depts_list if '4' in d or any(
                         k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                     # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門
                     peak_matched = [d for d in all_depts_list if (any(k in d.upper(
@@ -2965,6 +2965,17 @@ with tab_p:
                             f"🍷 歸類為 Happy Hour (HH) 之部門: `{hh_matched}`")
                         st.success(
                             f"🏰 歸類為 The Peak (餐廳) 之部門: `{peak_matched}`")
+
+                        st.divider()
+                        st.markdown("**🔍 本月採購原始明細 (DEBUG)**")
+                        _debug_cols = [c for c in [date_col, dept_col, total_col] + [
+                            c for c in df_month.columns if '品名' in c or 'Item' in c or '項目' in c
+                        ] if c in df_month.columns]
+                        st.caption(f"The Peak 原始列 (共 {len(df_month[df_month[dept_col].isin(peak_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(peak_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
+                        st.dataframe(df_month[df_month[dept_col].isin(peak_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
+                        st.caption(f"Happy Hour 原始列 (共 {len(df_month[df_month[dept_col].isin(hh_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(hh_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
+                        st.dataframe(df_month[df_month[dept_col].isin(hh_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
+                        st.caption(f"⚠️ 當月所有採購列共 {len(df_month)} 筆 | 整個 purchase data 表共 {len(df_purchase)} 筆")
 
                     df_peak_purchase = df_month[df_month[dept_col].isin(
                         peak_matched)].copy()
@@ -3105,7 +3116,7 @@ with tab_p:
                         if not df_t_purchase.empty and dept_col in df_t_purchase.columns:
                             t_all_depts = df_t_purchase[dept_col].astype(
                                 str).unique().tolist()
-                            t_hh = [d for d in t_all_depts if any(
+                            t_hh = [d for d in t_all_depts if '4' in d or any(
                                 k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                             t_peak_depts = [d for d in t_all_depts if any(
                                 k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
