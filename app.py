@@ -1940,7 +1940,7 @@ with tab_m:
             'avg_adr', scatter_df['adr_val'].mean())
         anchor_label = f'年純平 ADR ${int(adr_anchor):,}'
         anchor_color = '#000000'
-        occ_threshold = 75.0  # 高住房率門檻
+        occ_threshold = 85.0  # 高住房率門檻
 
         def classify_quadrant(row):
             hi_occ = row['occ_val'] >= occ_threshold
@@ -1991,11 +1991,11 @@ with tab_m:
             align='right', dx=-4, dy=-8, color=anchor_color, fontSize=11, fontWeight='bold'
         ).encode(x='x:Q', y='y:Q', text='text:N')
 
-        # 75% OCC 垂直輔助線
+        # 85% OCC 垂直輔助線
         occ_rule = alt.Chart(pd.DataFrame({'x': [occ_threshold]})).mark_rule(
             color='#7f8c8d', strokeDash=[6, 3], strokeWidth=1.5
         ).encode(x='x:Q')
-        occ_label = alt.Chart(pd.DataFrame({'x': [occ_threshold], 'y': [scatter_df['adr_val'].max() * 1.05], 'text': ['75% OCC 門檻']})).mark_text(
+        occ_label = alt.Chart(pd.DataFrame({'x': [occ_threshold], 'y': [scatter_df['adr_val'].max() * 1.05], 'text': ['85% OCC 門檻']})).mark_text(
             align='left', dx=4, color='#7f8c8d', fontSize=11, fontWeight='bold'
         ).encode(x='x:Q', y='y:Q', text='text:N')
 
