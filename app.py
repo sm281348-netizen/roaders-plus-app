@@ -315,9 +315,15 @@ except Exception as e:
     st.stop()
 
 
+@st.cache_data(ttl=60)
+def _get_cached_sheet(worksheet):
+    """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429"""
+    return conn.read(worksheet=worksheet, ttl=0)
+
+
 def read_google_sheet(worksheet, ttl="1m"):
     try:
-        return conn.read(worksheet=worksheet, ttl=ttl)
+        return _get_cached_sheet(worksheet)
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
         msg = f"Google Sheet 讀取失敗：{worksheet} ({e})"
@@ -370,8 +376,8 @@ def standardize_df_dates(df):
 
 def get_daily_data(d_str):
     try:
-        # 讀取完整表單 (快取設定為 1 分鐘)
-        df = read_google_sheet("daily_data", ttl="1m")
+        # 走集中快取層 (60s TTL)，避免大量 rerun 打爆 API
+        df = _get_cached_sheet("daily_data")
         if df is not None and not df.empty:
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             df = standardize_df_dates(df)
@@ -420,7 +426,7 @@ def save_daily_data(d_str, data_dict):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_data", data=df.fillna(""))
-        st.cache_data.clear()
+        _get_cached_sheet.clear()
         return True
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
@@ -461,7 +467,7 @@ def save_monthly_target(month_str, target):
             df = pd.concat([df, new_row], ignore_index=True)
 
         conn.update(worksheet="targets", data=df.fillna(""))
-        st.cache_data.clear()
+        _get_cached_sheet.clear()
         return True
     except:
         return False
@@ -481,9 +487,11 @@ def get_daily_log(d_str):
             msg += f"\n{hint}"
         st.error(msg)
     # Fallback to daily_data if not found in daily_logs (backward compatibility)
+    # 直接走快取，不額外打 API
     try:
-        df_old = read_google_sheet("daily_data", ttl="1m")
+        df_old = _get_cached_sheet("daily_data")
         if df_old is not None and not df_old.empty:
+            df_old = standardize_df_dates(df_old)
             res = df_old[df_old['date'] == d_str]
             if not res.empty and 'daily_work_log' in res.columns:
                 return str(res.iloc[0]['daily_work_log']).strip()
@@ -517,7 +525,7 @@ def save_daily_log(d_str, log_text):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_logs", data=df.fillna(""))
-        st.cache_data.clear()
+        _get_cached_sheet.clear()
         st.toast(f"✅ {d_str} 日誌已自動對齊 Google Sheet！")
         return True
     except Exception as e:
@@ -543,7 +551,7 @@ def get_month_delta(d, delta):
 
 def prepare_monthly_report(year, month):
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="10m")
+        df_all = _get_cached_sheet("daily_data")
         month_str = f"{year}-{month:02d}"
         df = df_all[df_all['date'].str.startswith(
             month_str, na=False)].sort_values('date')
@@ -586,7 +594,7 @@ def fetch_month_summary(year, month):
     m_end = f"{year}-{month:02d}-{last_day:02d}"
 
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="10m")
+        df_all = _get_cached_sheet("daily_data")
         if df_all is not None and not df_all.empty:
             df_all = standardize_df_dates(df_all)
             # 確保日期唯一，避免重複加總
@@ -644,7 +652,7 @@ def fetch_month_summary(year, month):
 @st.cache_data(ttl=3600)
 def fetch_yearly_metrics(year):
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="10m")
+        df_all = _get_cached_sheet("daily_data")
         if df_all is None or df_all.empty:
             return 0.0, 0.0
         df_all = standardize_df_dates(df_all)
@@ -899,7 +907,8 @@ st.sidebar.download_button(
 month_str = selected_date.strftime('%Y-%m')
 if f"monthly_report_{month_str}" not in st.session_state:
     if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
-        df_all = conn.read(worksheet="daily_data", ttl="0")
+        # 匯出按鈕走快取即可，不需要強制最新
+        df_all = _get_cached_sheet("daily_data")
         df_month = df_all[df_all['date'].str.startswith(
             month_str, na=False)].sort_values('date')
 
@@ -1026,7 +1035,7 @@ def parse_and_save_jinxu(file):
                            'adr': adr, 'revenue': rev, 'total_rooms': rooms})
 
         if updates:
-            df_existing = conn.read(worksheet="daily_data", ttl="0")
+            df_existing = _get_cached_sheet("daily_data").copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
             df_existing = standardize_df_dates(df_existing)
@@ -1044,7 +1053,7 @@ def parse_and_save_jinxu(file):
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
-            st.cache_data.clear()
+            _get_cached_sheet.clear()
             return len(updates)
 
         return 0
@@ -1149,7 +1158,7 @@ def parse_and_save_restaurant(file, current_year):
 
         if parsed_days:
             # 讀取現有庫內資料
-            df_existing = conn.read(worksheet="daily_data", ttl="0")
+            df_existing = _get_cached_sheet("daily_data").copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
 
@@ -1185,7 +1194,7 @@ def parse_and_save_restaurant(file, current_year):
 
             # 寫回資料庫
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
-            st.cache_data.clear()
+            _get_cached_sheet.clear()
 
         # 清除快取以確保重整後能看到新數據
         st.session_state['_last_loaded_date'] = None
@@ -1317,7 +1326,7 @@ with tab1:
     start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
     try:
-        df_all = conn.read(worksheet="daily_data", ttl="10m")
+        df_all = _get_cached_sheet("daily_data")
         if df_all is not None and not df_all.empty:
             df_all = standardize_df_dates(df_all)
             # 防止重複資料毀掉加總
