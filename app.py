@@ -939,6 +939,48 @@ else:
 # -- 報表解析與寫入資料庫 --
 
 
+def sync_from_eis_local(d_str):
+    """
+    從 Y:\\ 網路磁碟自動讀取站前館 EIS XLS，解析當日核心營運數據。
+    僅適用於站前館（current_hotel == '站前館'）。
+    回傳 dict {'revenue', 'total_rooms', 'adr', 'occ_rate'} 或 None（失敗時）。
+    """
+    import xlrd
+    import os
+
+    try:
+        year = d_str[:4]
+        month = d_str[5:7]
+        day = d_str[8:10]
+        folder = f"Y:\\櫃台\\金旭\\每日EIS\\{year}\\{year}{month}"
+        filename = f"EIS03{year}{month}{day}.XLS"
+        filepath = os.path.join(folder, filename)
+
+        if not os.path.exists(filepath):
+            return None, f"找不到 EIS 檔案：{filepath}\n請確認 Y:\\ 磁碟已連線，且當日報表已產生。"
+
+        wb = xlrd.open_workbook(filepath, encoding_override='cp950')
+        ws = wb.sheet_by_index(1)  # 工作表 1 = 住客來源
+
+        # 合計行在 Row08（欄位：col2=收入, col3=間數, col5=ADR, col6=OCC小數）
+        r = 8
+        revenue = int(ws.cell_value(r, 2))
+        total_rooms = int(ws.cell_value(r, 3))
+        adr = int(ws.cell_value(r, 5))
+        occ_raw = ws.cell_value(r, 6)
+        occ_rate = round(occ_raw * 100, 1) if occ_raw <= 1.0 else round(occ_raw, 1)
+
+        return {
+            'revenue': revenue,
+            'total_rooms': total_rooms,
+            'adr': adr,
+            'occ_rate': occ_rate,
+        }, None
+
+    except Exception as e:
+        return None, f"讀取 EIS 失敗：{e}"
+
+
 def parse_and_save_jinxu(file):
     try:
         if file.name.endswith('.csv'):
@@ -2664,6 +2706,53 @@ with tab6:
 
     # --- 金旭報表上傳 + 手動輸入 (從原「櫃台數據」移入) ---
     with st.expander("📁 金旭報表上傳 & 當日數字手動確認", expanded=False):
+
+        # === EIS 自動同步區塊（僅站前館） ===
+        if current_hotel == "站前館":
+            st.markdown("#### 🔄 從 EIS 自動同步當日數據")
+            st.caption(f"自動讀取 Y:\\\\櫃台\\金旭\\每日EIS 中 **{date_str}** 的報表，解析住房率、ADR、營收、間數。")
+            eis_col1, eis_col2 = st.columns([1, 3])
+            with eis_col1:
+                eis_sync_btn = st.button("🔄 從 EIS 同步", key="eis_sync_btn", type="primary")
+            with eis_col2:
+                if eis_sync_btn:
+                    with st.spinner("正在讀取 EIS 報表..."):
+                        eis_data, eis_err = sync_from_eis_local(date_str)
+                    if eis_err:
+                        st.error(f"❌ {eis_err}")
+                    elif eis_data:
+                        # 預覽解析結果
+                        st.success("✅ EIS 解析成功！以下為讀取結果：")
+                        p1, p2, p3, p4 = st.columns(4)
+                        p1.metric("住房率", f"{eis_data['occ_rate']:.1f}%")
+                        p2.metric("ADR", f"NT$ {eis_data['adr']:,}")
+                        p3.metric("總營收", f"NT$ {eis_data['revenue']:,}")
+                        p4.metric("出租間數", f"{eis_data['total_rooms']} 間")
+                        st.session_state['_eis_pending'] = eis_data
+                        st.session_state['_eis_pending_date'] = date_str
+
+            # 確認寫入按鈕
+            if st.session_state.get('_eis_pending') and st.session_state.get('_eis_pending_date') == date_str:
+                eis_data_pending = st.session_state['_eis_pending']
+                if st.button("💾 確認寫入 Google Sheet", key="eis_confirm_btn"):
+                    existing = get_daily_data(date_str)
+                    merged = {**existing, **eis_data_pending, 'date': date_str}
+                    if save_daily_data(date_str, merged):
+                        # 同步更新 session_state 讓欄位即時反映
+                        st.session_state['input_occ'] = eis_data_pending['occ_rate']
+                        st.session_state['input_adr'] = eis_data_pending['adr']
+                        st.session_state['input_rev'] = eis_data_pending['revenue']
+                        st.session_state['input_rooms'] = eis_data_pending['total_rooms']
+                        del st.session_state['_eis_pending']
+                        del st.session_state['_eis_pending_date']
+                        st.success(f"✅ {date_str} 的 EIS 數據已成功寫入 Google Sheet！")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ 寫入失敗，請重試。")
+            st.divider()
+
+        # === 手動上傳金旭報表（多日批次） ===
         jinxu_file = st.file_uploader(
             "上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
         if jinxu_file:
@@ -2688,6 +2777,7 @@ with tab6:
         rc5.number_input("櫃台請購費用", min_value=0, step=100,
                          key="input_counter_exp", on_change=on_input_change)
         st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
+
 
     if selected_week != "--- 關閉週預覽 ---":
         import calendar
