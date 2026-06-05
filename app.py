@@ -981,6 +981,57 @@ def sync_from_eis_local(d_str):
         return None, f"讀取 EIS 失敗：{e}"
 
 
+def batch_sync_from_eis_local(start_date, end_date):
+    """
+    批次掃描 start_date ~ end_date 範圍內所有存在的 EIS XLS 並解析。
+    回傳 (results, errors)：
+      results = [{'date': str, 'revenue': int, 'total_rooms': int, 'adr': int, 'occ_rate': float}, ...]
+      errors  = [{'date': str, 'reason': str}, ...]
+    """
+    import xlrd
+    import os
+    import datetime
+
+    results = []
+    errors = []
+
+    cur = start_date
+    while cur <= end_date:
+        d_str = str(cur)
+        year = d_str[:4]
+        month = d_str[5:7]
+        day = d_str[8:10]
+        folder = os.path.join("Y:\\", "櫃台", "金旭", "每日EIS", year, f"{year}{month}")
+        filename = f"EIS03{year}{month}{day}.XLS"
+        filepath = os.path.join(folder, filename)
+
+        if not os.path.exists(filepath):
+            errors.append({'date': d_str, 'reason': '檔案不存在（可能為休館日或尚未產生）'})
+        else:
+            try:
+                wb = xlrd.open_workbook(filepath, encoding_override='cp950')
+                ws = wb.sheet_by_index(1)
+                r = 8
+                revenue = int(ws.cell_value(r, 2))
+                total_rooms = int(ws.cell_value(r, 3))
+                adr = int(ws.cell_value(r, 5))
+                occ_raw = ws.cell_value(r, 6)
+                occ_rate = round(occ_raw * 100, 1) if occ_raw <= 1.0 else round(occ_raw, 1)
+                results.append({
+                    'date': d_str,
+                    'revenue': revenue,
+                    'total_rooms': total_rooms,
+                    'adr': adr,
+                    'occ_rate': occ_rate,
+                })
+            except Exception as e:
+                errors.append({'date': d_str, 'reason': f'解析失敗：{e}'})
+
+        cur += datetime.timedelta(days=1)
+
+    return results, errors
+
+
 def parse_and_save_jinxu(file):
     try:
         if file.name.endswith('.csv'):
@@ -2750,7 +2801,69 @@ with tab6:
                         st.rerun()
                     else:
                         st.error("❌ 寫入失敗，請重試。")
+
             st.divider()
+
+            # === 批次同步區塊 ===
+            st.markdown("#### 📅 批次同步（多日補登）")
+            st.caption("若有幾天未即時同步，可在此選擇日期範圍，一次補齊所有 EIS 資料。")
+            b_col1, b_col2 = st.columns(2)
+            batch_start = b_col1.date_input("起始日期", value=selected_date - datetime.timedelta(days=3), key="eis_batch_start")
+            batch_end = b_col2.date_input("結束日期", value=selected_date - datetime.timedelta(days=1), key="eis_batch_end")
+
+            if st.button("🔍 掃描可用的 EIS 報表", key="eis_batch_scan"):
+                if batch_start > batch_end:
+                    st.error("❌ 起始日期不能晚於結束日期！")
+                elif (batch_end - batch_start).days > 60:
+                    st.error("❌ 一次最多掃描 60 天。")
+                else:
+                    with st.spinner(f"正在掃描 {batch_start} ~ {batch_end} 的 EIS 報表..."):
+                        b_results, b_errors = batch_sync_from_eis_local(batch_start, batch_end)
+                    st.session_state['_eis_batch_results'] = b_results
+                    st.session_state['_eis_batch_errors'] = b_errors
+
+            # 顯示掃描結果
+            if st.session_state.get('_eis_batch_results') is not None:
+                b_results = st.session_state['_eis_batch_results']
+                b_errors = st.session_state.get('_eis_batch_errors', [])
+
+                if b_results:
+                    st.success(f"✅ 找到 **{len(b_results)}** 天的 EIS 報表可同步：")
+                    preview_df = pd.DataFrame(b_results)[['date', 'occ_rate', 'adr', 'revenue', 'total_rooms']]
+                    preview_df.columns = ['日期', '住房率(%)', 'ADR', '總營收', '出租間數']
+                    preview_df['住房率(%)'] = preview_df['住房率(%)'].apply(lambda x: f"{x:.1f}%")
+                    preview_df['ADR'] = preview_df['ADR'].apply(lambda x: f"NT$ {x:,}")
+                    preview_df['總營收'] = preview_df['總營收'].apply(lambda x: f"NT$ {x:,}")
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+                if b_errors:
+                    with st.expander(f"⚠️ {len(b_errors)} 天無法同步（點擊查看）"):
+                        for e in b_errors:
+                            st.caption(f"- {e['date']}：{e['reason']}")
+
+                if b_results:
+                    if st.button(f"💾 確認批次寫入 {len(b_results)} 天資料", key="eis_batch_confirm", type="primary"):
+                        success_count = 0
+                        fail_count = 0
+                        with st.spinner("批次寫入中..."):
+                            for row in b_results:
+                                existing = get_daily_data(row['date'])
+                                merged = {**existing, **{k: v for k, v in row.items() if k != 'date'}, 'date': row['date']}
+                                if save_daily_data(row['date'], merged):
+                                    success_count += 1
+                                else:
+                                    fail_count += 1
+                        del st.session_state['_eis_batch_results']
+                        if '_eis_batch_errors' in st.session_state:
+                            del st.session_state['_eis_batch_errors']
+                        if success_count:
+                            st.success(f"✅ 成功寫入 {success_count} 天！{'⚠️ ' + str(fail_count) + ' 天失敗。' if fail_count else ''}")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ 全部寫入失敗，請重試。")
+            st.divider()
+
 
         # === 手動上傳金旭報表（多日批次） ===
         jinxu_file = st.file_uploader(
