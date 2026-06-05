@@ -952,7 +952,7 @@ def sync_from_eis_local(d_str):
         year = d_str[:4]
         month = d_str[5:7]
         day = d_str[8:10]
-        folder = f"Y:\\櫃台\\金旭\\每日EIS\\{year}\\{year}{month}"
+        folder = os.path.join("Y:\\", "櫃台", "金旭", "每日EIS", year, f"{year}{month}")
         filename = f"EIS03{year}{month}{day}.XLS"
         filepath = os.path.join(folder, filename)
 
