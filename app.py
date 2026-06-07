@@ -705,8 +705,17 @@ def fetch_yearly_metrics(year):
 st.sidebar.caption(
     f"🚀 最後更新時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 st.sidebar.header("📅 日期選擇")
+_today = datetime.date.today()
 if 'sidebar_date' not in st.session_state:
-    st.session_state['sidebar_date'] = datetime.date.today()
+    # 首次建立 session：設定為今日，並記錄初始化日期
+    st.session_state['sidebar_date'] = _today
+    st.session_state['_session_init_date'] = str(_today)
+else:
+    # Session 已存在：若初始化日期不是今天，代表 session 是舊的，重設日期到今日
+    _init_date = st.session_state.get('_session_init_date', '')
+    if _init_date != str(_today):
+        st.session_state['sidebar_date'] = _today
+        st.session_state['_session_init_date'] = str(_today)
 
 # 定義欄位映射 (必須在儲存與載入函數之前)
 field_mapping = {
@@ -957,7 +966,14 @@ def sync_from_eis_local(d_str):
         filepath = os.path.join(folder, filename)
 
         if not os.path.exists(filepath):
-            return None, f"找不到 EIS 檔案：{filepath}\n請確認 Y:\\ 磁碟已連線，且當日報表已產生。"
+            import datetime as _dt
+            _req_date = _dt.date(int(year), int(month), int(day))
+            _today_date = _dt.date.today()
+            if _req_date >= _today_date:
+                _hint = f"\n⚠️ 提示：{_req_date.strftime('%Y/%m/%d')} 的 EIS 報表通常在當日深夜或隔日凌晨 3 點後才會產生，請稍後再試。"
+            else:
+                _hint = f"\n⚠️ 提示：{_req_date.strftime('%Y/%m/%d')} 的 EIS 檔案可能未產生（例如休館日），請確認。"
+            return None, f"找不到 EIS 檔案：{filepath}\n請確認 Y:\\ 磁碟已連線，且當日報表已產生。{_hint}"
 
         wb = xlrd.open_workbook(filepath, encoding_override='cp950')
         ws = wb.sheet_by_index(1)  # 工作表 1 = 住客來源
