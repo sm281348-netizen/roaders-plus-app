@@ -232,10 +232,11 @@ st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="w
 
 password_station = st.secrets.get("admin_password", "roaders123")
 password_theme = st.secrets.get("theme_password", "theme456")
+password_purchase = st.secrets.get("purchase_password", "thepeak37")
 
 if "authenticated" not in st.session_state:
     st.markdown("<h2 style='text-align: center;'>🔒 Welcome to Hotel Master</h2>", unsafe_allow_html=True)
-    
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         pwd = st.text_input("管理員通行碼", type="password")
@@ -247,6 +248,10 @@ if "authenticated" not in st.session_state:
             elif pwd == password_theme:
                 st.session_state["authenticated"] = True
                 st.session_state["hotel_type"] = "主題館"
+                st.rerun()
+            elif pwd == password_purchase:
+                st.session_state["authenticated"] = True
+                st.session_state["hotel_type"] = "採購"
                 st.rerun()
             else:
                 st.error("❌ 密碼錯誤，請重新輸入")
@@ -1323,9 +1328,16 @@ def parse_and_save_restaurant(file, current_year):
 current_hotel = st.session_state.get("hotel_type", "站前館")
 
 st.title(f"Hotel Master - {current_hotel}")
-# 主畫面
-tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7 = st.tabs(
-    ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
+
+# 主畫面：依角色決定顯示哪些分頁
+if current_hotel == "採購":
+    # 採購模式：只顯示採購分析與菜價分析
+    tab_p, tab_s = st.tabs(["💰 採購分析", "🛒 菜價分析"])
+    # 其餘 tab 用空容器佔位，確保後面的 with tab_x 語法不出錯
+    tab1 = tab_m = tab6 = tab3 = tab4 = tab5 = tab7 = st.container()
+else:
+    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7 = st.tabs(
+        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
 
 with tab1:
