@@ -121,6 +121,45 @@ def get_market_index_df(sp_df):
     return pd.DataFrame(index_data)
 
 
+def calc_key_metrics(m_data):
+    df = m_data.get('df', pd.DataFrame())
+    res = {'high_adr_days': 0, 'top20_rev_avg': 0, 'bot20_rev_avg': 0,
+           'dual_match_days': 0, 'month_label': m_data.get('month_label', '')}
+    if df is None or df.empty:
+        return res
+
+    avg_adr = m_data.get('avg_adr', 0)
+
+    # 確保數值正確
+    df['adr_val'] = pd.to_numeric(df['adr'], errors='coerce').fillna(0)
+    df['rev_val'] = pd.to_numeric(df['revenue'], errors='coerce').fillna(0)
+
+    # 高於當月平均 ADR 天數
+    df['is_high_adr'] = df['adr_val'] > avg_adr
+    res['high_adr_days'] = int(df['is_high_adr'].sum())
+
+    # 八二法則 (前 20% 與後 20%)
+    n_days = len(df)
+    n_top = max(1, int(round(n_days * 0.2)))
+
+    df_sorted = df.sort_values('rev_val', ascending=False)
+    top20_df = df_sorted.head(n_top)
+    bot20_df = df_sorted.tail(n_top)
+
+    res['top20_rev_avg'] = top20_df['rev_val'].mean(
+    ) if not top20_df.empty else 0
+    res['bot20_rev_avg'] = bot20_df['rev_val'].mean(
+    ) if not bot20_df.empty else 0
+
+    # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
+    dual_match_df = top20_df[top20_df['is_high_adr']]
+    res['dual_match_days'] = int(len(dual_match_df))
+    res['dual_match_dates'] = dual_match_df['date'].sort_values(
+    ).tolist() if not dual_match_df.empty else []
+
+    return res
+
+
 @st.cache_data(ttl=86400 * 30)
 def translate_to_zh(text):
     if not text:
@@ -1961,43 +2000,7 @@ if current_hotel != "採購":
         # --- B. 關鍵表現數據分析 ---
         st.markdown("#### 🌟 關鍵表現數據分析")
 
-        def calc_key_metrics(m_data):
-            df = m_data.get('df', pd.DataFrame())
-            res = {'high_adr_days': 0, 'top20_rev_avg': 0, 'bot20_rev_avg': 0,
-                   'dual_match_days': 0, 'month_label': m_data.get('month_label', '')}
-            if df is None or df.empty:
-                return res
 
-            avg_adr = m_data.get('avg_adr', 0)
-
-            # 確保數值正確
-            df['adr_val'] = pd.to_numeric(df['adr'], errors='coerce').fillna(0)
-            df['rev_val'] = pd.to_numeric(df['revenue'], errors='coerce').fillna(0)
-
-            # 高於當月平均 ADR 天數
-            df['is_high_adr'] = df['adr_val'] > avg_adr
-            res['high_adr_days'] = int(df['is_high_adr'].sum())
-
-            # 八二法則 (前 20% 與後 20%)
-            n_days = len(df)
-            n_top = max(1, int(round(n_days * 0.2)))
-
-            df_sorted = df.sort_values('rev_val', ascending=False)
-            top20_df = df_sorted.head(n_top)
-            bot20_df = df_sorted.tail(n_top)
-
-            res['top20_rev_avg'] = top20_df['rev_val'].mean(
-            ) if not top20_df.empty else 0
-            res['bot20_rev_avg'] = bot20_df['rev_val'].mean(
-            ) if not bot20_df.empty else 0
-
-            # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
-            dual_match_df = top20_df[top20_df['is_high_adr']]
-            res['dual_match_days'] = int(len(dual_match_df))
-            res['dual_match_dates'] = dual_match_df['date'].sort_values(
-            ).tolist() if not dual_match_df.empty else []
-
-            return res
 
         curr_metrics = calc_key_metrics(m_curr)
         prev_metrics = calc_key_metrics(m_prev)
