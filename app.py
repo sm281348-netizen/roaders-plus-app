@@ -832,17 +832,46 @@ def sync_st_to_db(target_d_str):
 def prev_day():
     st.session_state['sidebar_date'] -= datetime.timedelta(days=1)
 
-
 def next_day():
     st.session_state['sidebar_date'] += datetime.timedelta(days=1)
 
+def prev_month():
+    import calendar
+    curr = st.session_state['sidebar_date']
+    first_day = curr.replace(day=1)
+    prev_m_last = first_day - datetime.timedelta(days=1)
+    st.session_state['sidebar_date'] = prev_m_last
+
+def next_month():
+    import calendar
+    curr = st.session_state['sidebar_date']
+    if curr.month == 12:
+        next_m_first = curr.replace(year=curr.year+1, month=1, day=1)
+    else:
+        next_m_first = curr.replace(month=curr.month+1, day=1)
+    _, last_day = calendar.monthrange(next_m_first.year, next_m_first.month)
+    st.session_state['sidebar_date'] = next_m_first.replace(day=last_day)
 
 col1, col2 = st.sidebar.columns(2)
-col1.button("⬅️ 前一天", on_click=prev_day)
-col2.button("後一天 ➡️", on_click=next_day)
 
-selected_date = st.sidebar.date_input(
-    "選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
+if current_hotel == "採購":
+    col1.button("⬅️ 前一月", on_click=prev_month)
+    col2.button("下一月 ➡️", on_click=next_month)
+    selected_date = st.sidebar.date_input(
+        "選擇月份 (點選該月任一天，將自動跳轉至月底)", value=st.session_state['sidebar_date'], key='sidebar_date')
+    
+    # 強制將日期設定為該月最後一天
+    import calendar
+    _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
+    if selected_date.day != last_day:
+        st.session_state['sidebar_date'] = selected_date.replace(day=last_day)
+        st.rerun()
+else:
+    col1.button("⬅️ 前一天", on_click=prev_day)
+    col2.button("後一天 ➡️", on_click=next_day)
+    selected_date = st.sidebar.date_input(
+        "選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
+
 date_str = str(selected_date)
 
 # 追蹤當前正在編輯的日期
@@ -857,10 +886,13 @@ if st.session_state['_actual_current_date'] != date_str:
     st.session_state['_data_is_loaded'] = False
 
 # --- 新增：週次預覽選擇器 ---
-weekly_options = ["--- 關閉週預覽 ---",
-                  "第1週 (1-7號)", "第2週 (8-14號)", "第3週 (15-21號)", "第4週 (22-28號)", "第5週 (29號起)"]
-selected_week = st.sidebar.selectbox(
-    "快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
+if current_hotel != "採購":
+    weekly_options = ["--- 關閉週預覽 ---",
+                      "第1週 (1-7號)", "第2週 (8-14號)", "第3週 (15-21號)", "第4週 (22-28號)", "第5週 (29號起)"]
+    selected_week = st.sidebar.selectbox(
+        "快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
+else:
+    selected_week = "--- 關閉週預覽 ---"
 # --------------------------------------------------
 
 
@@ -894,98 +926,99 @@ def on_input_change():
         sync_st_to_db(target_d)
 
 
-st.sidebar.divider()
-st.sidebar.subheader("📤 數據匯出與備份")
+if current_hotel != "採購":
+    st.sidebar.divider()
+    st.sidebar.subheader("📤 數據匯出與備份")
 
 
-def generate_report_text(d_str):
-    data = get_daily_data(d_str)
-    if not data:
-        return f"--- {d_str} 無紀錄 ---"
+    def generate_report_text(d_str):
+        data = get_daily_data(d_str)
+        if not data:
+            return f"--- {d_str} 無紀錄 ---"
 
-    report = []
-    report.append(f"========================================")
-    report.append(f"🏨 路徒行旅 Plus 站前館 - 營運日誌 ({d_str})")
-    report.append(f"========================================\n")
+        report = []
+        report.append(f"========================================")
+        report.append(f"🏨 路徒行旅 Plus {current_hotel} - 營運日誌 ({d_str})")
+        report.append(f"========================================\n")
 
-    def safe_int_val(v):
-        try:
-            if pd.isna(v) or v is None:
+        def safe_int_val(v):
+            try:
+                if pd.isna(v) or v is None:
+                    return 0
+                return int(float(v))
+            except:
                 return 0
-            return int(float(v))
-        except:
-            return 0
 
-    report.append(f"【📊 營運指標】")
-    report.append(f"- 住房率: {data.get('occ_rate', 0)}%")
-    report.append(f"- ADR: NT$ {safe_int_val(data.get('adr', 0)):,}")
-    report.append(f"- 總營收: NT$ {safe_int_val(data.get('revenue', 0)):,}")
-    report.append(f"- 總住房數: {safe_int_val(data.get('total_rooms', 0))} 間\n")
+        report.append(f"【📊 營運指標】")
+        report.append(f"- 住房率: {data.get('occ_rate', 0)}%")
+        report.append(f"- ADR: NT$ {safe_int_val(data.get('adr', 0)):,}")
+        report.append(f"- 總營收: NT$ {safe_int_val(data.get('revenue', 0)):,}")
+        report.append(f"- 總住房數: {safe_int_val(data.get('total_rooms', 0))} 間\n")
 
-    report.append(f"【💼 櫃台與房務】")
-    report.append(f"- 負評客訴: {data.get('counter_complaints', '無')}")
-    report.append(f"- 櫃台請購: {safe_int_val(data.get('counter_expense', 0))} 元")
-    report.append(f"- 總清消房數: {safe_int_val(data.get('cleaned_rooms', 0))} 間")
-    report.append(f"- 房務請購: {safe_int_val(data.get('hk_expense', 0))} 元\n")
+        report.append(f"【💼 櫃台與房務】")
+        report.append(f"- 負評客訴: {data.get('counter_complaints', '無')}")
+        report.append(f"- 櫃台請購: {safe_int_val(data.get('counter_expense', 0))} 元")
+        report.append(f"- 總清消房數: {safe_int_val(data.get('cleaned_rooms', 0))} 間")
+        report.append(f"- 房務請購: {safe_int_val(data.get('hk_expense', 0))} 元\n")
 
-    report.append(f"【🍽️ 餐廳數據 (兩館實際來客)】")
-    report.append(f"- 早餐總計: {safe_int_val(data.get('bf_total_act', 0))} 人")
-    report.append(f"- 下午茶總計: {safe_int_val(data.get('af_total_act', 0))} 人")
-    report.append(
-        f"- Happy Hour: {safe_int_val(data.get('rest_hh_guests', 0))} 人")
-    report.append(
-        f"- 餐廳營收(全月): {safe_int_val(data.get('rest_month_rev', 0))} 元\n")
+        report.append(f"【🍽️ 餐廳數據 (兩館實際來客)】")
+        report.append(f"- 早餐總計: {safe_int_val(data.get('bf_total_act', 0))} 人")
+        report.append(f"- 下午茶總計: {safe_int_val(data.get('af_total_act', 0))} 人")
+        report.append(
+            f"- Happy Hour: {safe_int_val(data.get('rest_hh_guests', 0))} 人")
+        report.append(
+            f"- 餐廳營收(全月): {safe_int_val(data.get('rest_month_rev', 0))} 元\n")
 
-    report.append(f"【🔧 工務紀錄】")
-    report.append(f"- 待修房數: {data.get('maint_repair_rooms', 0)} 間")
-    report.append(f"- 修繕細節: {data.get('maint_records', '無')}\n")
+        report.append(f"【🔧 工務紀錄】")
+        report.append(f"- 待修房數: {data.get('maint_repair_rooms', 0)} 間")
+        report.append(f"- 修繕細節: {data.get('maint_records', '無')}\n")
 
-    report.append(f"【📝 每日營運紀錄細節】")
-    report.append(f"{get_daily_log(d_str) or '無紀錄内容'}")
-    report.append(f"\n" + "-"*40 + "\n")
+        report.append(f"【📝 每日營運紀錄細節】")
+        report.append(f"{get_daily_log(d_str) or '無紀錄内容'}")
+        report.append(f"\n" + "-"*40 + "\n")
 
-    return "\n".join(report)
+        return "\n".join(report)
 
 
-# 1. 單日匯出
-single_report = generate_report_text(date_str)
-st.sidebar.download_button(
-    label="📄 當日營運紀錄匯出",
-    data=single_report,
-    file_name=f"Roaders_Plus_Daily_{date_str}.txt",
-    mime="text/plain",
-    use_container_width=True
-)
-
-# 2. 全月匯出
-month_str = selected_date.strftime('%Y-%m')
-if f"monthly_report_{month_str}" not in st.session_state:
-    if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
-        # 匯出按鈕走快取即可，不需要強制最新
-        df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
-        df_month = df_all[df_all['date'].str.startswith(
-            month_str, na=False)].sort_values('date')
-
-        if df_month.empty:
-            st.sidebar.warning(f"⚠️ {month_str} 尚無任何資料。")
-        else:
-            with st.sidebar.status("正在產生報表...", expanded=False):
-                full_month_text = f"【路徒行旅 Plus 站前館 {month_str} 全月營運紀錄匯總】\n\n"
-                for d in df_all['date']:
-                    full_month_text += generate_report_text(d) + "\n\n"
-                st.session_state[f"monthly_report_{month_str}"] = full_month_text
-            st.rerun()
-else:
+    # 1. 單日匯出
+    single_report = generate_report_text(date_str)
     st.sidebar.download_button(
-        label=f"⬇️ 下載 {month_str} 紀錄 (.txt)",
-        data=st.session_state[f"monthly_report_{month_str}"],
-        file_name=f"Roaders_Plus_Monthly_{month_str}.txt",
+        label="📄 當日營運紀錄匯出",
+        data=single_report,
+        file_name=f"Roaders_Plus_Daily_{date_str}.txt",
         mime="text/plain",
-        use_container_width=True,
+        use_container_width=True
     )
-    if st.sidebar.button("🔄 重新產生", key="clear_monthly"):
-        del st.session_state[f"monthly_report_{month_str}"]
-        st.rerun()
+
+    # 2. 全月匯出
+    month_str = selected_date.strftime('%Y-%m')
+    if f"monthly_report_{month_str}" not in st.session_state:
+        if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
+            # 匯出按鈕走快取即可，不需要強制最新
+            df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+            df_month = df_all[df_all['date'].str.startswith(
+                month_str, na=False)].sort_values('date')
+
+            if df_month.empty:
+                st.sidebar.warning(f"⚠️ {month_str} 尚無任何資料。")
+            else:
+                with st.sidebar.status("正在產生報表...", expanded=False):
+                    full_month_text = f"【路徒行旅 Plus {current_hotel} {month_str} 全月營運紀錄匯總】\n\n"
+                    for d in df_all['date']:
+                        full_month_text += generate_report_text(d) + "\n\n"
+                    st.session_state[f"monthly_report_{month_str}"] = full_month_text
+                st.rerun()
+    else:
+        st.sidebar.download_button(
+            label=f"⬇️ 下載 {month_str} 紀錄 (.txt)",
+            data=st.session_state[f"monthly_report_{month_str}"],
+            file_name=f"Roaders_Plus_Monthly_{month_str}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+        if st.sidebar.button("🔄 重新產生", key="clear_monthly"):
+            del st.session_state[f"monthly_report_{month_str}"]
+            st.rerun()
 
 # 側邊欄底部移除多餘區塊
 
