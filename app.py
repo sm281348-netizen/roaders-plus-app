@@ -857,20 +857,30 @@ col1, col2 = st.sidebar.columns(2)
 if current_hotel == "採購":
     col1.button("⬅️ 前一月", on_click=prev_month)
     col2.button("下一月 ➡️", on_click=next_month)
-    selected_date = st.sidebar.date_input(
-        "選擇月份 (點選該月任一天，將自動跳轉至月底)", value=st.session_state['sidebar_date'], key='sidebar_date')
+    # 不使用 key，避免 StreamlitAPIException，改由手動更新 session_state
+    selected_raw = st.sidebar.date_input(
+        "選擇月份 (點選該月任一天，將自動跳轉至月底)", value=st.session_state['sidebar_date'])
     
     # 強制將日期設定為該月最後一天
     import calendar
-    _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
-    if selected_date.day != last_day:
-        st.session_state['sidebar_date'] = selected_date.replace(day=last_day)
+    _, last_day = calendar.monthrange(selected_raw.year, selected_raw.month)
+    target_date = selected_raw.replace(day=last_day)
+    
+    if st.session_state['sidebar_date'] != target_date:
+        st.session_state['sidebar_date'] = target_date
         st.rerun()
+    selected_date = target_date
 else:
     col1.button("⬅️ 前一天", on_click=prev_day)
     col2.button("後一天 ➡️", on_click=next_day)
-    selected_date = st.sidebar.date_input(
-        "選擇日期", value=st.session_state['sidebar_date'], key='sidebar_date')
+    # 同樣不使用 key，手動管理 state，確保邏輯一致
+    selected_raw = st.sidebar.date_input(
+        "選擇日期", value=st.session_state['sidebar_date'])
+    
+    if st.session_state['sidebar_date'] != selected_raw:
+        st.session_state['sidebar_date'] = selected_raw
+        st.rerun()
+    selected_date = selected_raw
 
 date_str = str(selected_date)
 
