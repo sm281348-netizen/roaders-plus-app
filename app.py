@@ -1340,1631 +1340,1637 @@ else:
         ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況"])
 
 
-with tab1:
-    st.header("📊 營運總覽")
-
-    # 注入專屬 CSS 與 Card 產生器
-    st.markdown("""
-    <style>
-    .metric-card {
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 18px 20px;
-        margin: 8px 0 16px 0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.06);
-        border-left: 6px solid #4CAF50;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.12);
-    }
-    .metric-title {
-        color: #7f8c8d;
-        font-size: 0.95rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .metric-value {
-        color: #2c3e50;
-        font-size: 1.8rem;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-    }
-    .card-theme-blue { border-left-color: #3498db; }
-    .card-theme-orange { border-left-color: #f39c12; }
-    .card-theme-purple { border-left-color: #9b59b6; }
-    .card-theme-red { border-left-color: #e74c3c; }
-    .card-theme-green { border-left-color: #2ecc71; }
-    .card-bg-dark {
-        background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
-    }
-    .card-bg-dark .metric-title { color: #d8e2fb; }
-    .card-bg-dark .metric-value { color: #ffffff; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
-        return f'''
-        <div class="metric-card {color_class} {bg_class}">
-            <div class="metric-title">{icon} {title}</div>
-            <div class="metric-value">{value}</div>
-        </div>
-        '''
-
-    occ_val = st.session_state.get('input_occ', 0.0)
-    if occ_val >= 90.0:
-        st.success("🎉 **滿房慶祝！今日住房率達到 90% 以上，全館辛苦了！** 🎉")
-
-    # -- 今日看板 --
-    st.subheader(f"今日全館營運大看板 ({date_str})")
-    adr_val = st.session_state.get('input_adr', 0)
-    rev_val = st.session_state.get('input_rev', 0)
-
-    def safe_format_int(v):
-        try:
-            if pd.isna(v) or v is None:
-                return 0
-            return int(float(v))
-        except:
-            return 0
-
-    kpi_html = f"""
-    <style>
-    .kpi-container {{ display: flex; justify-content: space-around; flex-wrap: wrap; margin-bottom: 30px; }}
-    .kpi-circle {{ width: 170px; height: 170px; border-radius: 50%; background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 8px 15px rgba(0,0,0,0.15); border: 4px solid #4CAF50; margin: 15px; }}
-    .kpi-title {{ font-size: 16px; margin-bottom: 8px; color: #d8e2fb; }}
-    .kpi-value {{ font-size: 26px; font-weight: bold; }}
-    </style>
-    <div class="kpi-container">
-        <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
-        <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
-        <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
-    </div>
-    """
-    st.markdown(kpi_html, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.success("🧹 **房務狀況**")
-        total_occ = st.session_state.get('input_rooms', 0)
-        cleaned = st.session_state.get('input_cleaned', 0)
-        st.metric("目標清消總數 (來自金旭)", f"{total_occ} 間")
-        st.caption(f"手動紀錄清消: {cleaned} 間 (差額: {cleaned - total_occ})")
-    with col2:
-        st.warning("🔧 **工務狀況**")
-        repairs = st.session_state.get('input_repair', 0)
-        st.metric("今日待修房數", f"{repairs} 間", delta="🔴 需處理" if repairs >
-                  0 else "🟢 正常", delta_color="off")
-    with col3:
-        st.error("🍽️ **餐廳狀況**")
-        bf_total_act = st.session_state.get('input_bf_total_act', 0)
-        st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
-
-    st.divider()
-
-    # -- 月度累計模式 (MTD Analysis) --
-    st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
-    start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
-
-    try:
-        df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
-        if df_all is not None and not df_all.empty:
-            df_all = standardize_df_dates(df_all)
-            # 防止重複資料毀掉加總
-            df_all = df_all.drop_duplicates(subset='date', keep='last')
-            df_mtd = df_all[(df_all['date'] >= start_of_month)
-                            & (df_all['date'] <= date_str)].copy()
-        else:
-            df_mtd = pd.DataFrame()
-    except Exception as e:
-        st.sidebar.error(f"⚠️ 讀取數據時發生錯誤: {e}")
-        df_mtd = pd.DataFrame()
-
-    if not df_mtd.empty:
-        # 先將所有可能計算的欄位轉為數值，避免 Google Sheets 帶來的字串問題
-        for col in ['bf_theme_act', 'bf_zq_act', 'af_theme_act', 'af_zq_act',
-                    'bf_total_act', 'af_total_act', 'bf_total_est', 'af_total_est',
-                    'rest_month_rev', 'rest_avg_spent']:
-            if col in df_mtd.columns:
-                df_mtd[col] = pd.to_numeric(df_mtd[col].astype(
-                    str).str.replace(',', ''), errors='coerce').fillna(0)
-
-        mtd_rooms = 0.0
-        mtd_rev = 0.0
-        total_sellable = 0.0
-
-        for _, r in df_mtd.iterrows():
-            # 強化字串清理防護
-            def clean_num(val):
-                if pd.isna(val):
-                    return 0.0
-                try:
-                    return float(str(val).replace(',', '').replace('%', ''))
-                except:
-                    return 0.0
-
-            o = clean_num(r.get('occ_rate'))
-            adr = clean_num(r.get('adr'))
-            rev = clean_num(r.get('revenue'))
-            rm = clean_num(r.get('total_rooms'))
-
-            # 容錯處理：若 Excel 某天缺營收但有 ADR 和房數，或缺房數但有營收，做數學回推
-            if rev == 0 and adr > 0 and rm > 0:
-                rev = adr * rm
-            if rm == 0 and rev > 0 and adr > 0:
-                rm = rev / adr
-
-            # 只加總有實際營業數據的日期（排除未來的 0）
-            if rm > 0 or rev > 0:
-                mtd_rooms += rm
-                mtd_rev += rev
-                if o > 0:
-                    total_sellable += (rm / (o / 100.0))
-
-        mtd_occ = (mtd_rooms / total_sellable *
-                   100.0) if total_sellable > 0 else 0.0
-        mtd_adr = (mtd_rev / mtd_rooms) if mtd_rooms > 0 else 0.0
-
-        # 獲取餐廳資料 (正確結算，不重複加總)
-        rest_mrev = 0
-        if not df_mtd.empty and 'rest_month_rev' in df_mtd.columns:
-            valid_rest = df_mtd[df_mtd['rest_month_rev'] > 0]
-            if not valid_rest.empty:
-                rest_mrev = valid_rest.iloc[-1]['rest_month_rev']
-
-        grand_total_rev = mtd_rev + rest_mrev
-
-        # 顯示四大指標
-        st.write("##### 🏨 房務營運 MTD")
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(make_card(
-            "MTD 累計住房率", f"{mtd_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
-        c2.markdown(make_card("MTD 累計 ADR", f"NT$ {int(mtd_adr):,}",
-                    "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
-        c3.markdown(make_card("MTD 房務累計營收", f"NT$ {int(mtd_rev):,}",
-                    "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
-
-        st.write("##### 🏁 全館合併營收 (MTD)")
-        g1, g2 = st.columns([1, 2])
-        g1.markdown(make_card("餐廳結算營收", f"NT$ {int(rest_mrev):,}",
-                    "card-theme-purple", "card-bg-dark", "🍽️"), unsafe_allow_html=True)
-        g2.markdown(make_card("✨ 全館 MTD 總營收", f"NT$ {int(grand_total_rev):,}",
-                    "card-theme-red", "card-bg-dark", "🚀"), unsafe_allow_html=True)
-
-        st.markdown(
-            "<br><hr style='margin: 5px 0; border: 1px dashed #ddd;'>", unsafe_allow_html=True)
-        st.write("##### 🍽️ 餐廳營運累計 (MTD)")
-
-        # MTD 餐廳計算
-        mtd_bf_theme = df_mtd['bf_theme_act'].sum(
-        ) if 'bf_theme_act' in df_mtd.columns else 0
-        mtd_bf_zq = df_mtd['bf_zq_act'].sum(
-        ) if 'bf_zq_act' in df_mtd.columns else 0
-        mtd_af_theme = df_mtd['af_theme_act'].sum(
-        ) if 'af_theme_act' in df_mtd.columns else 0
-        mtd_af_zq = df_mtd['af_zq_act'].sum(
-        ) if 'af_zq_act' in df_mtd.columns else 0
-
-        # 本月整體總和
-        mtd_total_bf_act = df_mtd['bf_total_act'].sum(
-        ) if 'bf_total_act' in df_mtd.columns else 0
-        mtd_total_af_act = df_mtd['af_total_act'].sum(
-        ) if 'af_total_act' in df_mtd.columns else 0
-
-        # 為了更精確，僅採計「有預估客數」或「有實際客數」的日子為工作日（這會完美略過月底那些全是 0 的未來天數）
-        if 'bf_total_act' in df_mtd.columns:
-            active_bf_days = len(
-                df_mtd[(df_mtd['bf_total_est'] > 0) | (df_mtd['bf_total_act'] > 0)])
-        else:
-            active_bf_days = 0
-
-        if 'af_total_act' in df_mtd.columns:
-            active_af_days = len(
-                df_mtd[(df_mtd['af_total_est'] > 0) | (df_mtd['af_total_act'] > 0)])
-        else:
-            active_af_days = 0
-
-        total_bf_days = active_bf_days if active_bf_days > 0 else 1
-        total_af_days = active_af_days if active_af_days > 0 else 1
-
-        mtd_avg_bf = mtd_total_bf_act / total_bf_days
-        mtd_avg_af = mtd_total_af_act / total_af_days
-        mtd_avg_total = mtd_avg_bf + mtd_avg_af
-
-        # 獲取餐廳月度總結
-        # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
-        rest_month_rev = rest_mrev  # 前面已計算過
-        rest_avg_spent = 0
-        if not df_mtd.empty and 'rest_avg_spent' in df_mtd.columns:
-            valid_aspent = df_mtd[df_mtd['rest_avg_spent'] > 0]
-            if not valid_aspent.empty:
-                rest_avg_spent = valid_aspent.iloc[-1]['rest_avg_spent']
-
-        st.markdown(
-            "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
-        sz1, sz2, sz3 = st.columns(3)
-        sz1.markdown(make_card(
-            "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-        sz2.markdown(make_card(
-            "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-        sz3.markdown(make_card(
-            "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
-
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
-        st1, st2, st3 = st.columns(3)
-        st1.markdown(make_card(
-            "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-        st2.markdown(make_card(
-            "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-        st3.markdown(make_card(
-            "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
-
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
-                    "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
-        m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
-                    "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
-        m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_month_rev):,}",
-                    "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
-        m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
-                    "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
-
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
-        a1, a2, a3 = st.columns(3)
-        a1.markdown(make_card("兩館早餐平均", f"{mtd_avg_bf:.1f} 人/日",
-                    "card-theme-orange", "", "✨"), unsafe_allow_html=True)
-        a2.markdown(make_card(
-            "兩館下午茶平均", f"{mtd_avg_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
-        a3.markdown(make_card(
-            "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
-
-    else:
-        st.info("💡 資料庫中目前尚未有這個月的記錄。")
-
-with tab_m:
-    st.header("📈 月分析專區")
-
-    # 1. 取得四個月數據 (M-2, M-1, M, M+1)
-    prev_prev_m_date = get_month_delta(selected_date, -2)
-    prev_m_date = get_month_delta(selected_date, -1)
-    next_m_date = get_month_delta(selected_date, 1)
-
-    m_prev_prev = fetch_month_summary(
-        prev_prev_m_date.year, prev_prev_m_date.month)
-    m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
-    m_curr = fetch_month_summary(selected_date.year, selected_date.month)
-    m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
-
-    # 取得去年同月數據 (YoY)
-    m_curr_ly = fetch_month_summary(
-        selected_date.year - 1, selected_date.month)
-
-    st.markdown("#### 🏆 本月總覽與去年同期比較 (YoY)")
-    if not m_curr['df'].empty and not m_curr_ly['df'].empty:
-        col1, col2, col3 = st.columns(3)
-
-        adr_diff = m_curr['avg_adr'] - m_curr_ly['avg_adr']
-        adr_pct = (adr_diff / m_curr_ly['avg_adr']
-                   * 100) if m_curr_ly['avg_adr'] > 0 else 0
-        adr_color = "#2ecc71" if adr_diff >= 0 else "#e74c3c"
-        adr_sign = "+" if adr_diff >= 0 else ""
-        col1.markdown(
-            f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {adr_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 ADR</p><strong style='font-size:22px;'>NT$ {int(m_curr['avg_adr']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{adr_color}; font-weight:bold;'>較去年同期 {adr_sign}NT$ {int(adr_diff):,} ({adr_sign}{adr_pct:.1f}%)</p></div>", unsafe_allow_html=True)
-
-        occ_diff = m_curr['avg_occ'] - m_curr_ly['avg_occ']
-        occ_color = "#2ecc71" if occ_diff >= 0 else "#e74c3c"
-        occ_sign = "+" if occ_diff >= 0 else ""
-        col2.markdown(
-            f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {occ_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 OCC</p><strong style='font-size:22px;'>{m_curr['avg_occ']:.1f}%</strong><p style='margin:5px 0 0 0; font-size:13px; color:{occ_color}; font-weight:bold;'>較去年同期 {occ_sign}{occ_diff:.1f}%</p></div>", unsafe_allow_html=True)
-
-        rev_diff = m_curr['rev'] - m_curr_ly['rev']
-        rev_pct = (rev_diff / m_curr_ly['rev']
-                   * 100) if m_curr_ly['rev'] > 0 else 0
-        rev_color = "#2ecc71" if rev_diff >= 0 else "#e74c3c"
-        rev_sign = "+" if rev_diff >= 0 else ""
-        col3.markdown(
-            f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {rev_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月總客房營收</p><strong style='font-size:22px;'>NT$ {int(m_curr['rev']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{rev_color}; font-weight:bold;'>較去年同期 {rev_sign}NT$ {int(rev_diff):,} ({rev_sign}{rev_pct:.1f}%)</p></div>", unsafe_allow_html=True)
-        st.markdown("<div style='margin-bottom:20px;'></div>",
-                    unsafe_allow_html=True)
-    else:
-        if m_curr['df'].empty:
-            st.info("💡 本月尚無數據，無法與去年同期比較。")
-        elif m_curr_ly['df'].empty:
-            st.info("💡 去年同月尚無歷史對比資料。")
-
-    # 取得台北重大活動資料
-    taipei_events_df = fetch_taipei_events()
-
-    # --- A. 每日住房率概況 (四個月對比) ---
-    st.subheader("📊 每日住房率概況比較 (四個月)")
-    col_chart1, col_chart2, col_chart3, col_chart4 = st.columns(4)
-
-    def render_occ_chart(month_data, title_suffix):
-        df = month_data['df'].copy()
-        if df.empty:
-            st.info(f"💡 {month_data['month_label']} 尚無數據。")
-            return
-
-        # 預先新增全月平均 ADR 基準線欄位，與主資料集完美共用同一資料來源以解決尺度分裂問題
-        avg_adr = month_data.get('avg_adr', 0)
-        df['adr_baseline'] = avg_adr
-        df['adr_baseline_text'] = ''
-
-        y_adr, y_pure_adr = fetch_yearly_metrics(
-            int(month_data['month_label'].split('-')[0]))
-        df['y_adr_baseline'] = y_adr
-        df['y_adr_text'] = ''
-        df['y_pure_adr_baseline'] = y_pure_adr
-        df['y_pure_adr_text'] = ''
-
-        if not df.empty:
-            if avg_adr > 0:
-                df.loc[df.index[-1],
-                       'adr_baseline_text'] = f"${int(avg_adr):,} (月)"
-            if y_adr > 0:
-                df.loc[df.index[-1], 'y_adr_text'] = f"${int(y_adr):,} (年)"
-            if y_pure_adr > 0:
-                df.loc[df.index[-1],
-                       'y_pure_adr_text'] = f"${int(y_pure_adr):,} (純平)"
-
-        dt = pd.to_datetime(df['date'])
-        df['day'] = dt.dt.day
-        weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
-        df['weekday'] = dt.dt.weekday.map(weekday_map)
-        df['label'] = df['day'].astype(str) + " (" + df['weekday'] + ")"
-
-        df['color_category'] = df['occ_rate'].apply(
-            lambda x: '>=90' if x >= 90.0 else ('>=80' if x >= 80.0 else '<80'))
-
-        if not df.empty:
-            y_str, m_str = df['date'].iloc[0].split('-')[:2]
-            holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
-
-            # 合併假日與台北活動標籤
-            def get_combined_flags_list(d_str):
-                import re
-                h_f_str = holidays_dict.get(d_str, {}).get('flags', '')
-                h_flags = re.findall(r'\[.*?\]|🌍', h_f_str)
-
-                e_flags = []
-                if not taipei_events_df.empty:
-                    day_events = taipei_events_df[taipei_events_df['date'] == d_str]
-                    for _, row in day_events.iterrows():
-                        e_label = EVENT_TYPE_LABELS.get(
-                            row['event_type'], '[活]')
-                        if e_label not in e_flags:
-                            e_flags.append(e_label)
-                return h_flags + e_flags
-
-            # 建立多層標籤資料 (最多支援 5 層垂直堆疊，避免過度擁擠)
-            for i in range(5):
-                df[f'flag_{i}'] = df['date'].apply(lambda d: get_combined_flags_list(
-                    d)[i] if len(get_combined_flags_list(d)) > i else '')
-        else:
-            for i in range(5):
-                df[f'flag_{i}'] = ''
-
-        # ==========================================
-        # 1. 建立 OCC 子圖 (長條圖 + 住房百分比文字標籤 + 活動/節慶)
-        # ==========================================
-        base_occ = alt.Chart(df).encode(
-            x=alt.X('label:O',
-                    title='日期',
-                    sort=df['label'].tolist(),
-                    axis=alt.Axis(labelAngle=0)),
-            tooltip=['date', 'occ_rate', 'adr']
-        )
-
-        bars = base_occ.mark_bar().encode(
-            y=alt.Y('occ_rate:Q', title='住房率 (%)',
-                    scale=alt.Scale(domain=[0, 100])),
-            color=alt.Color(
-                'color_category:N',
-                scale=alt.Scale(
-                    domain=['>=90', '>=80', '<80'],
-                    range=['#e74c3c', '#3498db', '#2ecc71']
-                ),
-                legend=None
-            )
-        )
-
-        # 住房率文字標籤 (自然繼承 OCC 軸，不需畫新軸)
-        text = base_occ.mark_text(
-            align='center',
-            baseline='bottom',
-            dy=-5,
-            fontSize=14,
-            fontWeight='bold'
-        ).encode(
-            y='occ_rate:Q',
-            text=alt.Text('occ_rate:Q', format='.1f')
-        )
-
-        # 建立多層垂直標籤
-        occ_layers = [bars, text]
-        for i in range(5):
-            offset = -22 - (i * 13)
-            f_layer = base_occ.mark_text(
-                align='center',
-                baseline='bottom',
-                dy=offset,
-                fontSize=11,
-                fontWeight='normal'
-            ).encode(
-                y='occ_rate:Q',
-                text=f'flag_{i}:N'
-            )
-            occ_layers.append(f_layer)
-
-        occ_chart = alt.layer(*occ_layers)
-
-        # 計算當月 ADR 的邊界，鎖定統一的 Y 軸比例尺 domain，消除 Altair 多資料來源尺度獨立導致的錯位 Bug
-        valid_adrs = df[df['adr'] >
-                        0]['adr'] if not df.empty else pd.Series([])
-        if not valid_adrs.empty:
-            adr_min = max(0, int(valid_adrs.min() * 0.9))
-            adr_max = int(valid_adrs.max() * 1.1)
-        else:
-            adr_min = 2000
-            adr_max = 8000
-
-        avg_adr = month_data.get('avg_adr', 0)
-        y_adr, y_pure_adr = fetch_yearly_metrics(
-            int(month_data['month_label'].split('-')[0]))
-
-        if avg_adr > 0:
-            adr_min = min(adr_min, int(avg_adr * 0.9))
-            adr_max = max(adr_max, int(avg_adr * 1.1))
-        if y_adr > 0:
-            adr_min = min(adr_min, int(y_adr * 0.9))
-            adr_max = max(adr_max, int(y_adr * 1.1))
-        if y_pure_adr > 0:
-            adr_min = min(adr_min, int(y_pure_adr * 0.9))
-            adr_max = max(adr_max, int(y_pure_adr * 1.1))
-
-        adr_scale = alt.Scale(domain=[adr_min, adr_max], zero=False)
-
-        # ==========================================
-        # 2. 建立 ADR 子圖 (折線圖 + 資料點 + 紅色平均房價基準線 + 紅色金額數值標記)
-        # ==========================================
-        base_adr = alt.Chart(df).encode(
-            x=alt.X('label:O', sort=df['label'].tolist()),  # 自然與 OCC X 軸合併
-            tooltip=['date', 'occ_rate', 'adr']
-        )
-
-        adr_line = base_adr.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
-            y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(
-                titleColor='#ff9f43', format='$,.0f'), scale=adr_scale)
-        )
-        adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
-            y=alt.Y('adr:Q', scale=adr_scale)
-        )
-
-        adr_layers = [adr_line, adr_points]
-
-        # 繪製全月平均 ADR 紅色基準線與右側數值標記
-        if avg_adr > 0:
-            # 建立水平紅色虛線 (共用相同 df 解決尺度獨立 bug，且因不含 X 編碼故保證水平)
-            baseline_rule = alt.Chart(df).mark_rule(
-                color='#e74c3c',
-                strokeWidth=1.5,
-                strokeDash=[5, 5]
-            ).encode(
-                y=alt.Y('adr_baseline:Q', scale=adr_scale)
-            )
-
-            # 建立紅色文字標籤 (共用相同 df，只在最後一天繪製文字，完美對齊)
-            baseline_text = alt.Chart(df).mark_text(
-                align='right',     # 改為靠右對齊，讓文字往圖表內部 (左側) 延伸
-                baseline='middle',
-                dx=-8,             # 向左偏移 8 像素，避免與外側的年 ADR 數值重疊
-                color='#000000',
-                fontSize=12,
-                fontWeight='bold'
-            ).encode(
-                x=alt.X('label:O', sort=df['label'].tolist()),
-                y=alt.Y('adr_baseline:Q', scale=adr_scale),
-                text='text:N' if 'text' in df.columns else 'adr_baseline_text:N'
-            )
-            adr_layers.extend([baseline_rule, baseline_text])
-
-        # 繪製年 ADR 黃色基準線
-        if df.get('y_adr_baseline', pd.Series()).max() > 0:
-            y_adr_rule = alt.Chart(df).mark_rule(color='#f1c40f', strokeWidth=1.5, strokeDash=[
-                5, 5]).encode(y=alt.Y('y_adr_baseline:Q', scale=adr_scale))
-            y_adr_text = alt.Chart(df).mark_text(
-                align='left', baseline='middle', dx=8, dy=-14, color='#000000', fontSize=11, fontWeight='bold'
-            ).encode(
-                x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_adr_baseline:Q', scale=adr_scale), text='y_adr_text:N'
-            )
-            adr_layers.extend([y_adr_rule, y_adr_text])
-
-        # 繪製年純平日 ADR 黑色基準線
-        if df.get('y_pure_adr_baseline', pd.Series()).max() > 0:
-            yp_adr_rule = alt.Chart(df).mark_rule(color='#000000', strokeWidth=1.5, strokeDash=[
-                5, 5]).encode(y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale))
-            yp_adr_text = alt.Chart(df).mark_text(align='left', baseline='middle', dx=8, dy=14, color='#000000', fontSize=11, fontWeight='bold').encode(
-                x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale), text='y_pure_adr_text:N'
-            )
-            adr_layers.extend([yp_adr_rule, yp_adr_text])
-
-        adr_chart = alt.layer(*adr_layers)
-
-        # ==========================================
-        # 3. 結合兩個子圖，宣告 Y 軸為獨立雙軸，實現完美對齊
-        # ==========================================
-        chart = alt.layer(occ_chart, adr_chart).resolve_scale(
-            y='independent'
-        ).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
-
-        st.altair_chart(chart, use_container_width=True)
-
-    with col_chart1:
-        render_occ_chart(m_prev_prev, "(前前月)")
-    with col_chart2:
-        render_occ_chart(m_prev, "(上月)")
-    with col_chart3:
-        render_occ_chart(m_curr, "(本月)")
-    with col_chart4:
-        render_occ_chart(m_next, "(下月)")
-
-    # --- A2. 去年同期軌跡對比 (YoY Daily Comparison) ---
-    st.markdown("#### 📅 去年同期軌跡對比 (YoY Daily Comparison)")
-    if not m_curr['df'].empty and not m_curr_ly['df'].empty:
-        df_ty = m_curr['df'].copy()
-        df_ly = m_curr_ly['df'].copy()
-
-        if 'day' not in df_ty.columns:
-            df_ty['day'] = pd.to_datetime(df_ty['date']).dt.day
-        if 'day' not in df_ly.columns:
-            df_ly['day'] = pd.to_datetime(df_ly['date']).dt.day
-
-        df_ty['year'] = '今年'
-        df_ly['year'] = '去年'
-
-        df_yoy = pd.concat([df_ty[['day', 'adr', 'year']],
-                           df_ly[['day', 'adr', 'year']]], ignore_index=True)
-        df_yoy['adr'] = pd.to_numeric(df_yoy['adr'], errors='coerce').fillna(0)
-
-        # 設定 Y 軸比例尺
-        yoy_adr_min = max(0, int(df_yoy['adr'].min() * 0.9))
-        yoy_adr_max = int(df_yoy['adr'].max() * 1.1)
-        if yoy_adr_min == yoy_adr_max:
-            yoy_adr_max += 1000
-
-        yoy_chart = alt.Chart(df_yoy).mark_line(point=True, strokeWidth=3).encode(
-            x=alt.X('day:O', title='日期 (Day of Month)'),
-            y=alt.Y('adr:Q', title='平均房價 (NT$)', scale=alt.Scale(
-                domain=[yoy_adr_min, yoy_adr_max], zero=False)),
-            color=alt.Color('year:N',
-                            scale=alt.Scale(domain=['今年', '去年'], range=[
-                                            '#ff9f43', '#bdc3c7']),
-                            legend=alt.Legend(title="年份", orient="top-left")
-                            ),
-            strokeDash=alt.condition(
-                alt.datum.year == '去年', alt.value([5, 5]), alt.value([0])),
-            tooltip=['day', 'year', 'adr']
-        ).properties(height=350)
-
-        st.altair_chart(yoy_chart, use_container_width=True)
-
-    st.markdown("<div style='margin-bottom:30px;'></div>",
-                unsafe_allow_html=True)
-
-    # --- B. 關鍵表現數據分析 ---
-    st.markdown("#### 🌟 關鍵表現數據分析")
-
-    def calc_key_metrics(m_data):
-        df = m_data.get('df', pd.DataFrame())
-        res = {'high_adr_days': 0, 'top20_rev_avg': 0, 'bot20_rev_avg': 0,
-               'dual_match_days': 0, 'month_label': m_data.get('month_label', '')}
-        if df is None or df.empty:
-            return res
-
-        avg_adr = m_data.get('avg_adr', 0)
-
-        # 確保數值正確
-        df['adr_val'] = pd.to_numeric(df['adr'], errors='coerce').fillna(0)
-        df['rev_val'] = pd.to_numeric(df['revenue'], errors='coerce').fillna(0)
-
-        # 高於當月平均 ADR 天數
-        df['is_high_adr'] = df['adr_val'] > avg_adr
-        res['high_adr_days'] = int(df['is_high_adr'].sum())
-
-        # 八二法則 (前 20% 與後 20%)
-        n_days = len(df)
-        n_top = max(1, int(round(n_days * 0.2)))
-
-        df_sorted = df.sort_values('rev_val', ascending=False)
-        top20_df = df_sorted.head(n_top)
-        bot20_df = df_sorted.tail(n_top)
-
-        res['top20_rev_avg'] = top20_df['rev_val'].mean(
-        ) if not top20_df.empty else 0
-        res['bot20_rev_avg'] = bot20_df['rev_val'].mean(
-        ) if not bot20_df.empty else 0
-
-        # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
-        dual_match_df = top20_df[top20_df['is_high_adr']]
-        res['dual_match_days'] = int(len(dual_match_df))
-        res['dual_match_dates'] = dual_match_df['date'].sort_values(
-        ).tolist() if not dual_match_df.empty else []
-
-        return res
-
-    curr_metrics = calc_key_metrics(m_curr)
-    prev_metrics = calc_key_metrics(m_prev)
-    pprev_metrics = calc_key_metrics(m_prev_prev)
-    next_metrics = calc_key_metrics(m_next)
-
-    def metric_diff_card(label, diff, target_label, unit="天"):
-        color = '#2ecc71' if diff >= 0 else '#e74c3c'
-        status = '本月多' if diff > 0 else '較少' if diff < 0 else '持平'
-        return f'<div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;"><p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p><div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;"><strong style="font-size:18px; color:{color};">{abs(diff)} {unit}</strong><span style="font-size:11px; color:#666;">({status})</span></div></div>'
-
-    # 天數差異
-    diff_adr_pp = curr_metrics['high_adr_days'] - \
-        pprev_metrics['high_adr_days']
-    diff_adr_p = curr_metrics['high_adr_days'] - prev_metrics['high_adr_days']
-    diff_adr_n = curr_metrics['high_adr_days'] - next_metrics['high_adr_days']
-
-    diff_dual_pp = curr_metrics['dual_match_days'] - \
-        pprev_metrics['dual_match_days']
-    diff_dual_p = curr_metrics['dual_match_days'] - \
-        prev_metrics['dual_match_days']
-    diff_dual_n = curr_metrics['dual_match_days'] - \
-        next_metrics['dual_match_days']
-
-    kp_col1, kp_col2 = st.columns([1.5, 1])
-
-    with kp_col1:
-        st.markdown(f"""
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
-            <p style="margin:0; font-size:14px; color:#666;">📈 <strong>高於當月平均 ADR 天數 (本月: {curr_metrics['high_adr_days']} 天)</strong></p>
-            <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
-                {metric_diff_card("前前月", diff_adr_pp, pprev_metrics['month_label'])}
-                {metric_diff_card("上月", diff_adr_p, prev_metrics['month_label'])}
-                {metric_diff_card("下月預期", diff_adr_n, next_metrics['month_label'])}
-            </div>
-            <p style="margin:15px 0 0 0; font-size:14px; color:#666;">🏆 <strong>雙冠天數：前 20% 營收且高 ADR (本月: {curr_metrics['dual_match_days']} 天)</strong></p>
-            <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
-                {metric_diff_card("前前月", diff_dual_pp, pprev_metrics['month_label'])}
-                {metric_diff_card("上月", diff_dual_p, prev_metrics['month_label'])}
-                {metric_diff_card("下月預期", diff_dual_n, next_metrics['month_label'])}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with kp_col2:
-        st.markdown(f"""
-        <div style="background: #fffcf5; padding: 15px; border-radius: 10px; border-left: 5px solid #f39c12; margin-bottom: 20px; height: 100%;">
-            <p style="margin:0; font-size:14px; color:#666;">📊 <strong>高低營收分析 (本月)</strong></p>
-            <div style="margin-top: 20px;">
-                <p style="margin:0; font-size:13px; color:#999;">🔥 前 20% 營收日 (Top 20%) 平均營收</p>
-                <h3 style="margin: 5px 0 15px 0; color: #d35400;">NT$ {int(curr_metrics['top20_rev_avg']):,}</h3>
-                <p style="margin:0; font-size:13px; color:#999;">❄️ 後 20% 營收日 (Bottom 20%) 平均營收</p>
-                <h3 style="margin: 5px 0 15px 0; color: #7f8c8d;">NT$ {int(curr_metrics['bot20_rev_avg']):,}</h3>
-                <hr style="border: 0; border-top: 1px dashed #eee; margin: 15px 0;">
-                <p style="margin:0; font-size:12px; color:#888;">💡 <strong>解讀</strong>：當前後 20% 的平均營收差距擴大時，代表淡旺日的業績差距大，可針對淡日加強促銷。</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # --- B3. OCC vs ADR 四象限定價診斷圖 ---
-    st.markdown("#### 🎯 定價水位診斷：住房率 vs 平均房價 四象限分析（以年純平 ADR 為底線基準）")
-    scatter_df = m_curr['df'].copy()
-    if not scatter_df.empty:
-        scatter_df['occ_val'] = pd.to_numeric(
-            scatter_df['occ_rate'], errors='coerce').fillna(0)
-        scatter_df['adr_val'] = pd.to_numeric(
-            scatter_df['adr'], errors='coerce').fillna(0)
-        scatter_df['day'] = pd.to_datetime(scatter_df['date']).dt.day
-
-        # 以「年純平 ADR」作為 Y 軸分界（最客觀的裸實力底線，不受淡日拉低）
-        y_adr_s, y_pure_adr_s = fetch_yearly_metrics(selected_date.year)
-        adr_anchor = y_pure_adr_s if y_pure_adr_s > 0 else m_curr.get(
-            'avg_adr', scatter_df['adr_val'].mean())
-        anchor_label = f'年純平 ADR ${int(adr_anchor):,}'
-        anchor_color = '#000000'
-        occ_threshold = 85.0  # 高住房率門檻
-
-        def classify_quadrant(row):
-            hi_occ = row['occ_val'] >= occ_threshold
-            hi_adr = row['adr_val'] >= adr_anchor
-            if hi_occ and hi_adr:
-                return '🟠 理想（高OCC+高ADR）'
-            if hi_occ and not hi_adr:
-                return '🔴 賤賣（高OCC+低ADR）'
-            if not hi_occ and hi_adr:
-                return '🟡 定價偏高（低OCC+高ADR）'
-            return '🔵 淡季死水（低OCC+低ADR）'
-
-        scatter_df['象限'] = scatter_df.apply(classify_quadrant, axis=1)
-
-        color_map = {
-            '🟠 理想（高OCC+高ADR）': '#ff9f43',
-            '🔴 賤賣（高OCC+低ADR）': '#e74c3c',
-            '🟡 定價偏高（低OCC+高ADR）': '#f1c40f',
-            '🔵 淡季死水（低OCC+低ADR）': '#3498db',
+if current_hotel != "採購":
+    with tab1:
+        st.header("📊 營運總覽")
+
+        # 注入專屬 CSS 與 Card 產生器
+        st.markdown("""
+        <style>
+        .metric-card {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin: 8px 0 16px 0;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+            border-left: 6px solid #4CAF50;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-
-        scatter_chart = alt.Chart(scatter_df).mark_circle(size=100, opacity=0.8).encode(
-            x=alt.X('occ_val:Q', title='住房率 (%)',
-                    scale=alt.Scale(domain=[0, 105])),
-            y=alt.Y('adr_val:Q', title='平均房價 ADR (NT$)',
-                    scale=alt.Scale(zero=False)),
-            color=alt.Color('象限:N',
-                            scale=alt.Scale(
-                                domain=list(color_map.keys()),
-                                range=list(color_map.values())
-                            ),
-                            legend=alt.Legend(
-                                title="象限分類", orient="bottom", columns=2)
-                            ),
-            tooltip=[
-                alt.Tooltip('date:N', title='日期'),
-                alt.Tooltip('occ_val:Q', title='住房率 (%)', format='.1f'),
-                alt.Tooltip('adr_val:Q', title='ADR (NT$)', format=',.0f'),
-                alt.Tooltip('象限:N', title='象限'),
-            ]
-        )
-
-        # 年純平 ADR 水平輔助線
-        adr_rule = alt.Chart(pd.DataFrame({'y': [adr_anchor]})).mark_rule(
-            color=anchor_color, strokeDash=[6, 3], strokeWidth=2
-        ).encode(y='y:Q')
-        adr_label = alt.Chart(pd.DataFrame({'y': [adr_anchor], 'x': [105], 'text': [anchor_label]})).mark_text(
-            align='right', dx=-4, dy=-8, color=anchor_color, fontSize=11, fontWeight='bold'
-        ).encode(x='x:Q', y='y:Q', text='text:N')
-
-        # 85% OCC 垂直輔助線
-        occ_rule = alt.Chart(pd.DataFrame({'x': [occ_threshold]})).mark_rule(
-            color='#7f8c8d', strokeDash=[6, 3], strokeWidth=1.5
-        ).encode(x='x:Q')
-        occ_label = alt.Chart(pd.DataFrame({'x': [occ_threshold], 'y': [scatter_df['adr_val'].max() * 1.05], 'text': ['85% OCC 門檻']})).mark_text(
-            align='left', dx=4, color='#7f8c8d', fontSize=11, fontWeight='bold'
-        ).encode(x='x:Q', y='y:Q', text='text:N')
-
-        final_chart = alt.layer(scatter_chart, adr_rule, adr_label, occ_rule, occ_label).properties(
-            height=380,
-            title=f"{m_curr['month_label']} 每日定價水位診斷（每個點代表一天，以年純平 ADR 為底線）"
-        )
-        st.altair_chart(final_chart, use_container_width=True)
-
-        # 各象限天數摘要
-        q_counts = scatter_df['象限'].value_counts()
-        q_cols = st.columns(4)
-        for i, (q_name, color) in enumerate(color_map.items()):
-            cnt = q_counts.get(q_name, 0)
-            q_cols[i].markdown(
-                f"<div style='background:{color}22; border-left:4px solid {color}; padding:10px; border-radius:6px; text-align:center;'>"
-                f"<p style='margin:0; font-size:12px; color:#555;'>{q_name}</p>"
-                f"<strong style='font-size:22px;'>{cnt} 天</strong></div>",
-                unsafe_allow_html=True
-            )
-        st.write("")
-
-        # --- 定價成功率 (Pricing Success Rate) ---
-        ideal_cnt = q_counts.get('🟠 理想（高OCC+高ADR）', 0)
-        cheap_cnt = q_counts.get('🔴 賤賣（高OCC+低ADR）', 0)
-        high_occ_total = ideal_cnt + cheap_cnt
-        success_rate = (ideal_cnt / high_occ_total *
-                        100) if high_occ_total > 0 else 0
-
-        # 計算上個月的定價成功率作為對比
-        prev_scatter_df = m_prev['df'].copy()
-        prev_success_rate = 0
-        if not prev_scatter_df.empty:
-            prev_scatter_df['occ_val'] = pd.to_numeric(
-                prev_scatter_df['occ_rate'], errors='coerce').fillna(0)
-            prev_scatter_df['adr_val'] = pd.to_numeric(
-                prev_scatter_df['adr'], errors='coerce').fillna(0)
-            prev_scatter_df['hi_occ'] = prev_scatter_df['occ_val'] >= occ_threshold
-            prev_scatter_df['hi_adr'] = prev_scatter_df['adr_val'] >= adr_anchor
-            prev_ideal = int(
-                (prev_scatter_df['hi_occ'] & prev_scatter_df['hi_adr']).sum())
-            prev_cheap = int(
-                (prev_scatter_df['hi_occ'] & ~prev_scatter_df['hi_adr']).sum())
-            prev_total = prev_ideal + prev_cheap
-            prev_success_rate = (prev_ideal / prev_total *
-                                 100) if prev_total > 0 else 0
-
-        rate_diff = success_rate - prev_success_rate
-        rate_color = '#2ecc71' if rate_diff >= 0 else '#e74c3c'
-        rate_sign = '+' if rate_diff >= 0 else ''
-
-        if success_rate >= 80:
-            bar_color = '#2ecc71'
-            verdict = '🟢 定價能力優秀'
-        elif success_rate >= 60:
-            bar_color = '#f39c12'
-            verdict = '🟡 定價能力尚可'
-        else:
-            bar_color = '#e74c3c'
-            verdict = '🔴 定價能力待改善'
-
-        st.markdown(f"""
-        <div style="background:#f8f9fa; border-radius:10px; padding:20px; margin-top:10px; border-left: 5px solid {bar_color};">
-            <p style="margin:0 0 8px 0; font-size:14px; color:#555;">
-                📐 <strong>高住房日定價成功率</strong>
-                <span style="font-size:12px; color:#aaa; margin-left:8px;">高OCC 天數共 {high_occ_total} 天，其中 {int(ideal_cnt)} 天 ADR 超過年純平基準</span>
-            </p>
-            <div style="display:flex; align-items:baseline; gap:15px; flex-wrap:wrap;">
-                <strong style="font-size:40px; color:{bar_color};">{success_rate:.1f}%</strong>
-                <span style="font-size:14px;">{verdict}</span>
-                <span style="font-size:14px; color:{rate_color}; font-weight:bold;">vs 上月 {prev_success_rate:.1f}% ({rate_sign}{rate_diff:.1f}%)</span>
-            </div>
-            <div style="background:#e0e0e0; border-radius:999px; height:10px; margin-top:10px;">
-                <div style="background:{bar_color}; width:{min(success_rate, 100):.1f}%; height:10px; border-radius:999px; transition: width 0.5s;"></div>
-            </div>
-            <p style="margin:8px 0 0 0; font-size:12px; color:#888;">💡 目標：讓「賤賣天數」每月減少 1-2 天，持續將成功率推向 80%</p>
-        </div>
+        .metric-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.12);
+        }
+        .metric-title {
+            color: #7f8c8d;
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .metric-value {
+            color: #2c3e50;
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+        }
+        .card-theme-blue { border-left-color: #3498db; }
+        .card-theme-orange { border-left-color: #f39c12; }
+        .card-theme-purple { border-left-color: #9b59b6; }
+        .card-theme-red { border-left-color: #e74c3c; }
+        .card-theme-green { border-left-color: #2ecc71; }
+        .card-bg-dark {
+            background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
+        }
+        .card-bg-dark .metric-title { color: #d8e2fb; }
+        .card-bg-dark .metric-value { color: #ffffff; }
+        </style>
         """, unsafe_allow_html=True)
-        st.write("")
 
-    # --- B2. 即將到來的重大活動與假日警報 ---
-    st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
-    upcoming_holidays = fetch_upcoming_holidays(selected_date, 30)
+        def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
+            return f'''
+            <div class="metric-card {color_class} {bg_class}">
+                <div class="metric-title">{icon} {title}</div>
+                <div class="metric-value">{value}</div>
+            </div>
+            '''
 
-    # 合併台北重大活動至警報列表 (分開呈現假日與活動)
-    combined_alerts = []
-    h_map = {h['date']: h for h in upcoming_holidays}
+        occ_val = st.session_state.get('input_occ', 0.0)
+        if occ_val >= 90.0:
+            st.success("🎉 **滿房慶祝！今日住房率達到 90% 以上，全館辛苦了！** 🎉")
 
-    for i in range(31):
-        d_obj = selected_date + datetime.timedelta(days=i)
-        d_str = d_obj.strftime('%Y-%m-%d')
+        # -- 今日看板 --
+        st.subheader(f"今日全館營運大看板 ({date_str})")
+        adr_val = st.session_state.get('input_adr', 0)
+        rev_val = st.session_state.get('input_rev', 0)
 
-        h_info = h_map.get(d_str)
-        e_list = []
-        e_labels = []
-        if not taipei_events_df.empty:
-            day_events = taipei_events_df[taipei_events_df['date'] == d_str]
-            for _, row in day_events.iterrows():
-                v_suffix = f" <span style='color:#777;'>@{row['venue']}</span>" if pd.notna(
-                    row['venue']) and str(row['venue']).strip() != "" else ""
-                e_list.append(f"🏟️ {row['event_name']}{v_suffix}")
-                e_labels.append(EVENT_TYPE_LABELS.get(
-                    row['event_type'], '[活]'))
+        def safe_format_int(v):
+            try:
+                if pd.isna(v) or v is None:
+                    return 0
+                return int(float(v))
+            except:
+                return 0
 
-        if h_info or e_list:
-            all_flags = (h_info['flags'] if h_info else "") + \
-                "".join(sorted(list(set(e_labels))))
-            details_html = ""
-            if h_info:
-                details_html += f"<div style='margin-bottom:4px; color:#856404;'>🌍 {h_info['details']}</div>"
-            if e_list:
-                details_html += "<div style='color:#2c3e50;'>" + \
-                    "<br>".join(e_list) + "</div>"
+        kpi_html = f"""
+        <style>
+        .kpi-container {{ display: flex; justify-content: space-around; flex-wrap: wrap; margin-bottom: 30px; }}
+        .kpi-circle {{ width: 170px; height: 170px; border-radius: 50%; background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 8px 15px rgba(0,0,0,0.15); border: 4px solid #4CAF50; margin: 15px; }}
+        .kpi-title {{ font-size: 16px; margin-bottom: 8px; color: #d8e2fb; }}
+        .kpi-value {{ font-size: 26px; font-weight: bold; }}
+        </style>
+        <div class="kpi-container">
+            <div class="kpi-circle"><div class="kpi-title">今日住房率</div><div class="kpi-value">{occ_val}%</div></div>
+            <div class="kpi-circle"><div class="kpi-title">ADR</div><div class="kpi-value">NT$ {safe_format_int(adr_val):,}</div></div>
+            <div class="kpi-circle"><div class="kpi-title">總營收</div><div class="kpi-value">NT$ {safe_format_int(rev_val):,}</div></div>
+        </div>
+        """
+        st.markdown(kpi_html, unsafe_allow_html=True)
 
-            combined_alerts.append({
-                'date': d_str,
-                'flags': all_flags,
-                'details_html': details_html
-            })
-
-    if combined_alerts:
-        alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
-        for h in combined_alerts:
-            alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.1em;'>{h['flags']}</span><br><div style='font-size: 0.85em; margin-top:5px;'>{h['details_html']}</div></div>"
-        alert_html += "</div>"
-        st.write(alert_html, unsafe_allow_html=True)
-    else:
-        st.info("未來 30 天內無重大假日或台北活動。")
-
-    st.divider()
-
-    # --- C. 假日與活動績效分析 ---
-    st.markdown("#### 🌍 績效貢獻度交叉分析")
-    curr_df = m_curr['df'].copy()
-    if not curr_df.empty:
-        y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
-        h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
-        h_dates = {d for d, info in h_dict.items() if info['flags']}
-        e_dates = set(taipei_events_df['date'].unique(
-        )) if not taipei_events_df.empty else set()
-
-        curr_df['is_h'] = curr_df['date'].isin(h_dates)
-        curr_df['is_e'] = curr_df['date'].isin(e_dates)
-        curr_df['is_any'] = curr_df['is_h'] | curr_df['is_e']
-
-        def render_impact_row(df, condition_col, title, icon):
-            holiday_days = df[df[condition_col]]
-            non_holiday_days = df[~df[condition_col]]
-
-            h_occ = holiday_days['occ_rate'].mean() if len(
-                holiday_days) > 0 else 0
-            h_adr = holiday_days['revenue'].sum() / holiday_days['total_rooms'].sum() if len(
-                holiday_days) > 0 and holiday_days['total_rooms'].sum() > 0 else 0
-            nh_occ = non_holiday_days['occ_rate'].mean() if len(
-                non_holiday_days) > 0 else 0
-            nh_adr = non_holiday_days['revenue'].sum() / non_holiday_days['total_rooms'].sum(
-            ) if len(non_holiday_days) > 0 and non_holiday_days['total_rooms'].sum() > 0 else 0
-
-            diff_occ = h_occ - nh_occ
-            diff_adr = h_adr - nh_adr
-
-            st.markdown(f"**{icon} {title}**")
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(
-                f"<div style='background:#f1f8ff; padding:10px; border-radius:5px; border-left:3px solid #3498db; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>有標籤 ({len(holiday_days)}天)</p><strong style='font-size:16px;'>{h_occ:.1f}% / NT$ {int(h_adr):,}</strong></div>", unsafe_allow_html=True)
-            c2.markdown(
-                f"<div style='background:#f8f9fa; padding:10px; border-radius:5px; border-left:3px solid #ccc; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>無標籤 ({len(non_holiday_days)}天)</p><strong style='font-size:16px;'>{nh_occ:.1f}% / NT$ {int(nh_adr):,}</strong></div>", unsafe_allow_html=True)
-            color = "#2ecc71" if diff_occ >= 0 else "#e74c3c"
-            c3.markdown(
-                f"<div style='background:#f0fff4; padding:10px; border-radius:5px; border-left:3px solid #2ecc71; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>帶動效益</p><strong style='font-size:16px; color:{color};'>{diff_occ:+.1f}% / NT$ {int(diff_adr):+,}</strong></div>", unsafe_allow_html=True)
-            st.markdown("<div style='margin-bottom:15px;'></div>",
-                        unsafe_allow_html=True)
-
-        def render_exclusive_matrix(df, title_suffix=""):
-            st.markdown(f"**📐 四象限排他性交叉分析 {title_suffix}**")
-
-            is_e = df['is_e']
-            is_h = df['is_h']
-
-            df_pure_weekday = df[~is_e & ~is_h]
-            df_pure_event = df[is_e & ~is_h]
-            df_pure_holiday = df[~is_e & is_h]
-            df_double_impact = df[is_e & is_h]
-
-            def get_metrics(sub_df):
-                days = len(sub_df)
-                if days == 0:
-                    return 0, 0, days
-                occ = sub_df['occ_rate'].mean()
-                adr = sub_df['revenue'].sum(
-                ) / sub_df['total_rooms'].sum() if sub_df['total_rooms'].sum() > 0 else 0
-                return occ, adr, days
-
-            occ_pw, adr_pw, days_pw = get_metrics(df_pure_weekday)
-            occ_pe, adr_pe, days_pe = get_metrics(df_pure_event)
-            occ_ph, adr_ph, days_ph = get_metrics(df_pure_holiday)
-            occ_di, adr_di, days_di = get_metrics(df_double_impact)
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            def format_diff(val, is_percent=False):
-                if val == 0:
-                    return "0.0%" if is_percent else "NT$ 0"
-                sign = "+" if val > 0 else ""
-                if is_percent:
-                    return f"{sign}{val:.1f}%"
-                else:
-                    return f"{sign}NT$ {int(val):,}"
-
-            # 象限 4: 純平日
-            with col1:
-                st.markdown(
-                    f"<div style='background:#1e293b; padding:15px; border-radius:8px; border-left:4px solid #94a3b8; height:100%; min-height:140px; color:#f8fafc;'>"
-                    f"<p style='margin:0; font-size:12px; color:#94a3b8; font-weight:bold;'>【象限 4】純平日 ({days_pw}天)</p>"
-                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>基準對照組</p>"
-                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pw:.1f}% / NT$ {int(adr_pw):,}</strong>"
-                    f"<p style='margin:8px 0 0 0; font-size:11px; color:#64748b;'>無活動、無節慶的基準線</p>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-
-            # 象限 1: 純活動日
-            with col2:
-                diff_occ = occ_pe - occ_pw if days_pe > 0 and days_pw > 0 else 0
-                diff_adr = adr_pe - adr_pw if days_pe > 0 and days_pw > 0 else 0
-                color = "#10b981" if diff_adr >= 0 else "#ef4444"
-                bg_style = "background:#0f172a; border-left:4px solid #3b82f6;"
-                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_pe > 0 else "無數據"
-                st.markdown(
-                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
-                    f"<p style='margin:0; font-size:12px; color:#3b82f6; font-weight:bold;'>【象限 1】純活動日 ({days_pe}天)</p>"
-                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅台北重大活動</p>"
-                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pe:.1f}% / NT$ {int(adr_pe):,}</strong>"
-                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-
-            # 象限 2: 純節慶日
-            with col3:
-                diff_occ = occ_ph - occ_pw if days_ph > 0 and days_pw > 0 else 0
-                diff_adr = adr_ph - adr_pw if days_ph > 0 and days_pw > 0 else 0
-                color = "#10b981" if diff_adr >= 0 else "#ef4444"
-                bg_style = "background:#0f172a; border-left:4px solid #eab308;"
-                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_ph > 0 else "無數據"
-                st.markdown(
-                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
-                    f"<p style='margin:0; font-size:12px; color:#eab308; font-weight:bold;'>【象限 2】純節慶日 ({days_ph}天)</p>"
-                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅外國節慶</p>"
-                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_ph:.1f}% / NT$ {int(adr_ph):,}</strong>"
-                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-
-            # 象限 3: 黃金雙重日
-            with col4:
-                diff_occ = occ_di - occ_pw if days_di > 0 and days_pw > 0 else 0
-                diff_adr = adr_di - adr_pw if days_di > 0 and days_pw > 0 else 0
-                color = "#10b981" if diff_adr >= 0 else "#ef4444"
-                bg_style = "background:#1e1b4b; border-left:4px solid #a855f7;"
-                desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_di > 0 else "無數據"
-                st.markdown(
-                    f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
-                    f"<p style='margin:0; font-size:12px; color:#a855f7; font-weight:bold;'>【象限 3】黃金雙重日 ({days_di}天)</p>"
-                    f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>活動 ＋ 節慶疊加</p>"
-                    f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_di:.1f}% / NT$ {int(adr_di):,}</strong>"
-                    f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-            st.markdown("<div style='margin-bottom:20px;'></div>",
-                        unsafe_allow_html=True)
-
-        render_impact_row(curr_df, 'is_any', "綜合分析 (假日 + 台北活動)", "📊")
-        render_impact_row(curr_df, 'is_h', "僅外國節慶分析", "🌍")
-        render_impact_row(curr_df, 'is_e', "僅台北重大活動分析", "🏟️")
-
-        st.markdown("<div style='margin-bottom:20px;'></div>",
-                    unsafe_allow_html=True)
-        render_exclusive_matrix(curr_df, "(當月)")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.success("🧹 **房務狀況**")
+            total_occ = st.session_state.get('input_rooms', 0)
+            cleaned = st.session_state.get('input_cleaned', 0)
+            st.metric("目標清消總數 (來自金旭)", f"{total_occ} 間")
+            st.caption(f"手動紀錄清消: {cleaned} 間 (差額: {cleaned - total_occ})")
+        with col2:
+            st.warning("🔧 **工務狀況**")
+            repairs = st.session_state.get('input_repair', 0)
+            st.metric("今日待修房數", f"{repairs} 間", delta="🔴 需處理" if repairs >
+                      0 else "🟢 正常", delta_color="off")
+        with col3:
+            st.error("🍽️ **餐廳狀況**")
+            bf_total_act = st.session_state.get('input_bf_total_act', 0)
+            st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
 
         st.divider()
 
-        # --- C2. 過去三個月合計績效分析 (長期趨勢) ---
-        st.markdown("#### ⏳ 過去三個月合計績效分析 (長期趨勢)")
-        # 取得前三個月日期
-        m1_date = get_month_delta(selected_date, -1)
-        m2_date = get_month_delta(selected_date, -2)
-        m3_date = get_month_delta(selected_date, -3)
+        # -- 月度累計模式 (MTD Analysis) --
+        st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
+        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
-        m1_sum = fetch_month_summary(m1_date.year, m1_date.month)
-        m2_sum = fetch_month_summary(m2_date.year, m2_date.month)
-        m3_sum = fetch_month_summary(m3_date.year, m3_date.month)
+        try:
+            df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+            if df_all is not None and not df_all.empty:
+                df_all = standardize_df_dates(df_all)
+                # 防止重複資料毀掉加總
+                df_all = df_all.drop_duplicates(subset='date', keep='last')
+                df_mtd = df_all[(df_all['date'] >= start_of_month)
+                                & (df_all['date'] <= date_str)].copy()
+            else:
+                df_mtd = pd.DataFrame()
+        except Exception as e:
+            st.sidebar.error(f"⚠️ 讀取數據時發生錯誤: {e}")
+            df_mtd = pd.DataFrame()
 
-        hist_df = pd.concat([m1_sum['df'], m2_sum['df'],
-                            m3_sum['df']], ignore_index=True)
+        if not df_mtd.empty:
+            # 先將所有可能計算的欄位轉為數值，避免 Google Sheets 帶來的字串問題
+            for col in ['bf_theme_act', 'bf_zq_act', 'af_theme_act', 'af_zq_act',
+                        'bf_total_act', 'af_total_act', 'bf_total_est', 'af_total_est',
+                        'rest_month_rev', 'rest_avg_spent']:
+                if col in df_mtd.columns:
+                    df_mtd[col] = pd.to_numeric(df_mtd[col].astype(
+                        str).str.replace(',', ''), errors='coerce').fillna(0)
 
-        if not hist_df.empty:
-            # 準備歷史資料的標籤
-            def get_hist_flags(row):
-                d = row['date']
-                y, m = int(d.split('-')[0]), int(d.split('-')[1])
-                h_f = fetch_holidays_for_month(
-                    y, m).get(d, {}).get('flags', '')
-                e_f = ""
-                if not taipei_events_df.empty:
-                    de = taipei_events_df[taipei_events_df['date'] == d]
-                    for _, r in de.iterrows():
-                        e_f += EVENT_TYPE_LABELS.get(r['event_type'], '[活]')
-                return (h_f != ''), (e_f != '')
+            mtd_rooms = 0.0
+            mtd_rev = 0.0
+            total_sellable = 0.0
 
-            # 為了效能，預先抓取這幾個月的假日資料
-            hist_h_dates = set()
-            for md in [m1_date, m2_date, m3_date]:
-                hd = fetch_holidays_for_month(md.year, md.month)
-                for d, info in hd.items():
-                    if info['flags']:
-                        hist_h_dates.add(d)
+            for _, r in df_mtd.iterrows():
+                # 強化字串清理防護
+                def clean_num(val):
+                    if pd.isna(val):
+                        return 0.0
+                    try:
+                        return float(str(val).replace(',', '').replace('%', ''))
+                    except:
+                        return 0.0
 
-            hist_df['is_h'] = hist_df['date'].isin(hist_h_dates)
-            hist_df['is_e'] = hist_df['date'].isin(
-                set(taipei_events_df['date'].unique())) if not taipei_events_df.empty else False
-            hist_df['is_any'] = hist_df['is_h'] | hist_df['is_e']
+                o = clean_num(r.get('occ_rate'))
+                adr = clean_num(r.get('adr'))
+                rev = clean_num(r.get('revenue'))
+                rm = clean_num(r.get('total_rooms'))
 
-            render_impact_row(hist_df, 'is_any', "綜合分析 (過去三個月合計)", "📊")
-            render_impact_row(hist_df, 'is_h', "僅外國節慶分析 (過去三個月合計)", "🌍")
-            render_impact_row(hist_df, 'is_e', "僅台北重大活動分析 (過去三個月合計)", "🏟️")
+                # 容錯處理：若 Excel 某天缺營收但有 ADR 和房數，或缺房數但有營收，做數學回推
+                if rev == 0 and adr > 0 and rm > 0:
+                    rev = adr * rm
+                if rm == 0 and rev > 0 and adr > 0:
+                    rm = rev / adr
+
+                # 只加總有實際營業數據的日期（排除未來的 0）
+                if rm > 0 or rev > 0:
+                    mtd_rooms += rm
+                    mtd_rev += rev
+                    if o > 0:
+                        total_sellable += (rm / (o / 100.0))
+
+            mtd_occ = (mtd_rooms / total_sellable *
+                       100.0) if total_sellable > 0 else 0.0
+            mtd_adr = (mtd_rev / mtd_rooms) if mtd_rooms > 0 else 0.0
+
+            # 獲取餐廳資料 (正確結算，不重複加總)
+            rest_mrev = 0
+            if not df_mtd.empty and 'rest_month_rev' in df_mtd.columns:
+                valid_rest = df_mtd[df_mtd['rest_month_rev'] > 0]
+                if not valid_rest.empty:
+                    rest_mrev = valid_rest.iloc[-1]['rest_month_rev']
+
+            grand_total_rev = mtd_rev + rest_mrev
+
+            # 顯示四大指標
+            st.write("##### 🏨 房務營運 MTD")
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(make_card(
+                "MTD 累計住房率", f"{mtd_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
+            c2.markdown(make_card("MTD 累計 ADR", f"NT$ {int(mtd_adr):,}",
+                        "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
+            c3.markdown(make_card("MTD 房務累計營收", f"NT$ {int(mtd_rev):,}",
+                        "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
+
+            st.write("##### 🏁 全館合併營收 (MTD)")
+            g1, g2 = st.columns([1, 2])
+            g1.markdown(make_card("餐廳結算營收", f"NT$ {int(rest_mrev):,}",
+                        "card-theme-purple", "card-bg-dark", "🍽️"), unsafe_allow_html=True)
+            g2.markdown(make_card("✨ 全館 MTD 總營收", f"NT$ {int(grand_total_rev):,}",
+                        "card-theme-red", "card-bg-dark", "🚀"), unsafe_allow_html=True)
+
+            st.markdown(
+                "<br><hr style='margin: 5px 0; border: 1px dashed #ddd;'>", unsafe_allow_html=True)
+            st.write("##### 🍽️ 餐廳營運累計 (MTD)")
+
+            # MTD 餐廳計算
+            mtd_bf_theme = df_mtd['bf_theme_act'].sum(
+            ) if 'bf_theme_act' in df_mtd.columns else 0
+            mtd_bf_zq = df_mtd['bf_zq_act'].sum(
+            ) if 'bf_zq_act' in df_mtd.columns else 0
+            mtd_af_theme = df_mtd['af_theme_act'].sum(
+            ) if 'af_theme_act' in df_mtd.columns else 0
+            mtd_af_zq = df_mtd['af_zq_act'].sum(
+            ) if 'af_zq_act' in df_mtd.columns else 0
+
+            # 本月整體總和
+            mtd_total_bf_act = df_mtd['bf_total_act'].sum(
+            ) if 'bf_total_act' in df_mtd.columns else 0
+            mtd_total_af_act = df_mtd['af_total_act'].sum(
+            ) if 'af_total_act' in df_mtd.columns else 0
+
+            # 為了更精確，僅採計「有預估客數」或「有實際客數」的日子為工作日（這會完美略過月底那些全是 0 的未來天數）
+            if 'bf_total_act' in df_mtd.columns:
+                active_bf_days = len(
+                    df_mtd[(df_mtd['bf_total_est'] > 0) | (df_mtd['bf_total_act'] > 0)])
+            else:
+                active_bf_days = 0
+
+            if 'af_total_act' in df_mtd.columns:
+                active_af_days = len(
+                    df_mtd[(df_mtd['af_total_est'] > 0) | (df_mtd['af_total_act'] > 0)])
+            else:
+                active_af_days = 0
+
+            total_bf_days = active_bf_days if active_bf_days > 0 else 1
+            total_af_days = active_af_days if active_af_days > 0 else 1
+
+            mtd_avg_bf = mtd_total_bf_act / total_bf_days
+            mtd_avg_af = mtd_total_af_act / total_af_days
+            mtd_avg_total = mtd_avg_bf + mtd_avg_af
+
+            # 獲取餐廳月度總結
+            # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
+            rest_month_rev = rest_mrev  # 前面已計算過
+            rest_avg_spent = 0
+            if not df_mtd.empty and 'rest_avg_spent' in df_mtd.columns:
+                valid_aspent = df_mtd[df_mtd['rest_avg_spent'] > 0]
+                if not valid_aspent.empty:
+                    rest_avg_spent = valid_aspent.iloc[-1]['rest_avg_spent']
+
+            st.markdown(
+                "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
+            sz1, sz2, sz3 = st.columns(3)
+            sz1.markdown(make_card(
+                "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+            sz2.markdown(make_card(
+                "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+            sz3.markdown(make_card(
+                "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
+            st1, st2, st3 = st.columns(3)
+            st1.markdown(make_card(
+                "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+            st2.markdown(make_card(
+                "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+            st3.markdown(make_card(
+                "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
+                        "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
+            m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
+                        "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
+            m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_month_rev):,}",
+                        "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
+            m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
+                        "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
+
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
+            a1, a2, a3 = st.columns(3)
+            a1.markdown(make_card("兩館早餐平均", f"{mtd_avg_bf:.1f} 人/日",
+                        "card-theme-orange", "", "✨"), unsafe_allow_html=True)
+            a2.markdown(make_card(
+                "兩館下午茶平均", f"{mtd_avg_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
+            a3.markdown(make_card(
+                "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
+
+        else:
+            st.info("💡 資料庫中目前尚未有這個月的記錄。")
+
+if current_hotel != "採購":
+    with tab_m:
+        st.header("📈 月分析專區")
+
+        # 1. 取得四個月數據 (M-2, M-1, M, M+1)
+        prev_prev_m_date = get_month_delta(selected_date, -2)
+        prev_m_date = get_month_delta(selected_date, -1)
+        next_m_date = get_month_delta(selected_date, 1)
+
+        m_prev_prev = fetch_month_summary(
+            prev_prev_m_date.year, prev_prev_m_date.month)
+        m_prev = fetch_month_summary(prev_m_date.year, prev_m_date.month)
+        m_curr = fetch_month_summary(selected_date.year, selected_date.month)
+        m_next = fetch_month_summary(next_m_date.year, next_m_date.month)
+
+        # 取得去年同月數據 (YoY)
+        m_curr_ly = fetch_month_summary(
+            selected_date.year - 1, selected_date.month)
+
+        st.markdown("#### 🏆 本月總覽與去年同期比較 (YoY)")
+        if not m_curr['df'].empty and not m_curr_ly['df'].empty:
+            col1, col2, col3 = st.columns(3)
+
+            adr_diff = m_curr['avg_adr'] - m_curr_ly['avg_adr']
+            adr_pct = (adr_diff / m_curr_ly['avg_adr']
+                       * 100) if m_curr_ly['avg_adr'] > 0 else 0
+            adr_color = "#2ecc71" if adr_diff >= 0 else "#e74c3c"
+            adr_sign = "+" if adr_diff >= 0 else ""
+            col1.markdown(
+                f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {adr_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 ADR</p><strong style='font-size:22px;'>NT$ {int(m_curr['avg_adr']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{adr_color}; font-weight:bold;'>較去年同期 {adr_sign}NT$ {int(adr_diff):,} ({adr_sign}{adr_pct:.1f}%)</p></div>", unsafe_allow_html=True)
+
+            occ_diff = m_curr['avg_occ'] - m_curr_ly['avg_occ']
+            occ_color = "#2ecc71" if occ_diff >= 0 else "#e74c3c"
+            occ_sign = "+" if occ_diff >= 0 else ""
+            col2.markdown(
+                f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {occ_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月平均 OCC</p><strong style='font-size:22px;'>{m_curr['avg_occ']:.1f}%</strong><p style='margin:5px 0 0 0; font-size:13px; color:{occ_color}; font-weight:bold;'>較去年同期 {occ_sign}{occ_diff:.1f}%</p></div>", unsafe_allow_html=True)
+
+            rev_diff = m_curr['rev'] - m_curr_ly['rev']
+            rev_pct = (rev_diff / m_curr_ly['rev']
+                       * 100) if m_curr_ly['rev'] > 0 else 0
+            rev_color = "#2ecc71" if rev_diff >= 0 else "#e74c3c"
+            rev_sign = "+" if rev_diff >= 0 else ""
+            col3.markdown(
+                f"<div style='background:#f8f9fa; padding:15px; border-radius:8px; border-left:4px solid {rev_color}; height:100%;'><p style='margin:0; font-size:13px; color:#666;'>當月總客房營收</p><strong style='font-size:22px;'>NT$ {int(m_curr['rev']):,}</strong><p style='margin:5px 0 0 0; font-size:13px; color:{rev_color}; font-weight:bold;'>較去年同期 {rev_sign}NT$ {int(rev_diff):,} ({rev_sign}{rev_pct:.1f}%)</p></div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:20px;'></div>",
+                        unsafe_allow_html=True)
+        else:
+            if m_curr['df'].empty:
+                st.info("💡 本月尚無數據，無法與去年同期比較。")
+            elif m_curr_ly['df'].empty:
+                st.info("💡 去年同月尚無歷史對比資料。")
+
+        # 取得台北重大活動資料
+        taipei_events_df = fetch_taipei_events()
+
+        # --- A. 每日住房率概況 (四個月對比) ---
+        st.subheader("📊 每日住房率概況比較 (四個月)")
+        col_chart1, col_chart2, col_chart3, col_chart4 = st.columns(4)
+
+        def render_occ_chart(month_data, title_suffix):
+            df = month_data['df'].copy()
+            if df.empty:
+                st.info(f"💡 {month_data['month_label']} 尚無數據。")
+                return
+
+            # 預先新增全月平均 ADR 基準線欄位，與主資料集完美共用同一資料來源以解決尺度分裂問題
+            avg_adr = month_data.get('avg_adr', 0)
+            df['adr_baseline'] = avg_adr
+            df['adr_baseline_text'] = ''
+
+            y_adr, y_pure_adr = fetch_yearly_metrics(
+                int(month_data['month_label'].split('-')[0]))
+            df['y_adr_baseline'] = y_adr
+            df['y_adr_text'] = ''
+            df['y_pure_adr_baseline'] = y_pure_adr
+            df['y_pure_adr_text'] = ''
+
+            if not df.empty:
+                if avg_adr > 0:
+                    df.loc[df.index[-1],
+                           'adr_baseline_text'] = f"${int(avg_adr):,} (月)"
+                if y_adr > 0:
+                    df.loc[df.index[-1], 'y_adr_text'] = f"${int(y_adr):,} (年)"
+                if y_pure_adr > 0:
+                    df.loc[df.index[-1],
+                           'y_pure_adr_text'] = f"${int(y_pure_adr):,} (純平)"
+
+            dt = pd.to_datetime(df['date'])
+            df['day'] = dt.dt.day
+            weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
+            df['weekday'] = dt.dt.weekday.map(weekday_map)
+            df['label'] = df['day'].astype(str) + " (" + df['weekday'] + ")"
+
+            df['color_category'] = df['occ_rate'].apply(
+                lambda x: '>=90' if x >= 90.0 else ('>=80' if x >= 80.0 else '<80'))
+
+            if not df.empty:
+                y_str, m_str = df['date'].iloc[0].split('-')[:2]
+                holidays_dict = fetch_holidays_for_month(int(y_str), int(m_str))
+
+                # 合併假日與台北活動標籤
+                def get_combined_flags_list(d_str):
+                    import re
+                    h_f_str = holidays_dict.get(d_str, {}).get('flags', '')
+                    h_flags = re.findall(r'\[.*?\]|🌍', h_f_str)
+
+                    e_flags = []
+                    if not taipei_events_df.empty:
+                        day_events = taipei_events_df[taipei_events_df['date'] == d_str]
+                        for _, row in day_events.iterrows():
+                            e_label = EVENT_TYPE_LABELS.get(
+                                row['event_type'], '[活]')
+                            if e_label not in e_flags:
+                                e_flags.append(e_label)
+                    return h_flags + e_flags
+
+                # 建立多層標籤資料 (最多支援 5 層垂直堆疊，避免過度擁擠)
+                for i in range(5):
+                    df[f'flag_{i}'] = df['date'].apply(lambda d: get_combined_flags_list(
+                        d)[i] if len(get_combined_flags_list(d)) > i else '')
+            else:
+                for i in range(5):
+                    df[f'flag_{i}'] = ''
+
+            # ==========================================
+            # 1. 建立 OCC 子圖 (長條圖 + 住房百分比文字標籤 + 活動/節慶)
+            # ==========================================
+            base_occ = alt.Chart(df).encode(
+                x=alt.X('label:O',
+                        title='日期',
+                        sort=df['label'].tolist(),
+                        axis=alt.Axis(labelAngle=0)),
+                tooltip=['date', 'occ_rate', 'adr']
+            )
+
+            bars = base_occ.mark_bar().encode(
+                y=alt.Y('occ_rate:Q', title='住房率 (%)',
+                        scale=alt.Scale(domain=[0, 100])),
+                color=alt.Color(
+                    'color_category:N',
+                    scale=alt.Scale(
+                        domain=['>=90', '>=80', '<80'],
+                        range=['#e74c3c', '#3498db', '#2ecc71']
+                    ),
+                    legend=None
+                )
+            )
+
+            # 住房率文字標籤 (自然繼承 OCC 軸，不需畫新軸)
+            text = base_occ.mark_text(
+                align='center',
+                baseline='bottom',
+                dy=-5,
+                fontSize=14,
+                fontWeight='bold'
+            ).encode(
+                y='occ_rate:Q',
+                text=alt.Text('occ_rate:Q', format='.1f')
+            )
+
+            # 建立多層垂直標籤
+            occ_layers = [bars, text]
+            for i in range(5):
+                offset = -22 - (i * 13)
+                f_layer = base_occ.mark_text(
+                    align='center',
+                    baseline='bottom',
+                    dy=offset,
+                    fontSize=11,
+                    fontWeight='normal'
+                ).encode(
+                    y='occ_rate:Q',
+                    text=f'flag_{i}:N'
+                )
+                occ_layers.append(f_layer)
+
+            occ_chart = alt.layer(*occ_layers)
+
+            # 計算當月 ADR 的邊界，鎖定統一的 Y 軸比例尺 domain，消除 Altair 多資料來源尺度獨立導致的錯位 Bug
+            valid_adrs = df[df['adr'] >
+                            0]['adr'] if not df.empty else pd.Series([])
+            if not valid_adrs.empty:
+                adr_min = max(0, int(valid_adrs.min() * 0.9))
+                adr_max = int(valid_adrs.max() * 1.1)
+            else:
+                adr_min = 2000
+                adr_max = 8000
+
+            avg_adr = month_data.get('avg_adr', 0)
+            y_adr, y_pure_adr = fetch_yearly_metrics(
+                int(month_data['month_label'].split('-')[0]))
+
+            if avg_adr > 0:
+                adr_min = min(adr_min, int(avg_adr * 0.9))
+                adr_max = max(adr_max, int(avg_adr * 1.1))
+            if y_adr > 0:
+                adr_min = min(adr_min, int(y_adr * 0.9))
+                adr_max = max(adr_max, int(y_adr * 1.1))
+            if y_pure_adr > 0:
+                adr_min = min(adr_min, int(y_pure_adr * 0.9))
+                adr_max = max(adr_max, int(y_pure_adr * 1.1))
+
+            adr_scale = alt.Scale(domain=[adr_min, adr_max], zero=False)
+
+            # ==========================================
+            # 2. 建立 ADR 子圖 (折線圖 + 資料點 + 紅色平均房價基準線 + 紅色金額數值標記)
+            # ==========================================
+            base_adr = alt.Chart(df).encode(
+                x=alt.X('label:O', sort=df['label'].tolist()),  # 自然與 OCC X 軸合併
+                tooltip=['date', 'occ_rate', 'adr']
+            )
+
+            adr_line = base_adr.mark_line(color='#ff9f43', strokeWidth=3, interpolate='monotone').encode(
+                y=alt.Y('adr:Q', title='平均房價 (NT$)', axis=alt.Axis(
+                    titleColor='#ff9f43', format='$,.0f'), scale=adr_scale)
+            )
+            adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
+                y=alt.Y('adr:Q', scale=adr_scale)
+            )
+
+            adr_layers = [adr_line, adr_points]
+
+            # 繪製全月平均 ADR 紅色基準線與右側數值標記
+            if avg_adr > 0:
+                # 建立水平紅色虛線 (共用相同 df 解決尺度獨立 bug，且因不含 X 編碼故保證水平)
+                baseline_rule = alt.Chart(df).mark_rule(
+                    color='#e74c3c',
+                    strokeWidth=1.5,
+                    strokeDash=[5, 5]
+                ).encode(
+                    y=alt.Y('adr_baseline:Q', scale=adr_scale)
+                )
+
+                # 建立紅色文字標籤 (共用相同 df，只在最後一天繪製文字，完美對齊)
+                baseline_text = alt.Chart(df).mark_text(
+                    align='right',     # 改為靠右對齊，讓文字往圖表內部 (左側) 延伸
+                    baseline='middle',
+                    dx=-8,             # 向左偏移 8 像素，避免與外側的年 ADR 數值重疊
+                    color='#000000',
+                    fontSize=12,
+                    fontWeight='bold'
+                ).encode(
+                    x=alt.X('label:O', sort=df['label'].tolist()),
+                    y=alt.Y('adr_baseline:Q', scale=adr_scale),
+                    text='text:N' if 'text' in df.columns else 'adr_baseline_text:N'
+                )
+                adr_layers.extend([baseline_rule, baseline_text])
+
+            # 繪製年 ADR 黃色基準線
+            if df.get('y_adr_baseline', pd.Series()).max() > 0:
+                y_adr_rule = alt.Chart(df).mark_rule(color='#f1c40f', strokeWidth=1.5, strokeDash=[
+                    5, 5]).encode(y=alt.Y('y_adr_baseline:Q', scale=adr_scale))
+                y_adr_text = alt.Chart(df).mark_text(
+                    align='left', baseline='middle', dx=8, dy=-14, color='#000000', fontSize=11, fontWeight='bold'
+                ).encode(
+                    x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_adr_baseline:Q', scale=adr_scale), text='y_adr_text:N'
+                )
+                adr_layers.extend([y_adr_rule, y_adr_text])
+
+            # 繪製年純平日 ADR 黑色基準線
+            if df.get('y_pure_adr_baseline', pd.Series()).max() > 0:
+                yp_adr_rule = alt.Chart(df).mark_rule(color='#000000', strokeWidth=1.5, strokeDash=[
+                    5, 5]).encode(y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale))
+                yp_adr_text = alt.Chart(df).mark_text(align='left', baseline='middle', dx=8, dy=14, color='#000000', fontSize=11, fontWeight='bold').encode(
+                    x=alt.X('label:O', sort=df['label'].tolist()), y=alt.Y('y_pure_adr_baseline:Q', scale=adr_scale), text='y_pure_adr_text:N'
+                )
+                adr_layers.extend([yp_adr_rule, yp_adr_text])
+
+            adr_chart = alt.layer(*adr_layers)
+
+            # ==========================================
+            # 3. 結合兩個子圖，宣告 Y 軸為獨立雙軸，實現完美對齊
+            # ==========================================
+            chart = alt.layer(occ_chart, adr_chart).resolve_scale(
+                y='independent'
+            ).properties(title=f"{month_data['month_label']} {title_suffix}", height=400)
+
+            st.altair_chart(chart, use_container_width=True)
+
+        with col_chart1:
+            render_occ_chart(m_prev_prev, "(前前月)")
+        with col_chart2:
+            render_occ_chart(m_prev, "(上月)")
+        with col_chart3:
+            render_occ_chart(m_curr, "(本月)")
+        with col_chart4:
+            render_occ_chart(m_next, "(下月)")
+
+        # --- A2. 去年同期軌跡對比 (YoY Daily Comparison) ---
+        st.markdown("#### 📅 去年同期軌跡對比 (YoY Daily Comparison)")
+        if not m_curr['df'].empty and not m_curr_ly['df'].empty:
+            df_ty = m_curr['df'].copy()
+            df_ly = m_curr_ly['df'].copy()
+
+            if 'day' not in df_ty.columns:
+                df_ty['day'] = pd.to_datetime(df_ty['date']).dt.day
+            if 'day' not in df_ly.columns:
+                df_ly['day'] = pd.to_datetime(df_ly['date']).dt.day
+
+            df_ty['year'] = '今年'
+            df_ly['year'] = '去年'
+
+            df_yoy = pd.concat([df_ty[['day', 'adr', 'year']],
+                               df_ly[['day', 'adr', 'year']]], ignore_index=True)
+            df_yoy['adr'] = pd.to_numeric(df_yoy['adr'], errors='coerce').fillna(0)
+
+            # 設定 Y 軸比例尺
+            yoy_adr_min = max(0, int(df_yoy['adr'].min() * 0.9))
+            yoy_adr_max = int(df_yoy['adr'].max() * 1.1)
+            if yoy_adr_min == yoy_adr_max:
+                yoy_adr_max += 1000
+
+            yoy_chart = alt.Chart(df_yoy).mark_line(point=True, strokeWidth=3).encode(
+                x=alt.X('day:O', title='日期 (Day of Month)'),
+                y=alt.Y('adr:Q', title='平均房價 (NT$)', scale=alt.Scale(
+                    domain=[yoy_adr_min, yoy_adr_max], zero=False)),
+                color=alt.Color('year:N',
+                                scale=alt.Scale(domain=['今年', '去年'], range=[
+                                                '#ff9f43', '#bdc3c7']),
+                                legend=alt.Legend(title="年份", orient="top-left")
+                                ),
+                strokeDash=alt.condition(
+                    alt.datum.year == '去年', alt.value([5, 5]), alt.value([0])),
+                tooltip=['day', 'year', 'adr']
+            ).properties(height=350)
+
+            st.altair_chart(yoy_chart, use_container_width=True)
+
+        st.markdown("<div style='margin-bottom:30px;'></div>",
+                    unsafe_allow_html=True)
+
+        # --- B. 關鍵表現數據分析 ---
+        st.markdown("#### 🌟 關鍵表現數據分析")
+
+        def calc_key_metrics(m_data):
+            df = m_data.get('df', pd.DataFrame())
+            res = {'high_adr_days': 0, 'top20_rev_avg': 0, 'bot20_rev_avg': 0,
+                   'dual_match_days': 0, 'month_label': m_data.get('month_label', '')}
+            if df is None or df.empty:
+                return res
+
+            avg_adr = m_data.get('avg_adr', 0)
+
+            # 確保數值正確
+            df['adr_val'] = pd.to_numeric(df['adr'], errors='coerce').fillna(0)
+            df['rev_val'] = pd.to_numeric(df['revenue'], errors='coerce').fillna(0)
+
+            # 高於當月平均 ADR 天數
+            df['is_high_adr'] = df['adr_val'] > avg_adr
+            res['high_adr_days'] = int(df['is_high_adr'].sum())
+
+            # 八二法則 (前 20% 與後 20%)
+            n_days = len(df)
+            n_top = max(1, int(round(n_days * 0.2)))
+
+            df_sorted = df.sort_values('rev_val', ascending=False)
+            top20_df = df_sorted.head(n_top)
+            bot20_df = df_sorted.tail(n_top)
+
+            res['top20_rev_avg'] = top20_df['rev_val'].mean(
+            ) if not top20_df.empty else 0
+            res['bot20_rev_avg'] = bot20_df['rev_val'].mean(
+            ) if not bot20_df.empty else 0
+
+            # 雙冠天數：前 20% 營收日中，ADR 也大於當月平均 ADR 的天數
+            dual_match_df = top20_df[top20_df['is_high_adr']]
+            res['dual_match_days'] = int(len(dual_match_df))
+            res['dual_match_dates'] = dual_match_df['date'].sort_values(
+            ).tolist() if not dual_match_df.empty else []
+
+            return res
+
+        curr_metrics = calc_key_metrics(m_curr)
+        prev_metrics = calc_key_metrics(m_prev)
+        pprev_metrics = calc_key_metrics(m_prev_prev)
+        next_metrics = calc_key_metrics(m_next)
+
+        def metric_diff_card(label, diff, target_label, unit="天"):
+            color = '#2ecc71' if diff >= 0 else '#e74c3c'
+            status = '本月多' if diff > 0 else '較少' if diff < 0 else '持平'
+            return f'<div style="flex: 1; min-width: 150px; background: #fff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 10px;"><p style="margin:0; font-size:12px; color:#999;">與 {target_label} 相比</p><div style="display: flex; align-items: baseline; gap: 8px; margin-top: 5px;"><strong style="font-size:18px; color:{color};">{abs(diff)} {unit}</strong><span style="font-size:11px; color:#666;">({status})</span></div></div>'
+
+        # 天數差異
+        diff_adr_pp = curr_metrics['high_adr_days'] - \
+            pprev_metrics['high_adr_days']
+        diff_adr_p = curr_metrics['high_adr_days'] - prev_metrics['high_adr_days']
+        diff_adr_n = curr_metrics['high_adr_days'] - next_metrics['high_adr_days']
+
+        diff_dual_pp = curr_metrics['dual_match_days'] - \
+            pprev_metrics['dual_match_days']
+        diff_dual_p = curr_metrics['dual_match_days'] - \
+            prev_metrics['dual_match_days']
+        diff_dual_n = curr_metrics['dual_match_days'] - \
+            next_metrics['dual_match_days']
+
+        kp_col1, kp_col2 = st.columns([1.5, 1])
+
+        with kp_col1:
+            st.markdown(f"""
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 20px;">
+                <p style="margin:0; font-size:14px; color:#666;">📈 <strong>高於當月平均 ADR 天數 (本月: {curr_metrics['high_adr_days']} 天)</strong></p>
+                <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                    {metric_diff_card("前前月", diff_adr_pp, pprev_metrics['month_label'])}
+                    {metric_diff_card("上月", diff_adr_p, prev_metrics['month_label'])}
+                    {metric_diff_card("下月預期", diff_adr_n, next_metrics['month_label'])}
+                </div>
+                <p style="margin:15px 0 0 0; font-size:14px; color:#666;">🏆 <strong>雙冠天數：前 20% 營收且高 ADR (本月: {curr_metrics['dual_match_days']} 天)</strong></p>
+                <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
+                    {metric_diff_card("前前月", diff_dual_pp, pprev_metrics['month_label'])}
+                    {metric_diff_card("上月", diff_dual_p, prev_metrics['month_label'])}
+                    {metric_diff_card("下月預期", diff_dual_n, next_metrics['month_label'])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with kp_col2:
+            st.markdown(f"""
+            <div style="background: #fffcf5; padding: 15px; border-radius: 10px; border-left: 5px solid #f39c12; margin-bottom: 20px; height: 100%;">
+                <p style="margin:0; font-size:14px; color:#666;">📊 <strong>高低營收分析 (本月)</strong></p>
+                <div style="margin-top: 20px;">
+                    <p style="margin:0; font-size:13px; color:#999;">🔥 前 20% 營收日 (Top 20%) 平均營收</p>
+                    <h3 style="margin: 5px 0 15px 0; color: #d35400;">NT$ {int(curr_metrics['top20_rev_avg']):,}</h3>
+                    <p style="margin:0; font-size:13px; color:#999;">❄️ 後 20% 營收日 (Bottom 20%) 平均營收</p>
+                    <h3 style="margin: 5px 0 15px 0; color: #7f8c8d;">NT$ {int(curr_metrics['bot20_rev_avg']):,}</h3>
+                    <hr style="border: 0; border-top: 1px dashed #eee; margin: 15px 0;">
+                    <p style="margin:0; font-size:12px; color:#888;">💡 <strong>解讀</strong>：當前後 20% 的平均營收差距擴大時，代表淡旺日的業績差距大，可針對淡日加強促銷。</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # --- B3. OCC vs ADR 四象限定價診斷圖 ---
+        st.markdown("#### 🎯 定價水位診斷：住房率 vs 平均房價 四象限分析（以年純平 ADR 為底線基準）")
+        scatter_df = m_curr['df'].copy()
+        if not scatter_df.empty:
+            scatter_df['occ_val'] = pd.to_numeric(
+                scatter_df['occ_rate'], errors='coerce').fillna(0)
+            scatter_df['adr_val'] = pd.to_numeric(
+                scatter_df['adr'], errors='coerce').fillna(0)
+            scatter_df['day'] = pd.to_datetime(scatter_df['date']).dt.day
+
+            # 以「年純平 ADR」作為 Y 軸分界（最客觀的裸實力底線，不受淡日拉低）
+            y_adr_s, y_pure_adr_s = fetch_yearly_metrics(selected_date.year)
+            adr_anchor = y_pure_adr_s if y_pure_adr_s > 0 else m_curr.get(
+                'avg_adr', scatter_df['adr_val'].mean())
+            anchor_label = f'年純平 ADR ${int(adr_anchor):,}'
+            anchor_color = '#000000'
+            occ_threshold = 85.0  # 高住房率門檻
+
+            def classify_quadrant(row):
+                hi_occ = row['occ_val'] >= occ_threshold
+                hi_adr = row['adr_val'] >= adr_anchor
+                if hi_occ and hi_adr:
+                    return '🟠 理想（高OCC+高ADR）'
+                if hi_occ and not hi_adr:
+                    return '🔴 賤賣（高OCC+低ADR）'
+                if not hi_occ and hi_adr:
+                    return '🟡 定價偏高（低OCC+高ADR）'
+                return '🔵 淡季死水（低OCC+低ADR）'
+
+            scatter_df['象限'] = scatter_df.apply(classify_quadrant, axis=1)
+
+            color_map = {
+                '🟠 理想（高OCC+高ADR）': '#ff9f43',
+                '🔴 賤賣（高OCC+低ADR）': '#e74c3c',
+                '🟡 定價偏高（低OCC+高ADR）': '#f1c40f',
+                '🔵 淡季死水（低OCC+低ADR）': '#3498db',
+            }
+
+            scatter_chart = alt.Chart(scatter_df).mark_circle(size=100, opacity=0.8).encode(
+                x=alt.X('occ_val:Q', title='住房率 (%)',
+                        scale=alt.Scale(domain=[0, 105])),
+                y=alt.Y('adr_val:Q', title='平均房價 ADR (NT$)',
+                        scale=alt.Scale(zero=False)),
+                color=alt.Color('象限:N',
+                                scale=alt.Scale(
+                                    domain=list(color_map.keys()),
+                                    range=list(color_map.values())
+                                ),
+                                legend=alt.Legend(
+                                    title="象限分類", orient="bottom", columns=2)
+                                ),
+                tooltip=[
+                    alt.Tooltip('date:N', title='日期'),
+                    alt.Tooltip('occ_val:Q', title='住房率 (%)', format='.1f'),
+                    alt.Tooltip('adr_val:Q', title='ADR (NT$)', format=',.0f'),
+                    alt.Tooltip('象限:N', title='象限'),
+                ]
+            )
+
+            # 年純平 ADR 水平輔助線
+            adr_rule = alt.Chart(pd.DataFrame({'y': [adr_anchor]})).mark_rule(
+                color=anchor_color, strokeDash=[6, 3], strokeWidth=2
+            ).encode(y='y:Q')
+            adr_label = alt.Chart(pd.DataFrame({'y': [adr_anchor], 'x': [105], 'text': [anchor_label]})).mark_text(
+                align='right', dx=-4, dy=-8, color=anchor_color, fontSize=11, fontWeight='bold'
+            ).encode(x='x:Q', y='y:Q', text='text:N')
+
+            # 85% OCC 垂直輔助線
+            occ_rule = alt.Chart(pd.DataFrame({'x': [occ_threshold]})).mark_rule(
+                color='#7f8c8d', strokeDash=[6, 3], strokeWidth=1.5
+            ).encode(x='x:Q')
+            occ_label = alt.Chart(pd.DataFrame({'x': [occ_threshold], 'y': [scatter_df['adr_val'].max() * 1.05], 'text': ['85% OCC 門檻']})).mark_text(
+                align='left', dx=4, color='#7f8c8d', fontSize=11, fontWeight='bold'
+            ).encode(x='x:Q', y='y:Q', text='text:N')
+
+            final_chart = alt.layer(scatter_chart, adr_rule, adr_label, occ_rule, occ_label).properties(
+                height=380,
+                title=f"{m_curr['month_label']} 每日定價水位診斷（每個點代表一天，以年純平 ADR 為底線）"
+            )
+            st.altair_chart(final_chart, use_container_width=True)
+
+            # 各象限天數摘要
+            q_counts = scatter_df['象限'].value_counts()
+            q_cols = st.columns(4)
+            for i, (q_name, color) in enumerate(color_map.items()):
+                cnt = q_counts.get(q_name, 0)
+                q_cols[i].markdown(
+                    f"<div style='background:{color}22; border-left:4px solid {color}; padding:10px; border-radius:6px; text-align:center;'>"
+                    f"<p style='margin:0; font-size:12px; color:#555;'>{q_name}</p>"
+                    f"<strong style='font-size:22px;'>{cnt} 天</strong></div>",
+                    unsafe_allow_html=True
+                )
+            st.write("")
+
+            # --- 定價成功率 (Pricing Success Rate) ---
+            ideal_cnt = q_counts.get('🟠 理想（高OCC+高ADR）', 0)
+            cheap_cnt = q_counts.get('🔴 賤賣（高OCC+低ADR）', 0)
+            high_occ_total = ideal_cnt + cheap_cnt
+            success_rate = (ideal_cnt / high_occ_total *
+                            100) if high_occ_total > 0 else 0
+
+            # 計算上個月的定價成功率作為對比
+            prev_scatter_df = m_prev['df'].copy()
+            prev_success_rate = 0
+            if not prev_scatter_df.empty:
+                prev_scatter_df['occ_val'] = pd.to_numeric(
+                    prev_scatter_df['occ_rate'], errors='coerce').fillna(0)
+                prev_scatter_df['adr_val'] = pd.to_numeric(
+                    prev_scatter_df['adr'], errors='coerce').fillna(0)
+                prev_scatter_df['hi_occ'] = prev_scatter_df['occ_val'] >= occ_threshold
+                prev_scatter_df['hi_adr'] = prev_scatter_df['adr_val'] >= adr_anchor
+                prev_ideal = int(
+                    (prev_scatter_df['hi_occ'] & prev_scatter_df['hi_adr']).sum())
+                prev_cheap = int(
+                    (prev_scatter_df['hi_occ'] & ~prev_scatter_df['hi_adr']).sum())
+                prev_total = prev_ideal + prev_cheap
+                prev_success_rate = (prev_ideal / prev_total *
+                                     100) if prev_total > 0 else 0
+
+            rate_diff = success_rate - prev_success_rate
+            rate_color = '#2ecc71' if rate_diff >= 0 else '#e74c3c'
+            rate_sign = '+' if rate_diff >= 0 else ''
+
+            if success_rate >= 80:
+                bar_color = '#2ecc71'
+                verdict = '🟢 定價能力優秀'
+            elif success_rate >= 60:
+                bar_color = '#f39c12'
+                verdict = '🟡 定價能力尚可'
+            else:
+                bar_color = '#e74c3c'
+                verdict = '🔴 定價能力待改善'
+
+            st.markdown(f"""
+            <div style="background:#f8f9fa; border-radius:10px; padding:20px; margin-top:10px; border-left: 5px solid {bar_color};">
+                <p style="margin:0 0 8px 0; font-size:14px; color:#555;">
+                    📐 <strong>高住房日定價成功率</strong>
+                    <span style="font-size:12px; color:#aaa; margin-left:8px;">高OCC 天數共 {high_occ_total} 天，其中 {int(ideal_cnt)} 天 ADR 超過年純平基準</span>
+                </p>
+                <div style="display:flex; align-items:baseline; gap:15px; flex-wrap:wrap;">
+                    <strong style="font-size:40px; color:{bar_color};">{success_rate:.1f}%</strong>
+                    <span style="font-size:14px;">{verdict}</span>
+                    <span style="font-size:14px; color:{rate_color}; font-weight:bold;">vs 上月 {prev_success_rate:.1f}% ({rate_sign}{rate_diff:.1f}%)</span>
+                </div>
+                <div style="background:#e0e0e0; border-radius:999px; height:10px; margin-top:10px;">
+                    <div style="background:{bar_color}; width:{min(success_rate, 100):.1f}%; height:10px; border-radius:999px; transition: width 0.5s;"></div>
+                </div>
+                <p style="margin:8px 0 0 0; font-size:12px; color:#888;">💡 目標：讓「賤賣天數」每月減少 1-2 天，持續將成功率推向 80%</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.write("")
+
+        # --- B2. 即將到來的重大活動與假日警報 ---
+        st.markdown("#### 🚨 即將到來的重大活動與假日警報 (未來 30 天)")
+        upcoming_holidays = fetch_upcoming_holidays(selected_date, 30)
+
+        # 合併台北重大活動至警報列表 (分開呈現假日與活動)
+        combined_alerts = []
+        h_map = {h['date']: h for h in upcoming_holidays}
+
+        for i in range(31):
+            d_obj = selected_date + datetime.timedelta(days=i)
+            d_str = d_obj.strftime('%Y-%m-%d')
+
+            h_info = h_map.get(d_str)
+            e_list = []
+            e_labels = []
+            if not taipei_events_df.empty:
+                day_events = taipei_events_df[taipei_events_df['date'] == d_str]
+                for _, row in day_events.iterrows():
+                    v_suffix = f" <span style='color:#777;'>@{row['venue']}</span>" if pd.notna(
+                        row['venue']) and str(row['venue']).strip() != "" else ""
+                    e_list.append(f"🏟️ {row['event_name']}{v_suffix}")
+                    e_labels.append(EVENT_TYPE_LABELS.get(
+                        row['event_type'], '[活]'))
+
+            if h_info or e_list:
+                all_flags = (h_info['flags'] if h_info else "") + \
+                    "".join(sorted(list(set(e_labels))))
+                details_html = ""
+                if h_info:
+                    details_html += f"<div style='margin-bottom:4px; color:#856404;'>🌍 {h_info['details']}</div>"
+                if e_list:
+                    details_html += "<div style='color:#2c3e50;'>" + \
+                        "<br>".join(e_list) + "</div>"
+
+                combined_alerts.append({
+                    'date': d_str,
+                    'flags': all_flags,
+                    'details_html': details_html
+                })
+
+        if combined_alerts:
+            alert_html = "<div style='display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;'>"
+            for h in combined_alerts:
+                alert_html += f"<div style='min-width: 250px; background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 5px;'><strong style='color: #856404;'>{h['date']}</strong> <span style='font-size: 1.1em;'>{h['flags']}</span><br><div style='font-size: 0.85em; margin-top:5px;'>{h['details_html']}</div></div>"
+            alert_html += "</div>"
+            st.write(alert_html, unsafe_allow_html=True)
+        else:
+            st.info("未來 30 天內無重大假日或台北活動。")
+
+        st.divider()
+
+        # --- C. 假日與活動績效分析 ---
+        st.markdown("#### 🌍 績效貢獻度交叉分析")
+        curr_df = m_curr['df'].copy()
+        if not curr_df.empty:
+            y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
+            h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
+            h_dates = {d for d, info in h_dict.items() if info['flags']}
+            e_dates = set(taipei_events_df['date'].unique(
+            )) if not taipei_events_df.empty else set()
+
+            curr_df['is_h'] = curr_df['date'].isin(h_dates)
+            curr_df['is_e'] = curr_df['date'].isin(e_dates)
+            curr_df['is_any'] = curr_df['is_h'] | curr_df['is_e']
+
+            def render_impact_row(df, condition_col, title, icon):
+                holiday_days = df[df[condition_col]]
+                non_holiday_days = df[~df[condition_col]]
+
+                h_occ = holiday_days['occ_rate'].mean() if len(
+                    holiday_days) > 0 else 0
+                h_adr = holiday_days['revenue'].sum() / holiday_days['total_rooms'].sum() if len(
+                    holiday_days) > 0 and holiday_days['total_rooms'].sum() > 0 else 0
+                nh_occ = non_holiday_days['occ_rate'].mean() if len(
+                    non_holiday_days) > 0 else 0
+                nh_adr = non_holiday_days['revenue'].sum() / non_holiday_days['total_rooms'].sum(
+                ) if len(non_holiday_days) > 0 and non_holiday_days['total_rooms'].sum() > 0 else 0
+
+                diff_occ = h_occ - nh_occ
+                diff_adr = h_adr - nh_adr
+
+                st.markdown(f"**{icon} {title}**")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(
+                    f"<div style='background:#f1f8ff; padding:10px; border-radius:5px; border-left:3px solid #3498db; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>有標籤 ({len(holiday_days)}天)</p><strong style='font-size:16px;'>{h_occ:.1f}% / NT$ {int(h_adr):,}</strong></div>", unsafe_allow_html=True)
+                c2.markdown(
+                    f"<div style='background:#f8f9fa; padding:10px; border-radius:5px; border-left:3px solid #ccc; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>無標籤 ({len(non_holiday_days)}天)</p><strong style='font-size:16px;'>{nh_occ:.1f}% / NT$ {int(nh_adr):,}</strong></div>", unsafe_allow_html=True)
+                color = "#2ecc71" if diff_occ >= 0 else "#e74c3c"
+                c3.markdown(
+                    f"<div style='background:#f0fff4; padding:10px; border-radius:5px; border-left:3px solid #2ecc71; height:100%;'><p style='margin:0; font-size:12px; color:#666;'>帶動效益</p><strong style='font-size:16px; color:{color};'>{diff_occ:+.1f}% / NT$ {int(diff_adr):+,}</strong></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-bottom:15px;'></div>",
+                            unsafe_allow_html=True)
+
+            def render_exclusive_matrix(df, title_suffix=""):
+                st.markdown(f"**📐 四象限排他性交叉分析 {title_suffix}**")
+
+                is_e = df['is_e']
+                is_h = df['is_h']
+
+                df_pure_weekday = df[~is_e & ~is_h]
+                df_pure_event = df[is_e & ~is_h]
+                df_pure_holiday = df[~is_e & is_h]
+                df_double_impact = df[is_e & is_h]
+
+                def get_metrics(sub_df):
+                    days = len(sub_df)
+                    if days == 0:
+                        return 0, 0, days
+                    occ = sub_df['occ_rate'].mean()
+                    adr = sub_df['revenue'].sum(
+                    ) / sub_df['total_rooms'].sum() if sub_df['total_rooms'].sum() > 0 else 0
+                    return occ, adr, days
+
+                occ_pw, adr_pw, days_pw = get_metrics(df_pure_weekday)
+                occ_pe, adr_pe, days_pe = get_metrics(df_pure_event)
+                occ_ph, adr_ph, days_ph = get_metrics(df_pure_holiday)
+                occ_di, adr_di, days_di = get_metrics(df_double_impact)
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                def format_diff(val, is_percent=False):
+                    if val == 0:
+                        return "0.0%" if is_percent else "NT$ 0"
+                    sign = "+" if val > 0 else ""
+                    if is_percent:
+                        return f"{sign}{val:.1f}%"
+                    else:
+                        return f"{sign}NT$ {int(val):,}"
+
+                # 象限 4: 純平日
+                with col1:
+                    st.markdown(
+                        f"<div style='background:#1e293b; padding:15px; border-radius:8px; border-left:4px solid #94a3b8; height:100%; min-height:140px; color:#f8fafc;'>"
+                        f"<p style='margin:0; font-size:12px; color:#94a3b8; font-weight:bold;'>【象限 4】純平日 ({days_pw}天)</p>"
+                        f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>基準對照組</p>"
+                        f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pw:.1f}% / NT$ {int(adr_pw):,}</strong>"
+                        f"<p style='margin:8px 0 0 0; font-size:11px; color:#64748b;'>無活動、無節慶的基準線</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                # 象限 1: 純活動日
+                with col2:
+                    diff_occ = occ_pe - occ_pw if days_pe > 0 and days_pw > 0 else 0
+                    diff_adr = adr_pe - adr_pw if days_pe > 0 and days_pw > 0 else 0
+                    color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                    bg_style = "background:#0f172a; border-left:4px solid #3b82f6;"
+                    desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_pe > 0 else "無數據"
+                    st.markdown(
+                        f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                        f"<p style='margin:0; font-size:12px; color:#3b82f6; font-weight:bold;'>【象限 1】純活動日 ({days_pe}天)</p>"
+                        f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅台北重大活動</p>"
+                        f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_pe:.1f}% / NT$ {int(adr_pe):,}</strong>"
+                        f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                # 象限 2: 純節慶日
+                with col3:
+                    diff_occ = occ_ph - occ_pw if days_ph > 0 and days_pw > 0 else 0
+                    diff_adr = adr_ph - adr_pw if days_ph > 0 and days_pw > 0 else 0
+                    color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                    bg_style = "background:#0f172a; border-left:4px solid #eab308;"
+                    desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_ph > 0 else "無數據"
+                    st.markdown(
+                        f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                        f"<p style='margin:0; font-size:12px; color:#eab308; font-weight:bold;'>【象限 2】純節慶日 ({days_ph}天)</p>"
+                        f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>僅外國節慶</p>"
+                        f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_ph:.1f}% / NT$ {int(adr_ph):,}</strong>"
+                        f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                # 象限 3: 黃金雙重日
+                with col4:
+                    diff_occ = occ_di - occ_pw if days_di > 0 and days_pw > 0 else 0
+                    diff_adr = adr_di - adr_pw if days_di > 0 and days_pw > 0 else 0
+                    color = "#10b981" if diff_adr >= 0 else "#ef4444"
+                    bg_style = "background:#1e1b4b; border-left:4px solid #a855f7;"
+                    desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_di > 0 else "無數據"
+                    st.markdown(
+                        f"<div style='{bg_style} padding:15px; border-radius:8px; height:100%; min-height:140px; color:#f8fafc;'>"
+                        f"<p style='margin:0; font-size:12px; color:#a855f7; font-weight:bold;'>【象限 3】黃金雙重日 ({days_di}天)</p>"
+                        f"<p style='margin:5px 0 0 0; font-size:12px; color:#cbd5e1;'>活動 ＋ 節慶疊加</p>"
+                        f"<strong style='font-size:18px; color:#f1f5f9;'>{occ_di:.1f}% / NT$ {int(adr_di):,}</strong>"
+                        f"<p style='margin:8px 0 0 0; font-size:12px; color:#cbd5e1;'>{desc}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                st.markdown("<div style='margin-bottom:20px;'></div>",
+                            unsafe_allow_html=True)
+
+            render_impact_row(curr_df, 'is_any', "綜合分析 (假日 + 台北活動)", "📊")
+            render_impact_row(curr_df, 'is_h', "僅外國節慶分析", "🌍")
+            render_impact_row(curr_df, 'is_e', "僅台北重大活動分析", "🏟️")
 
             st.markdown("<div style='margin-bottom:20px;'></div>",
                         unsafe_allow_html=True)
-            render_exclusive_matrix(hist_df, "(過去三個月合計)")
-        else:
-            st.info("尚無足夠的歷史數據進行長期趨勢分析。")
+            render_exclusive_matrix(curr_df, "(當月)")
 
-        with st.expander("📅 查看本月所有假日與台北活動詳細清單"):
-            # Combine details for expander
-            all_dates = sorted(set(list(h_dict.keys(
-            )) + (taipei_events_df['date'].tolist() if not taipei_events_df.empty else [])))
-            has_any = False
-            for d in all_dates:
-                if d.startswith(f"{y_str}-{m_str}"):
-                    h_info = h_dict.get(d, {'flags': '', 'details': []})
-                    e_info = ""
+            st.divider()
+
+            # --- C2. 過去三個月合計績效分析 (長期趨勢) ---
+            st.markdown("#### ⏳ 過去三個月合計績效分析 (長期趨勢)")
+            # 取得前三個月日期
+            m1_date = get_month_delta(selected_date, -1)
+            m2_date = get_month_delta(selected_date, -2)
+            m3_date = get_month_delta(selected_date, -3)
+
+            m1_sum = fetch_month_summary(m1_date.year, m1_date.month)
+            m2_sum = fetch_month_summary(m2_date.year, m2_date.month)
+            m3_sum = fetch_month_summary(m3_date.year, m3_date.month)
+
+            hist_df = pd.concat([m1_sum['df'], m2_sum['df'],
+                                m3_sum['df']], ignore_index=True)
+
+            if not hist_df.empty:
+                # 準備歷史資料的標籤
+                def get_hist_flags(row):
+                    d = row['date']
+                    y, m = int(d.split('-')[0]), int(d.split('-')[1])
+                    h_f = fetch_holidays_for_month(
+                        y, m).get(d, {}).get('flags', '')
+                    e_f = ""
                     if not taipei_events_df.empty:
                         de = taipei_events_df[taipei_events_df['date'] == d]
                         for _, r in de.iterrows():
-                            v_suffix = f" @{r['venue']}" if pd.notna(
-                                r['venue']) and str(r['venue']).strip() != "" else ""
-                            e_info += f", 🏟️ {r['event_name']}{v_suffix} ({r['event_type']})"
+                            e_f += EVENT_TYPE_LABELS.get(r['event_type'], '[活]')
+                    return (h_f != ''), (e_f != '')
 
-                    if h_info['flags'] or e_info:
-                        st.markdown(
-                            f"- **{d}** {h_info['flags']}{e_info}: {', '.join(h_info['details'])}")
-                        has_any = True
-            if not has_any:
-                st.write("本月無任何重大活動或假日。")
-    else:
-        st.info("本月尚無營運數據可供分析。")
+                # 為了效能，預先抓取這幾個月的假日資料
+                hist_h_dates = set()
+                for md in [m1_date, m2_date, m3_date]:
+                    hd = fetch_holidays_for_month(md.year, md.month)
+                    for d, info in hd.items():
+                        if info['flags']:
+                            hist_h_dates.add(d)
 
-    st.divider()
+                hist_df['is_h'] = hist_df['date'].isin(hist_h_dates)
+                hist_df['is_e'] = hist_df['date'].isin(
+                    set(taipei_events_df['date'].unique())) if not taipei_events_df.empty else False
+                hist_df['is_any'] = hist_df['is_h'] | hist_df['is_e']
 
-    # --- D. 月度營運指標 (四個月對比) ---
-    st.subheader("📌 月度營運指標對比")
+                render_impact_row(hist_df, 'is_any', "綜合分析 (過去三個月合計)", "📊")
+                render_impact_row(hist_df, 'is_h', "僅外國節慶分析 (過去三個月合計)", "🌍")
+                render_impact_row(hist_df, 'is_e', "僅台北重大活動分析 (過去三個月合計)", "🏟️")
 
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                st.markdown("<div style='margin-bottom:20px;'></div>",
+                            unsafe_allow_html=True)
+                render_exclusive_matrix(hist_df, "(過去三個月合計)")
+            else:
+                st.info("尚無足夠的歷史數據進行長期趨勢分析。")
 
-    def render_metric_col(month_data, label):
-        st.markdown(
-            f"<p style='text-align:center; color:#777; margin-bottom:10px;'>{label} ({month_data['month_label']})</p>", unsafe_allow_html=True)
-        if not month_data['df'].empty:
-            st.markdown(make_card(
-                "當月總營收", f"NT$ {int(month_data['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card(
-                "當月平均房價", f"NT$ {int(month_data['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card(
-                "當月住房率", f"{month_data['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
-            st.markdown(make_card(
-                "當月 RevPAR", f"NT$ {int(month_data['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
+            with st.expander("📅 查看本月所有假日與台北活動詳細清單"):
+                # Combine details for expander
+                all_dates = sorted(set(list(h_dict.keys(
+                )) + (taipei_events_df['date'].tolist() if not taipei_events_df.empty else [])))
+                has_any = False
+                for d in all_dates:
+                    if d.startswith(f"{y_str}-{m_str}"):
+                        h_info = h_dict.get(d, {'flags': '', 'details': []})
+                        e_info = ""
+                        if not taipei_events_df.empty:
+                            de = taipei_events_df[taipei_events_df['date'] == d]
+                            for _, r in de.iterrows():
+                                v_suffix = f" @{r['venue']}" if pd.notna(
+                                    r['venue']) and str(r['venue']).strip() != "" else ""
+                                e_info += f", 🏟️ {r['event_name']}{v_suffix} ({r['event_type']})"
+
+                        if h_info['flags'] or e_info:
+                            st.markdown(
+                                f"- **{d}** {h_info['flags']}{e_info}: {', '.join(h_info['details'])}")
+                            has_any = True
+                if not has_any:
+                    st.write("本月無任何重大活動或假日。")
         else:
-            st.info("暫無數據")
+            st.info("本月尚無營運數據可供分析。")
 
-    with col_m1:
-        render_metric_col(m_prev_prev, "⏪ 前前月")
-    with col_m2:
-        render_metric_col(m_prev, "◀️ 上月")
-    with col_m3:
-        render_metric_col(m_curr, "✨ 本月")
-    with col_m4:
-        render_metric_col(m_next, "▶️ 下月")
+        st.divider()
 
-    # --- D. 月度營運指標 - 關鍵差異 ---
-    st.markdown("#### 🔍 月度營運指標：關鍵差異對比 (本月 vs 其他月份)")
+        # --- D. 月度營運指標 (四個月對比) ---
+        st.subheader("📌 月度營運指標對比")
 
-    def calculate_diff_row(current_val, compare_val, is_currency=True, is_percent=False):
-        if compare_val == 0:
-            return "<span style='color:#777;'>-</span>"
-        diff = current_val - compare_val
-        if is_currency:
-            diff_str = f"{'▲' if diff >= 0 else '▼'} NT$ {abs(int(diff)):,}"
-        elif is_percent:
-            diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}%"
-        else:
-            diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}"
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 
-        color = "#2ecc71" if diff >= 0 else "#e74c3c"  # 增加為綠色，減少為紅色
-        return f"<span style='color:{color}; font-weight:bold;'>{diff_str}</span>"
-
-    diff_table_html = f"""
-    <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 15px;">
-        <tr style="background-color: #f1f3f6; text-align: left;">
-            <th style="padding: 12px; border: 1px solid #ddd;">指標項目</th>
-            <th style="padding: 12px; border: 1px solid #ddd;">與前前月 ({m_prev_prev['month_label']}) 相比</th>
-            <th style="padding: 12px; border: 1px solid #ddd;">與上月 ({m_prev['month_label']}) 相比</th>
-            <th style="padding: 12px; border: 1px solid #ddd;">與下月 ({m_next['month_label']}) 相比</th>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月總營收</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev_prev['rev'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev['rev'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_next['rev'])}</td>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月平均房價 (ADR)</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev_prev['avg_adr'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev['avg_adr'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_next['avg_adr'])}</td>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月住房率 (%)</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev_prev['avg_occ'], False, True)}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev['avg_occ'], False, True)}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_next['avg_occ'], False, True)}</td>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月 RevPAR</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev_prev['revpar'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev['revpar'])}</td>
-            <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_next['revpar'])}</td>
-        </tr>
-    </table>
-    """
-    st.write(diff_table_html, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」；差異對比中 ▲ 代表本月較高，▼ 代表本月較低。")
-
-    st.divider()
-
-    # --- 3. 達標分析指數 ---
-    st.subheader("🎯 達標分析指數")
-
-    # 獲取與保存目標 (針對所選月份)
-    month_key = selected_date.strftime('%Y-%m')
-    current_target = get_monthly_target(month_key)
-    m_rev = m_curr['rev']  # 使用剛剛計算好的本月營收
-
-    t_col1, t_col2 = st.columns([1, 2])
-    with t_col1:
-        new_target = st.number_input(f"設定 {month_key} 目標業績 (NT$)", min_value=0,
-                                     step=10000, value=current_target, key=f"target_input_{month_key}")
-        if new_target != current_target:
-            save_monthly_target(month_key, new_target)
-            st.toast(f"已更新 {month_key} 目標業績！")
-            time.sleep(0.5)
-            st.rerun()
-
-    if new_target > 0:
-        gap = new_target - m_rev
-        stretch_goal = new_target * 1.1
-        stretch_gap = stretch_goal - m_rev
-        progress = min(1.0, m_rev / new_target)
-        st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
-
-        # 營收進度外推預估 (Run-Rate Forecast)
-        active_days = m_curr['df'][m_curr['df']['revenue'] > 0]
-        elapsed_days = len(active_days)
-
-        if elapsed_days > 0:
-            import calendar
-            total_days = calendar.monthrange(
-                selected_date.year, selected_date.month)[1]
-            daily_avg = m_rev / elapsed_days
-            projected_rev = daily_avg * total_days
-            projected_progress = projected_rev / new_target
-
-            # 預警顏色與文字
-            status_color = "#2ecc71" if projected_rev >= new_target else "#ef4444"
-            status_icon = "📈" if projected_rev >= new_target else "⚠️"
-            status_text = "依目前進度，預計**可順利達標**！" if projected_rev >= new_target else "依目前進度，**達標可能有難度**，建議調整動態定價或加強促銷！"
-
+        def render_metric_col(month_data, label):
             st.markdown(
-                f"<div style='background: #1e293b; padding: 15px; border-radius: 8px; border-left: 5px solid {status_color}; margin-top: 10px; margin-bottom: 15px; color: #f8fafc;'>"
-                f"<p style='margin:0; font-size:13px; color:#94a3b8;'>🔮 <strong>當月營收進度外推預估 (Pacing Forecast)</strong></p>"
-                f"<div style='display: flex; gap: 20px; align-items: center; margin-top: 5px; flex-wrap: wrap; font-size: 13px;'>"
-                f"<div>已統計天數: <strong style='color:#f1f5f9;'>{elapsed_days} / {total_days} 天</strong></div>"
-                f"<div>當前日均營收: <strong style='color:#f1f5f9;'>NT$ {int(daily_avg):,}</strong></div>"
-                f"<div>預估月底總營收: <strong style='color:{status_color}; font-size: 15px;'>NT$ {int(projected_rev):,}</strong></div>"
-                f"<div>預估最終達成率: <strong style='color:{status_color}; font-size: 15px;'>{projected_progress*100:.1f}%</strong></div>"
-                f"</div>"
-                f"<p style='margin: 8px 0 0 0; font-size: 12px; color: #cbd5e1;'>{status_icon} {status_text}</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+                f"<p style='text-align:center; color:#777; margin-bottom:10px;'>{label} ({month_data['month_label']})</p>", unsafe_allow_html=True)
+            if not month_data['df'].empty:
+                st.markdown(make_card(
+                    "當月總營收", f"NT$ {int(month_data['rev']):,}", "card-theme-orange", "card-bg-dark"), unsafe_allow_html=True)
+                st.markdown(make_card(
+                    "當月平均房價", f"NT$ {int(month_data['avg_adr']):,}", "card-theme-green", "card-bg-dark"), unsafe_allow_html=True)
+                st.markdown(make_card(
+                    "當月住房率", f"{month_data['avg_occ']:.1f}%", "card-theme-blue", "card-bg-dark"), unsafe_allow_html=True)
+                st.markdown(make_card(
+                    "當月 RevPAR", f"NT$ {int(month_data['revpar']):,}", "card-theme-purple", "card-bg-dark"), unsafe_allow_html=True)
+            else:
+                st.info("暫無數據")
 
-        a_col1, a_col2, a_col3 = st.columns(3)
-        if gap <= 0:
-            t_card = make_card("目標達成狀況", "🎉 已達標！", "card-theme-green", "", "✅")
+        with col_m1:
+            render_metric_col(m_prev_prev, "⏪ 前前月")
+        with col_m2:
+            render_metric_col(m_prev, "◀️ 上月")
+        with col_m3:
+            render_metric_col(m_curr, "✨ 本月")
+        with col_m4:
+            render_metric_col(m_next, "▶️ 下月")
+
+        # --- D. 月度營運指標 - 關鍵差異 ---
+        st.markdown("#### 🔍 月度營運指標：關鍵差異對比 (本月 vs 其他月份)")
+
+        def calculate_diff_row(current_val, compare_val, is_currency=True, is_percent=False):
+            if compare_val == 0:
+                return "<span style='color:#777;'>-</span>"
+            diff = current_val - compare_val
+            if is_currency:
+                diff_str = f"{'▲' if diff >= 0 else '▼'} NT$ {abs(int(diff)):,}"
+            elif is_percent:
+                diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}%"
+            else:
+                diff_str = f"{'▲' if diff >= 0 else '▼'} {abs(diff):.1f}"
+
+            color = "#2ecc71" if diff >= 0 else "#e74c3c"  # 增加為綠色，減少為紅色
+            return f"<span style='color:{color}; font-weight:bold;'>{diff_str}</span>"
+
+        diff_table_html = f"""
+        <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 15px;">
+            <tr style="background-color: #f1f3f6; text-align: left;">
+                <th style="padding: 12px; border: 1px solid #ddd;">指標項目</th>
+                <th style="padding: 12px; border: 1px solid #ddd;">與前前月 ({m_prev_prev['month_label']}) 相比</th>
+                <th style="padding: 12px; border: 1px solid #ddd;">與上月 ({m_prev['month_label']}) 相比</th>
+                <th style="padding: 12px; border: 1px solid #ddd;">與下月 ({m_next['month_label']}) 相比</th>
+            </tr>
+            <tr>
+                <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月總營收</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev_prev['rev'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_prev['rev'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['rev'], m_next['rev'])}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月平均房價 (ADR)</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev_prev['avg_adr'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_prev['avg_adr'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_adr'], m_next['avg_adr'])}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月住房率 (%)</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev_prev['avg_occ'], False, True)}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_prev['avg_occ'], False, True)}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['avg_occ'], m_next['avg_occ'], False, True)}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">當月 RevPAR</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev_prev['revpar'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_prev['revpar'])}</td>
+                <td style="padding: 12px; border: 1px solid #ddd;">{calculate_diff_row(m_curr['revpar'], m_next['revpar'])}</td>
+            </tr>
+        </table>
+        """
+        st.write(diff_table_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.caption("註：RevPAR 計算方式為「當月平均住房率 × 當月平均房價」；差異對比中 ▲ 代表本月較高，▼ 代表本月較低。")
+
+        st.divider()
+
+        # --- 3. 達標分析指數 ---
+        st.subheader("🎯 達標分析指數")
+
+        # 獲取與保存目標 (針對所選月份)
+        month_key = selected_date.strftime('%Y-%m')
+        current_target = get_monthly_target(month_key)
+        m_rev = m_curr['rev']  # 使用剛剛計算好的本月營收
+
+        t_col1, t_col2 = st.columns([1, 2])
+        with t_col1:
+            new_target = st.number_input(f"設定 {month_key} 目標業績 (NT$)", min_value=0,
+                                         step=10000, value=current_target, key=f"target_input_{month_key}")
+            if new_target != current_target:
+                save_monthly_target(month_key, new_target)
+                st.toast(f"已更新 {month_key} 目標業績！")
+                time.sleep(0.5)
+                st.rerun()
+
+        if new_target > 0:
+            gap = new_target - m_rev
+            stretch_goal = new_target * 1.1
+            stretch_gap = stretch_goal - m_rev
+            progress = min(1.0, m_rev / new_target)
+            st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
+
+            # 營收進度外推預估 (Run-Rate Forecast)
+            active_days = m_curr['df'][m_curr['df']['revenue'] > 0]
+            elapsed_days = len(active_days)
+
+            if elapsed_days > 0:
+                import calendar
+                total_days = calendar.monthrange(
+                    selected_date.year, selected_date.month)[1]
+                daily_avg = m_rev / elapsed_days
+                projected_rev = daily_avg * total_days
+                projected_progress = projected_rev / new_target
+
+                # 預警顏色與文字
+                status_color = "#2ecc71" if projected_rev >= new_target else "#ef4444"
+                status_icon = "📈" if projected_rev >= new_target else "⚠️"
+                status_text = "依目前進度，預計**可順利達標**！" if projected_rev >= new_target else "依目前進度，**達標可能有難度**，建議調整動態定價或加強促銷！"
+
+                st.markdown(
+                    f"<div style='background: #1e293b; padding: 15px; border-radius: 8px; border-left: 5px solid {status_color}; margin-top: 10px; margin-bottom: 15px; color: #f8fafc;'>"
+                    f"<p style='margin:0; font-size:13px; color:#94a3b8;'>🔮 <strong>當月營收進度外推預估 (Pacing Forecast)</strong></p>"
+                    f"<div style='display: flex; gap: 20px; align-items: center; margin-top: 5px; flex-wrap: wrap; font-size: 13px;'>"
+                    f"<div>已統計天數: <strong style='color:#f1f5f9;'>{elapsed_days} / {total_days} 天</strong></div>"
+                    f"<div>當前日均營收: <strong style='color:#f1f5f9;'>NT$ {int(daily_avg):,}</strong></div>"
+                    f"<div>預估月底總營收: <strong style='color:{status_color}; font-size: 15px;'>NT$ {int(projected_rev):,}</strong></div>"
+                    f"<div>預估最終達成率: <strong style='color:{status_color}; font-size: 15px;'>{projected_progress*100:.1f}%</strong></div>"
+                    f"</div>"
+                    f"<p style='margin: 8px 0 0 0; font-size: 12px; color: #cbd5e1;'>{status_icon} {status_text}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            a_col1, a_col2, a_col3 = st.columns(3)
+            if gap <= 0:
+                t_card = make_card("目標達成狀況", "🎉 已達標！", "card-theme-green", "", "✅")
+            else:
+                t_card = make_card(
+                    "距離目標還差", f"NT$ {int(gap):,}", "card-theme-red", "", "🎯")
+            a_col1.markdown(t_card, unsafe_allow_html=True)
+            a_col2.markdown(make_card(
+                "超標目標 (+10%)", f"NT$ {int(stretch_goal):,}", "card-theme-orange", "", "🚀"), unsafe_allow_html=True)
+            if stretch_gap <= 0:
+                s_card = make_card("超標達成狀況", "🔥 已超標達成！",
+                                   "card-theme-green", "card-bg-dark", "🏆")
+            else:
+                s_card = make_card(
+                    "距離超標還差", f"NT$ {int(stretch_gap):,}", "card-theme-purple", "", "⚡")
+            a_col3.markdown(s_card, unsafe_allow_html=True)
         else:
-            t_card = make_card(
-                "距離目標還差", f"NT$ {int(gap):,}", "card-theme-red", "", "🎯")
-        a_col1.markdown(t_card, unsafe_allow_html=True)
-        a_col2.markdown(make_card(
-            "超標目標 (+10%)", f"NT$ {int(stretch_goal):,}", "card-theme-orange", "", "🚀"), unsafe_allow_html=True)
-        if stretch_gap <= 0:
-            s_card = make_card("超標達成狀況", "🔥 已超標達成！",
-                               "card-theme-green", "card-bg-dark", "🏆")
-        else:
-            s_card = make_card(
-                "距離超標還差", f"NT$ {int(stretch_gap):,}", "card-theme-purple", "", "⚡")
-        a_col3.markdown(s_card, unsafe_allow_html=True)
-    else:
-        st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
+            st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
 
-with tab3:
-    st.header("🧹 房務數據")
-    st.number_input("今日總清消房數", min_value=0, step=1,
-                    key="input_cleaned", on_change=on_input_change)
-    st.number_input("退/續數量", min_value=0, step=1,
-                    key="input_hk_co", on_change=on_input_change)
-    st.number_input("每人平均掃房數", min_value=0.0, step=0.1,
-                    key="input_hk_avg", on_change=on_input_change)
-    st.number_input("房務請購費用", min_value=0, step=100,
-                    key="input_hk_exp", on_change=on_input_change)
+if current_hotel != "採購":
+    with tab3:
+        st.header("🧹 房務數據")
+        st.number_input("今日總清消房數", min_value=0, step=1,
+                        key="input_cleaned", on_change=on_input_change)
+        st.number_input("退/續數量", min_value=0, step=1,
+                        key="input_hk_co", on_change=on_input_change)
+        st.number_input("每人平均掃房數", min_value=0.0, step=0.1,
+                        key="input_hk_avg", on_change=on_input_change)
+        st.number_input("房務請購費用", min_value=0, step=100,
+                        key="input_hk_exp", on_change=on_input_change)
 
-with tab4:
-    st.header("🍽️ 餐廳數據")
-    st.subheader("📁 數據報表上傳")
-    rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=[
-                                 "xls", "xlsx"], key="rest_uploader")
+if current_hotel != "採購":
+    with tab4:
+        st.header("🍽️ 餐廳數據")
+        st.subheader("📁 數據報表上傳")
+        rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=[
+                                     "xls", "xlsx"], key="rest_uploader")
 
-    if rest_file:
-        # 在寫入前增加預覽區
-        try:
-            # 暫時執行解析 (不存入資料庫)
-            # 為了效率與介面，我們在這裡做個簡化的預覽
-            df_preview = pd.read_excel(rest_file, header=None)
-            st.info("🔍 **報表內容初步掃描：**")
+        if rest_file:
+            # 在寫入前增加預覽區
+            try:
+                # 暫時執行解析 (不存入資料庫)
+                # 為了效率與介面，我們在這裡做個簡化的預覽
+                df_preview = pd.read_excel(rest_file, header=None)
+                st.info("🔍 **報表內容初步掃描：**")
 
-            p_month_rev = 0
-            p_avg_spent = 0
-            found_days = 0
+                p_month_rev = 0
+                p_avg_spent = 0
+                found_days = 0
 
-            for i, row in df_preview.iterrows():
-                row_str = " ".join([str(v) for v in row if pd.notna(v)])
-                if ('已結算營收' in row_str or '月營收' in row_str) and '早餐' not in row_str and '下午茶' not in row_str:
-                    for v in row:
-                        if any(c.isdigit() for c in str(v)) and not any(k in str(v) for k in ['已結算營收', '月營收']):
-                            try:
-                                p_month_rev = int(float(str(v).replace(
-                                    'NT$', '').replace('$', '').replace(',', '').strip()))
-                                break
-                            except:
-                                pass
-                if '客單價' in row_str:
-                    for v in row:
-                        if any(c.isdigit() for c in str(v)) and '客單價' not in str(v):
-                            try:
-                                p_avg_spent = int(float(str(v).replace(
-                                    'NT$', '').replace('$', '').replace(',', '').strip()))
-                                break
-                            except:
-                                pass
-                if re.search(r'\d{1,2}/\d{1,2}', str(row[0])):
-                    found_days += 1
+                for i, row in df_preview.iterrows():
+                    row_str = " ".join([str(v) for v in row if pd.notna(v)])
+                    if ('已結算營收' in row_str or '月營收' in row_str) and '早餐' not in row_str and '下午茶' not in row_str:
+                        for v in row:
+                            if any(c.isdigit() for c in str(v)) and not any(k in str(v) for k in ['已結算營收', '月營收']):
+                                try:
+                                    p_month_rev = int(float(str(v).replace(
+                                        'NT$', '').replace('$', '').replace(',', '').strip()))
+                                    break
+                                except:
+                                    pass
+                    if '客單價' in row_str:
+                        for v in row:
+                            if any(c.isdigit() for c in str(v)) and '客單價' not in str(v):
+                                try:
+                                    p_avg_spent = int(float(str(v).replace(
+                                        'NT$', '').replace('$', '').replace(',', '').strip()))
+                                    break
+                                except:
+                                    pass
+                    if re.search(r'\d{1,2}/\d{1,2}', str(row[0])):
+                        found_days += 1
 
-            pv_col1, pv_col2, pv_col3 = st.columns(3)
-            pv_col1.metric("辨識出月結算營收", f"NT$ {p_month_rev:,}")
-            pv_col2.metric("辨識出平均客單價", f"NT$ {p_avg_spent:,}")
-            pv_col3.metric("辨識出每日明細", f"{found_days} 筆")
+                pv_col1, pv_col2, pv_col3 = st.columns(3)
+                pv_col1.metric("辨識出月結算營收", f"NT$ {p_month_rev:,}")
+                pv_col2.metric("辨識出平均客單價", f"NT$ {p_avg_spent:,}")
+                pv_col3.metric("辨識出每日明細", f"{found_days} 筆")
 
-            if p_month_rev == 0:
-                st.warning("⚠️ 系統未能從報表中自動找到「月結算營收」，請確認報表格式或手動檢查。")
+                if p_month_rev == 0:
+                    st.warning("⚠️ 系統未能從報表中自動找到「月結算營收」，請確認報表格式或手動檢查。")
 
-            if st.button("📥 確認無誤，寫入系統資料庫", key="rest_btn"):
-                saved_count = parse_and_save_restaurant(
-                    rest_file, selected_date.year)
-                if saved_count:
-                    st.success(f"✅ 成功更新 {saved_count} 筆每日餐廳資料！")
-                    time.sleep(1)
-                    st.rerun()
-        except Exception as ex:
-            st.error(f"預覽失敗: {ex}")
-
-    st.divider()
-    st.subheader(f"餐廳手動確認區 ({date_str})")
-
-    st.markdown("#### 🌞 早餐數據")
-    b1, b2, b3 = st.columns(3)
-    b1.number_input("【主題】預估來客", min_value=0, step=1,
-                    key="input_bf_theme_est", on_change=on_input_change)
-    b1.number_input("【主題】實際來客", min_value=0, step=1,
-                    key="input_bf_theme_act", on_change=on_input_change)
-
-    b2.number_input("【站前】預估來客", min_value=0, step=1,
-                    key="input_bf_zq_est", on_change=on_input_change)
-    b2.number_input("【站前】實際來客", min_value=0, step=1,
-                    key="input_bf_zq_act", on_change=on_input_change)
-
-    b3.number_input("【兩館總和】預估", min_value=0, step=1,
-                    key="input_bf_total_est", on_change=on_input_change)
-    b3.number_input("【兩館總和】實際", min_value=0, step=1,
-                    key="input_bf_total_act", on_change=on_input_change)
-
-    st.markdown("#### 🍰 下午茶數據")
-    a1, a2, a3 = st.columns(3)
-    a1.number_input("【主題】預估來客", min_value=0, step=1,
-                    key="input_af_theme_est", on_change=on_input_change)
-    a1.number_input("【主題】實際來客", min_value=0, step=1,
-                    key="input_af_theme_act", on_change=on_input_change)
-
-    a2.number_input("【站前】預估來客", min_value=0, step=1,
-                    key="input_af_zq_est", on_change=on_input_change)
-    a2.number_input("【站前】實際來客", min_value=0, step=1,
-                    key="input_af_zq_act", on_change=on_input_change)
-
-    a3.number_input("【兩館總和】預估", min_value=0, step=1,
-                    key="input_af_total_est", on_change=on_input_change)
-    a3.number_input("【兩館總和】實際", min_value=0, step=1,
-                    key="input_af_total_act", on_change=on_input_change)
-
-    st.markdown("#### 📊 月報結算總數與雜項")
-    c1, c2, c3 = st.columns(3)
-    c1.number_input("已結算營收 (全月)", min_value=0, step=100,
-                    key="input_rest_mrev", on_change=on_input_change)
-    c2.number_input("平均客單價", min_value=0, step=10,
-                    key="input_rest_aspent", on_change=on_input_change)
-    c3.number_input("THE PEAK 請購費用", min_value=0, step=100,
-                    key="input_rest_exp", on_change=on_input_change)
-
-    col_rest1, col_rest2 = st.columns(2)
-    col_rest1.number_input("The Peak 當日來客數", min_value=0,
-                           step=1, key="input_peak_act", on_change=on_input_change)
-    col_rest2.number_input("Happy Hour 當日來客數", min_value=0,
-                           step=1, key="input_hh_act", on_change=on_input_change)
-
-with tab5:
-    st.header("🔧 工務數據")
-    st.number_input("今日待修房數", min_value=0, step=1,
-                    key="input_repair", on_change=on_input_change)
-    st.text_area("修繕紀錄", key="input_maint_rec", on_change=on_input_change)
-    st.number_input("工務請購費用", min_value=0, step=100,
-                    key="input_maint_exp", on_change=on_input_change)
-
-with tab6:
-    st.header("📝 每日營運紀錄")
-
-    # --- 金旭報表上傳 + 手動輸入 (從原「櫃台數據」移入) ---
-    with st.expander("📁 金旭報表上傳 & 當日數字手動確認", expanded=False):
-
-        # === EIS 自動同步區塊（僅站前館） ===
-        if current_hotel == "站前館":
-            st.markdown("#### 🔄 從 EIS 自動同步當日數據")
-            st.caption(f"自動讀取 Y:\\\\櫃台\\金旭\\每日EIS 中 **{date_str}** 的報表，解析住房率、ADR、營收、間數。")
-            eis_col1, eis_col2 = st.columns([1, 3])
-            with eis_col1:
-                eis_sync_btn = st.button("🔄 從 EIS 同步", key="eis_sync_btn", type="primary")
-            with eis_col2:
-                if eis_sync_btn:
-                    with st.spinner("正在讀取 EIS 報表..."):
-                        eis_data, eis_err = sync_from_eis_local(date_str)
-                    if eis_err:
-                        st.error(f"❌ {eis_err}")
-                    elif eis_data:
-                        # 預覽解析結果
-                        st.success("✅ EIS 解析成功！以下為讀取結果：")
-                        p1, p2, p3, p4 = st.columns(4)
-                        p1.metric("住房率", f"{eis_data['occ_rate']:.1f}%")
-                        p2.metric("ADR", f"NT$ {eis_data['adr']:,}")
-                        p3.metric("總營收", f"NT$ {eis_data['revenue']:,}")
-                        p4.metric("出租間數", f"{eis_data['total_rooms']} 間")
-                        st.session_state['_eis_pending'] = eis_data
-                        st.session_state['_eis_pending_date'] = date_str
-
-            # 確認寫入按鈕
-            if st.session_state.get('_eis_pending') and st.session_state.get('_eis_pending_date') == date_str:
-                eis_data_pending = st.session_state['_eis_pending']
-                if st.button("💾 確認寫入 Google Sheet", key="eis_confirm_btn"):
-                    existing = get_daily_data(date_str)
-                    merged = {**existing, **eis_data_pending, 'date': date_str}
-                    if save_daily_data(date_str, merged):
-                        # 同步更新 session_state 讓欄位即時反映
-                        st.session_state['input_occ'] = eis_data_pending['occ_rate']
-                        st.session_state['input_adr'] = eis_data_pending['adr']
-                        st.session_state['input_rev'] = eis_data_pending['revenue']
-                        st.session_state['input_rooms'] = eis_data_pending['total_rooms']
-                        del st.session_state['_eis_pending']
-                        del st.session_state['_eis_pending_date']
-                        st.success(f"✅ {date_str} 的 EIS 數據已成功寫入 Google Sheet！")
+                if st.button("📥 確認無誤，寫入系統資料庫", key="rest_btn"):
+                    saved_count = parse_and_save_restaurant(
+                        rest_file, selected_date.year)
+                    if saved_count:
+                        st.success(f"✅ 成功更新 {saved_count} 筆每日餐廳資料！")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error("❌ 寫入失敗，請重試。")
+            except Exception as ex:
+                st.error(f"預覽失敗: {ex}")
 
-            st.divider()
+        st.divider()
+        st.subheader(f"餐廳手動確認區 ({date_str})")
 
-            # === 批次同步區塊 ===
-            st.markdown("#### 📅 批次同步（多日補登）")
-            st.caption("若有幾天未即時同步，可在此選擇日期範圍，一次補齊所有 EIS 資料。")
-            b_col1, b_col2 = st.columns(2)
-            batch_start = b_col1.date_input("起始日期", value=selected_date - datetime.timedelta(days=3), key="eis_batch_start")
-            batch_end = b_col2.date_input("結束日期", value=selected_date - datetime.timedelta(days=1), key="eis_batch_end")
+        st.markdown("#### 🌞 早餐數據")
+        b1, b2, b3 = st.columns(3)
+        b1.number_input("【主題】預估來客", min_value=0, step=1,
+                        key="input_bf_theme_est", on_change=on_input_change)
+        b1.number_input("【主題】實際來客", min_value=0, step=1,
+                        key="input_bf_theme_act", on_change=on_input_change)
 
-            if st.button("🔍 掃描可用的 EIS 報表", key="eis_batch_scan"):
-                if batch_start > batch_end:
-                    st.error("❌ 起始日期不能晚於結束日期！")
-                elif (batch_end - batch_start).days > 60:
-                    st.error("❌ 一次最多掃描 60 天。")
-                else:
-                    with st.spinner(f"正在掃描 {batch_start} ~ {batch_end} 的 EIS 報表..."):
-                        b_results, b_errors = batch_sync_from_eis_local(batch_start, batch_end)
-                    st.session_state['_eis_batch_results'] = b_results
-                    st.session_state['_eis_batch_errors'] = b_errors
+        b2.number_input("【站前】預估來客", min_value=0, step=1,
+                        key="input_bf_zq_est", on_change=on_input_change)
+        b2.number_input("【站前】實際來客", min_value=0, step=1,
+                        key="input_bf_zq_act", on_change=on_input_change)
 
-            # 顯示掃描結果
-            if st.session_state.get('_eis_batch_results') is not None:
-                b_results = st.session_state['_eis_batch_results']
-                b_errors = st.session_state.get('_eis_batch_errors', [])
+        b3.number_input("【兩館總和】預估", min_value=0, step=1,
+                        key="input_bf_total_est", on_change=on_input_change)
+        b3.number_input("【兩館總和】實際", min_value=0, step=1,
+                        key="input_bf_total_act", on_change=on_input_change)
 
-                if b_results:
-                    st.success(f"✅ 找到 **{len(b_results)}** 天的 EIS 報表可同步：")
-                    preview_df = pd.DataFrame(b_results)[['date', 'occ_rate', 'adr', 'revenue', 'total_rooms']]
-                    preview_df.columns = ['日期', '住房率(%)', 'ADR', '總營收', '出租間數']
-                    preview_df['住房率(%)'] = preview_df['住房率(%)'].apply(lambda x: f"{x:.1f}%")
-                    preview_df['ADR'] = preview_df['ADR'].apply(lambda x: f"NT$ {x:,}")
-                    preview_df['總營收'] = preview_df['總營收'].apply(lambda x: f"NT$ {x:,}")
-                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.markdown("#### 🍰 下午茶數據")
+        a1, a2, a3 = st.columns(3)
+        a1.number_input("【主題】預估來客", min_value=0, step=1,
+                        key="input_af_theme_est", on_change=on_input_change)
+        a1.number_input("【主題】實際來客", min_value=0, step=1,
+                        key="input_af_theme_act", on_change=on_input_change)
 
-                if b_errors:
-                    with st.expander(f"⚠️ {len(b_errors)} 天無法同步（點擊查看）"):
-                        for e in b_errors:
-                            st.caption(f"- {e['date']}：{e['reason']}")
+        a2.number_input("【站前】預估來客", min_value=0, step=1,
+                        key="input_af_zq_est", on_change=on_input_change)
+        a2.number_input("【站前】實際來客", min_value=0, step=1,
+                        key="input_af_zq_act", on_change=on_input_change)
 
-                if b_results:
-                    if st.button(f"💾 確認批次寫入 {len(b_results)} 天資料", key="eis_batch_confirm", type="primary"):
-                        success_count = 0
-                        fail_count = 0
-                        with st.spinner("批次寫入中..."):
-                            for row in b_results:
-                                existing = get_daily_data(row['date'])
-                                merged = {**existing, **{k: v for k, v in row.items() if k != 'date'}, 'date': row['date']}
-                                if save_daily_data(row['date'], merged):
-                                    success_count += 1
-                                else:
-                                    fail_count += 1
-                        del st.session_state['_eis_batch_results']
-                        if '_eis_batch_errors' in st.session_state:
-                            del st.session_state['_eis_batch_errors']
-                        if success_count:
-                            st.success(f"✅ 成功寫入 {success_count} 天！{'⚠️ ' + str(fail_count) + ' 天失敗。' if fail_count else ''}")
+        a3.number_input("【兩館總和】預估", min_value=0, step=1,
+                        key="input_af_total_est", on_change=on_input_change)
+        a3.number_input("【兩館總和】實際", min_value=0, step=1,
+                        key="input_af_total_act", on_change=on_input_change)
+
+        st.markdown("#### 📊 月報結算總數與雜項")
+        c1, c2, c3 = st.columns(3)
+        c1.number_input("已結算營收 (全月)", min_value=0, step=100,
+                        key="input_rest_mrev", on_change=on_input_change)
+        c2.number_input("平均客單價", min_value=0, step=10,
+                        key="input_rest_aspent", on_change=on_input_change)
+        c3.number_input("THE PEAK 請購費用", min_value=0, step=100,
+                        key="input_rest_exp", on_change=on_input_change)
+
+        col_rest1, col_rest2 = st.columns(2)
+        col_rest1.number_input("The Peak 當日來客數", min_value=0,
+                               step=1, key="input_peak_act", on_change=on_input_change)
+        col_rest2.number_input("Happy Hour 當日來客數", min_value=0,
+                               step=1, key="input_hh_act", on_change=on_input_change)
+
+if current_hotel != "採購":
+    with tab5:
+        st.header("🔧 工務數據")
+        st.number_input("今日待修房數", min_value=0, step=1,
+                        key="input_repair", on_change=on_input_change)
+        st.text_area("修繕紀錄", key="input_maint_rec", on_change=on_input_change)
+        st.number_input("工務請購費用", min_value=0, step=100,
+                        key="input_maint_exp", on_change=on_input_change)
+
+if current_hotel != "採購":
+    with tab6:
+        st.header("📝 每日營運紀錄")
+
+        # --- 金旭報表上傳 + 手動輸入 (從原「櫃台數據」移入) ---
+        with st.expander("📁 金旭報表上傳 & 當日數字手動確認", expanded=False):
+
+            # === EIS 自動同步區塊（僅站前館） ===
+            if current_hotel == "站前館":
+                st.markdown("#### 🔄 從 EIS 自動同步當日數據")
+                st.caption(f"自動讀取 Y:\\\\櫃台\\金旭\\每日EIS 中 **{date_str}** 的報表，解析住房率、ADR、營收、間數。")
+                eis_col1, eis_col2 = st.columns([1, 3])
+                with eis_col1:
+                    eis_sync_btn = st.button("🔄 從 EIS 同步", key="eis_sync_btn", type="primary")
+                with eis_col2:
+                    if eis_sync_btn:
+                        with st.spinner("正在讀取 EIS 報表..."):
+                            eis_data, eis_err = sync_from_eis_local(date_str)
+                        if eis_err:
+                            st.error(f"❌ {eis_err}")
+                        elif eis_data:
+                            # 預覽解析結果
+                            st.success("✅ EIS 解析成功！以下為讀取結果：")
+                            p1, p2, p3, p4 = st.columns(4)
+                            p1.metric("住房率", f"{eis_data['occ_rate']:.1f}%")
+                            p2.metric("ADR", f"NT$ {eis_data['adr']:,}")
+                            p3.metric("總營收", f"NT$ {eis_data['revenue']:,}")
+                            p4.metric("出租間數", f"{eis_data['total_rooms']} 間")
+                            st.session_state['_eis_pending'] = eis_data
+                            st.session_state['_eis_pending_date'] = date_str
+
+                # 確認寫入按鈕
+                if st.session_state.get('_eis_pending') and st.session_state.get('_eis_pending_date') == date_str:
+                    eis_data_pending = st.session_state['_eis_pending']
+                    if st.button("💾 確認寫入 Google Sheet", key="eis_confirm_btn"):
+                        existing = get_daily_data(date_str)
+                        merged = {**existing, **eis_data_pending, 'date': date_str}
+                        if save_daily_data(date_str, merged):
+                            # 同步更新 session_state 讓欄位即時反映
+                            st.session_state['input_occ'] = eis_data_pending['occ_rate']
+                            st.session_state['input_adr'] = eis_data_pending['adr']
+                            st.session_state['input_rev'] = eis_data_pending['revenue']
+                            st.session_state['input_rooms'] = eis_data_pending['total_rooms']
+                            del st.session_state['_eis_pending']
+                            del st.session_state['_eis_pending_date']
+                            st.success(f"✅ {date_str} 的 EIS 數據已成功寫入 Google Sheet！")
                             time.sleep(1)
                             st.rerun()
                         else:
-                            st.error("❌ 全部寫入失敗，請重試。")
+                            st.error("❌ 寫入失敗，請重試。")
+
+                st.divider()
+
+                # === 批次同步區塊 ===
+                st.markdown("#### 📅 批次同步（多日補登）")
+                st.caption("若有幾天未即時同步，可在此選擇日期範圍，一次補齊所有 EIS 資料。")
+                b_col1, b_col2 = st.columns(2)
+                batch_start = b_col1.date_input("起始日期", value=selected_date - datetime.timedelta(days=3), key="eis_batch_start")
+                batch_end = b_col2.date_input("結束日期", value=selected_date - datetime.timedelta(days=1), key="eis_batch_end")
+
+                if st.button("🔍 掃描可用的 EIS 報表", key="eis_batch_scan"):
+                    if batch_start > batch_end:
+                        st.error("❌ 起始日期不能晚於結束日期！")
+                    elif (batch_end - batch_start).days > 60:
+                        st.error("❌ 一次最多掃描 60 天。")
+                    else:
+                        with st.spinner(f"正在掃描 {batch_start} ~ {batch_end} 的 EIS 報表..."):
+                            b_results, b_errors = batch_sync_from_eis_local(batch_start, batch_end)
+                        st.session_state['_eis_batch_results'] = b_results
+                        st.session_state['_eis_batch_errors'] = b_errors
+
+                # 顯示掃描結果
+                if st.session_state.get('_eis_batch_results') is not None:
+                    b_results = st.session_state['_eis_batch_results']
+                    b_errors = st.session_state.get('_eis_batch_errors', [])
+
+                    if b_results:
+                        st.success(f"✅ 找到 **{len(b_results)}** 天的 EIS 報表可同步：")
+                        preview_df = pd.DataFrame(b_results)[['date', 'occ_rate', 'adr', 'revenue', 'total_rooms']]
+                        preview_df.columns = ['日期', '住房率(%)', 'ADR', '總營收', '出租間數']
+                        preview_df['住房率(%)'] = preview_df['住房率(%)'].apply(lambda x: f"{x:.1f}%")
+                        preview_df['ADR'] = preview_df['ADR'].apply(lambda x: f"NT$ {x:,}")
+                        preview_df['總營收'] = preview_df['總營收'].apply(lambda x: f"NT$ {x:,}")
+                        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+                    if b_errors:
+                        with st.expander(f"⚠️ {len(b_errors)} 天無法同步（點擊查看）"):
+                            for e in b_errors:
+                                st.caption(f"- {e['date']}：{e['reason']}")
+
+                    if b_results:
+                        if st.button(f"💾 確認批次寫入 {len(b_results)} 天資料", key="eis_batch_confirm", type="primary"):
+                            success_count = 0
+                            fail_count = 0
+                            with st.spinner("批次寫入中..."):
+                                for row in b_results:
+                                    existing = get_daily_data(row['date'])
+                                    merged = {**existing, **{k: v for k, v in row.items() if k != 'date'}, 'date': row['date']}
+                                    if save_daily_data(row['date'], merged):
+                                        success_count += 1
+                                    else:
+                                        fail_count += 1
+                            del st.session_state['_eis_batch_results']
+                            if '_eis_batch_errors' in st.session_state:
+                                del st.session_state['_eis_batch_errors']
+                            if success_count:
+                                st.success(f"✅ 成功寫入 {success_count} 天！{'⚠️ ' + str(fail_count) + ' 天失敗。' if fail_count else ''}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("❌ 全部寫入失敗，請重試。")
+                st.divider()
+
+
+            # === 手動上傳金旭報表（多日批次） ===
+            jinxu_file = st.file_uploader(
+                "上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
+            if jinxu_file:
+                if st.button("📥 寫入系統資料庫"):
+                    saved_count = parse_and_save_jinxu(jinxu_file)
+                    if saved_count:
+                        st.success(f"✅ 成功將 {saved_count} 筆每日資料存入系統資料庫！切換日期即可自動調出。")
+                        time.sleep(1)
+                        st.rerun()
             st.divider()
+            st.subheader(f"📋 當日數字手動確認 ({date_str})")
+            rc1, rc2, rc3 = st.columns(3)
+            rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
+                             step=0.1, key="input_occ", on_change=on_input_change)
+            rc2.number_input("ADR (平均房價)", min_value=0, step=10,
+                             key="input_adr", on_change=on_input_change)
+            rc3.number_input("總營收", min_value=0, step=100,
+                             key="input_rev", on_change=on_input_change)
+            rc4, rc5 = st.columns(2)
+            rc4.number_input("總住房數", min_value=0, step=1,
+                             key="input_rooms", on_change=on_input_change)
+            rc5.number_input("櫃台請購費用", min_value=0, step=100,
+                             key="input_counter_exp", on_change=on_input_change)
+            st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
 
 
-        # === 手動上傳金旭報表（多日批次） ===
-        jinxu_file = st.file_uploader(
-            "上傳金旭報表 (Excel/CSV)，會自動把整份報表寫入資料庫！", type=["csv", "xls", "xlsx"], key="jinxu_uploader")
-        if jinxu_file:
-            if st.button("📥 寫入系統資料庫"):
-                saved_count = parse_and_save_jinxu(jinxu_file)
-                if saved_count:
-                    st.success(f"✅ 成功將 {saved_count} 筆每日資料存入系統資料庫！切換日期即可自動調出。")
-                    time.sleep(1)
-                    st.rerun()
-        st.divider()
-        st.subheader(f"📋 當日數字手動確認 ({date_str})")
-        rc1, rc2, rc3 = st.columns(3)
-        rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
-                         step=0.1, key="input_occ", on_change=on_input_change)
-        rc2.number_input("ADR (平均房價)", min_value=0, step=10,
-                         key="input_adr", on_change=on_input_change)
-        rc3.number_input("總營收", min_value=0, step=100,
-                         key="input_rev", on_change=on_input_change)
-        rc4, rc5 = st.columns(2)
-        rc4.number_input("總住房數", min_value=0, step=1,
-                         key="input_rooms", on_change=on_input_change)
-        rc5.number_input("櫃台請購費用", min_value=0, step=100,
-                         key="input_counter_exp", on_change=on_input_change)
-        st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
+        if selected_week != "--- 關閉週預覽 ---":
+            import calendar
+            _, last_day_of_month = calendar.monthrange(
+                selected_date.year, selected_date.month)
 
+            # 解析選擇的區間
+            week_idx = weekly_options.index(selected_week)
+            start_d = (week_idx - 1) * 7 + 1
+            if week_idx == 5:
+                end_d = last_day_of_month
+            else:
+                end_d = min(start_d + 6, last_day_of_month)
 
-    if selected_week != "--- 關閉週預覽 ---":
-        import calendar
-        _, last_day_of_month = calendar.monthrange(
-            selected_date.year, selected_date.month)
+            st.subheader(f"📋 {selected_week} 快速審視模式")
+            st.info(
+                f"正在查看 {selected_date.year}年度 {selected_date.month}月份 ({start_d}號 至 {end_d}號) 的完整紀錄。")
 
-        # 解析選擇的區間
-        week_idx = weekly_options.index(selected_week)
-        start_d = (week_idx - 1) * 7 + 1
-        if week_idx == 5:
-            end_d = last_day_of_month
+            # 獲取該區間所有資料
+            c_month_str = selected_date.strftime('%Y-%m')
+
+            for day in range(start_d, end_d + 1):
+                target_date = f"{c_month_str}-{day:02d}"
+                # 這裡我們呼叫 get_daily_data
+                d_data = get_daily_data(target_date)
+
+                with st.expander(f"📅 {target_date} 營運紀錄", expanded=True):
+                    day_log = get_daily_log(target_date)
+                    if day_log:
+                        st.markdown(f"**【當日日誌細節】**\n\n{day_log}")
+                        st.divider()
+                        col_a, colb, colc = st.columns(3)
+                        col_a.metric("住房率", f"{d_data.get('occ_rate', 0)}%")
+                        colb.metric("ADR", f"NT$ {int(d_data.get('adr', 0)):,}")
+                        colc.metric("營收", f"NT$ {int(d_data.get('revenue', 0)):,}")
+                    else:
+                        st.write("🌑 此日期尚無任何日誌紀錄。")
+
+            if st.button("⬅️ 返回今日編輯模式"):
+                st.rerun()
+
         else:
-            end_d = min(start_d + 6, last_day_of_month)
-
-        st.subheader(f"📋 {selected_week} 快速審視模式")
-        st.info(
-            f"正在查看 {selected_date.year}年度 {selected_date.month}月份 ({start_d}號 至 {end_d}號) 的完整紀錄。")
-
-        # 獲取該區間所有資料
-        c_month_str = selected_date.strftime('%Y-%m')
-
-        for day in range(start_d, end_d + 1):
-            target_date = f"{c_month_str}-{day:02d}"
-            # 這裡我們呼叫 get_daily_data
-            d_data = get_daily_data(target_date)
-
-            with st.expander(f"📅 {target_date} 營運紀錄", expanded=True):
-                day_log = get_daily_log(target_date)
-                if day_log:
-                    st.markdown(f"**【當日日誌細節】**\n\n{day_log}")
-                    st.divider()
-                    col_a, colb, colc = st.columns(3)
-                    col_a.metric("住房率", f"{d_data.get('occ_rate', 0)}%")
-                    colb.metric("ADR", f"NT$ {int(d_data.get('adr', 0)):,}")
-                    colc.metric("營收", f"NT$ {int(d_data.get('revenue', 0)):,}")
-                else:
-                    st.write("🌑 此日期尚無任何日誌紀錄。")
-
-        if st.button("⬅️ 返回今日編輯模式"):
-            st.rerun()
-
-    else:
-        st.info(
-            f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
-        st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log",
-                     placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
+            st.info(
+                f"💡 請在下方詳細填寫 **{date_str}** 的各項營運日誌與重點工作回報。這裡的紀錄會自動儲存，切換日期或關閉網頁也不用擔心遺失。")
+            st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log",
+                         placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
 
 with tab_p:
     st.header("💰 採購花費分析統計")
@@ -4586,174 +4592,175 @@ with tab_s:
                     </div>
                     """, unsafe_allow_html=True)
 
-with tab7:
-    st.header("👥 人事概況")
+if current_hotel != "採購":
+    with tab7:
+        st.header("👥 人事概況")
 
-    # -- 人事管理函數 (Google Sheets 版) --
-    def get_all_employees():
-        try:
-            df = conn.read(worksheet="employees", ttl="1m")
-            return df if df is not None else pd.DataFrame()
-        except:
-            return pd.DataFrame()
+        # -- 人事管理函數 (Google Sheets 版) --
+        def get_all_employees():
+            try:
+                df = conn.read(worksheet="employees", ttl="1m")
+                return df if df is not None else pd.DataFrame()
+            except:
+                return pd.DataFrame()
 
-    def add_employee(e_id, name, dept, pos, salary):
-        try:
-            df = conn.read(worksheet="employees", ttl="0")
-            required_cols = ["employee_id", "name",
-                             "dept", "position", "salary"]
+        def add_employee(e_id, name, dept, pos, salary):
+            try:
+                df = conn.read(worksheet="employees", ttl="0")
+                required_cols = ["employee_id", "name",
+                                 "dept", "position", "salary"]
 
-            if df is None or df.empty or not all(c in df.columns for c in required_cols):
-                if df is None or df.empty:
-                    df = pd.DataFrame(columns=required_cols)
-                else:
-                    for c in required_cols:
-                        if c not in df.columns:
-                            df[c] = ""
-
-            if str(e_id) in df['employee_id'].astype(str).values:
-                return "ID_EXISTS"
-
-            new_emp = pd.DataFrame([{"employee_id": str(
-                e_id), "name": name, "dept": dept, "position": pos, "salary": salary}])
-            df = pd.concat([df, new_emp], ignore_index=True)
-            conn.update(worksheet="employees", data=df.fillna(""))
-            return True
-        except Exception as e:
-            return str(e)
-
-    def delete_employee(e_id):
-        try:
-            df = conn.read(worksheet="employees", ttl="0")
-            if df is not None and not df.empty and 'employee_id' in df.columns:
-                df['employee_id'] = df['employee_id'].astype(str)
-                df = df[df['employee_id'] != str(e_id)]
-                conn.update(worksheet="employees", data=df.fillna(""))
-        except:
-            pass
-
-    # -- UI: 新增員工區 --
-    with st.expander("➕ 新增新進員工資訊", expanded=False):
-        with st.form("add_employee_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            new_id = col1.text_input("員工編號 (必填)")
-            new_name = col2.text_input("姓名 (必填)")
-
-            new_dept = st.selectbox(
-                "所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
-            new_pos = st.text_input("職位")
-            new_salary = st.number_input("薪資", min_value=0, step=1000)
-
-            submit_btn = st.form_submit_button("✅ 確認新增")
-            if submit_btn:
-                if not new_id or not new_name:
-                    st.error("❌ 請填寫員工編號與姓名！")
-                else:
-                    res = add_employee(
-                        new_id, new_name, new_dept, new_pos, new_salary)
-                    if res == True:
-                        st.success(f"✅ 成功新增員工：{new_name}")
-                        st.rerun()
-                    elif res == "ID_EXISTS":
-                        st.error("❌ 員工編號已存在，請檢查是否重覆。")
+                if df is None or df.empty or not all(c in df.columns for c in required_cols):
+                    if df is None or df.empty:
+                        df = pd.DataFrame(columns=required_cols)
                     else:
-                        st.error(f"❌ 新增失敗：{res}")
+                        for c in required_cols:
+                            if c not in df.columns:
+                                df[c] = ""
 
-    st.divider()
+                if str(e_id) in df['employee_id'].astype(str).values:
+                    return "ID_EXISTS"
 
-    # -- UI: 員工列表與排序 --
-    df_emp = get_all_employees()
+                new_emp = pd.DataFrame([{"employee_id": str(
+                    e_id), "name": name, "dept": dept, "position": pos, "salary": salary}])
+                df = pd.concat([df, new_emp], ignore_index=True)
+                conn.update(worksheet="employees", data=df.fillna(""))
+                return True
+            except Exception as e:
+                return str(e)
 
-    # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
-    if not df_emp.empty and 'employee_id' in df_emp.columns:
-        df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
-        # 移除 pandas 自動將數字轉為 float 所產生的 .0 結尾
-        df_emp['employee_id'] = df_emp['employee_id'].str.replace(
-            r'\.0$', '', regex=True)
-        df_emp = df_emp[df_emp['employee_id'] != '']
-        df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
+        def delete_employee(e_id):
+            try:
+                df = conn.read(worksheet="employees", ttl="0")
+                if df is not None and not df.empty and 'employee_id' in df.columns:
+                    df['employee_id'] = df['employee_id'].astype(str)
+                    df = df[df['employee_id'] != str(e_id)]
+                    conn.update(worksheet="employees", data=df.fillna(""))
+            except:
+                pass
 
-    if df_emp.empty:
-        st.info("💡 目前資料庫中尚無員工資訊。")
-    else:
-        # 計算總薪資 (排除職位為 PT 的人)
-        # 確保 position 欄位存在且處理大小寫
-        if 'position' in df_emp.columns:
-            non_pt_df = df_emp[df_emp['position'].fillna(
-                '').astype(str).str.upper() != 'PT']
-            total_salary = pd.to_numeric(
-                non_pt_df['salary'], errors='coerce').fillna(0).sum()
-        else:
-            total_salary = pd.to_numeric(
-                df_emp['salary'], errors='coerce').fillna(0).sum()
+        # -- UI: 新增員工區 --
+        with st.expander("➕ 新增新進員工資訊", expanded=False):
+            with st.form("add_employee_form", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                new_id = col1.text_input("員工編號 (必填)")
+                new_name = col2.text_input("姓名 (必填)")
 
-        st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
-            <p style="margin: 0; font-size: 14px; color: #666;">💰 正職員工薪資總計</p>
-            <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
-            <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
-        </div>
-        """, unsafe_allow_html=True)
+                new_dept = st.selectbox(
+                    "所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
+                new_pos = st.text_input("職位")
+                new_salary = st.number_input("薪資", min_value=0, step=1000)
 
-        col_sort, col_search = st.columns([1, 1])
-        sort_opt = col_sort.selectbox(
-            "排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
-        search_query = col_search.text_input("🔍 搜尋姓名或編號")
-
-        # 搜尋過濾
-        if search_query:
-            df_emp = df_emp[df_emp['name'].astype(str).str.contains(
-                search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
-
-        # 確保 salary 為數值以便排序
-        if 'salary' in df_emp.columns:
-            df_emp['salary'] = pd.to_numeric(
-                df_emp['salary'], errors='coerce').fillna(0)
-
-        # 排序邏輯
-        if sort_opt == "員工編號順序":
-            df_emp = df_emp.sort_values("employee_id")
-        elif sort_opt == "薪資 (由高到低)":
-            if 'salary' in df_emp.columns:
-                df_emp = df_emp.sort_values("salary", ascending=False)
-        elif sort_opt == "薪資 (由低到高)":
-            if 'salary' in df_emp.columns:
-                df_emp = df_emp.sort_values("salary", ascending=True)
-        elif sort_opt == "按部門排序":
-            if 'dept' in df_emp.columns:
-                df_emp = df_emp.sort_values(["dept", "employee_id"])
-
-        # 自定義表格顯示
-        st.write(f"📊 目前共有 {len(df_emp)} 位員工")
-
-        # 標題列
-        header_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
-        header_cols[0].markdown("**員工編號**")
-        header_cols[1].markdown("**姓名**")
-        header_cols[2].markdown("**部門**")
-        header_cols[3].markdown("**職位**")
-        header_cols[4].markdown("**薪資**")
-        header_cols[5].markdown("**操作**")
+                submit_btn = st.form_submit_button("✅ 確認新增")
+                if submit_btn:
+                    if not new_id or not new_name:
+                        st.error("❌ 請填寫員工編號與姓名！")
+                    else:
+                        res = add_employee(
+                            new_id, new_name, new_dept, new_pos, new_salary)
+                        if res == True:
+                            st.success(f"✅ 成功新增員工：{new_name}")
+                            st.rerun()
+                        elif res == "ID_EXISTS":
+                            st.error("❌ 員工編號已存在，請檢查是否重覆。")
+                        else:
+                            st.error(f"❌ 新增失敗：{res}")
 
         st.divider()
 
-        for idx, row in df_emp.iterrows():
-            row_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
-            row_cols[0].write(row.get('employee_id', ''))
-            row_cols[1].write(row.get('name', ''))
-            row_cols[2].write(row.get('dept', ''))
-            row_cols[3].write(row.get('position', ''))
+        # -- UI: 員工列表與排序 --
+        df_emp = get_all_employees()
 
-            salary_val = row.get('salary', 0)
-            try:
-                salary_int = int(float(salary_val))
-            except:
-                salary_int = 0
-            row_cols[4].write(f"NT$ {salary_int:,}")
+        # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
+        if not df_emp.empty and 'employee_id' in df_emp.columns:
+            df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
+            # 移除 pandas 自動將數字轉為 float 所產生的 .0 結尾
+            df_emp['employee_id'] = df_emp['employee_id'].str.replace(
+                r'\.0$', '', regex=True)
+            df_emp = df_emp[df_emp['employee_id'] != '']
+            df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
 
-            # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
-            if row_cols[5].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
-                delete_employee(row.get('employee_id', ''))
-                st.toast(f"已刪除員工: {row['name']}")
-                time.sleep(0.5)
-                st.rerun()
+        if df_emp.empty:
+            st.info("💡 目前資料庫中尚無員工資訊。")
+        else:
+            # 計算總薪資 (排除職位為 PT 的人)
+            # 確保 position 欄位存在且處理大小寫
+            if 'position' in df_emp.columns:
+                non_pt_df = df_emp[df_emp['position'].fillna(
+                    '').astype(str).str.upper() != 'PT']
+                total_salary = pd.to_numeric(
+                    non_pt_df['salary'], errors='coerce').fillna(0).sum()
+            else:
+                total_salary = pd.to_numeric(
+                    df_emp['salary'], errors='coerce').fillna(0).sum()
+
+            st.markdown(f"""
+            <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
+                <p style="margin: 0; font-size: 14px; color: #666;">💰 正職員工薪資總計</p>
+                <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_sort, col_search = st.columns([1, 1])
+            sort_opt = col_sort.selectbox(
+                "排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
+            search_query = col_search.text_input("🔍 搜尋姓名或編號")
+
+            # 搜尋過濾
+            if search_query:
+                df_emp = df_emp[df_emp['name'].astype(str).str.contains(
+                    search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
+
+            # 確保 salary 為數值以便排序
+            if 'salary' in df_emp.columns:
+                df_emp['salary'] = pd.to_numeric(
+                    df_emp['salary'], errors='coerce').fillna(0)
+
+            # 排序邏輯
+            if sort_opt == "員工編號順序":
+                df_emp = df_emp.sort_values("employee_id")
+            elif sort_opt == "薪資 (由高到低)":
+                if 'salary' in df_emp.columns:
+                    df_emp = df_emp.sort_values("salary", ascending=False)
+            elif sort_opt == "薪資 (由低到高)":
+                if 'salary' in df_emp.columns:
+                    df_emp = df_emp.sort_values("salary", ascending=True)
+            elif sort_opt == "按部門排序":
+                if 'dept' in df_emp.columns:
+                    df_emp = df_emp.sort_values(["dept", "employee_id"])
+
+            # 自定義表格顯示
+            st.write(f"📊 目前共有 {len(df_emp)} 位員工")
+
+            # 標題列
+            header_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+            header_cols[0].markdown("**員工編號**")
+            header_cols[1].markdown("**姓名**")
+            header_cols[2].markdown("**部門**")
+            header_cols[3].markdown("**職位**")
+            header_cols[4].markdown("**薪資**")
+            header_cols[5].markdown("**操作**")
+
+            st.divider()
+
+            for idx, row in df_emp.iterrows():
+                row_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+                row_cols[0].write(row.get('employee_id', ''))
+                row_cols[1].write(row.get('name', ''))
+                row_cols[2].write(row.get('dept', ''))
+                row_cols[3].write(row.get('position', ''))
+
+                salary_val = row.get('salary', 0)
+                try:
+                    salary_int = int(float(salary_val))
+                except:
+                    salary_int = 0
+                row_cols[4].write(f"NT$ {salary_int:,}")
+
+                # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
+                if row_cols[5].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
+                    delete_employee(row.get('employee_id', ''))
+                    st.toast(f"已刪除員工: {row['name']}")
+                    time.sleep(0.5)
+                    st.rerun()
