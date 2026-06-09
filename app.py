@@ -4865,11 +4865,10 @@ def render_nationality_tab():
     df_hotel = None
     with st.spinner("載入飯店客源資料中..."):
         try:
-            # 透過現有連線讀取 nationality_data
-            conn = st.connection('gsheets', type='streamlit_gsheets.GSheetsConnection')
-            df_hotel_raw = conn.read(worksheet="nationality_data")
+            # 透過系統現有的 read_google_sheet 幫助函式讀取，解決 Spreadsheet URL 權限問題
+            df_hotel_raw = read_google_sheet("nationality_data")
             
-            if not df_hotel_raw.empty:
+            if df_hotel_raw is not None and not df_hotel_raw.empty:
                 # 清理與過濾
                 df_hotel = df_hotel_raw.copy()
                 df_hotel.columns = [str(c).strip().lower() for c in df_hotel.columns]
