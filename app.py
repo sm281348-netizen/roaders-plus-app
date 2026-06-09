@@ -4829,7 +4829,7 @@ def parse_tourism_bureau_excel(uploaded_file):
         # 找出國籍與數據開始的那一行
         start_row = 0
         for i, row in df.iterrows():
-            row_str = ' '.join(row.astype(str).values).lower()
+            row_str = ' '.join([str(x) for x in row.values]).lower()
             if 'nationality' in row_str or '國籍' in row_str or 'growth rate' in row_str or '成長率' in row_str:
                 start_row = i
                 break
