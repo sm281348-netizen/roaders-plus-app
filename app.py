@@ -4980,8 +4980,9 @@ def render_nationality_tab():
                         df_hotel[c] = df_hotel[c].astype(str).str.replace(',', '', regex=False)
                         df_hotel[c] = pd.to_numeric(df_hotel[c], errors='coerce').fillna(0)
                     
-                    # 過濾掉 0 房晚的國家
+                    # 過濾掉 0 房晚的國家與合計/總計列
                     df_hotel = df_hotel[df_hotel['nights'] > 0].copy()
+                    df_hotel = df_hotel[~df_hotel['nation'].astype(str).str.contains('合計|總計|Total', na=False, case=False)]
                     
                     if not df_hotel.empty:
                         # 擷取純中文國名
