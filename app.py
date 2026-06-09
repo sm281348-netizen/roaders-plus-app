@@ -4816,10 +4816,28 @@ if current_hotel != "採購":
 def clean_nation_name(nation_str):
     if not isinstance(nation_str, str):
         return str(nation_str)
-    # Remove English characters to leave only Chinese (e.g. KOR韓國 -> 韓國)
+    
     import re
-    cleaned = re.sub(r'[a-zA-Z\s]', '', nation_str).strip()
-    return cleaned if cleaned else nation_str
+    # 只保留中文字元
+    cleaned = re.sub(r'[^\u4e00-\u9fa5]', '', nation_str)
+    
+    # 若全部非中文，退回原字串並去空白
+    if not cleaned:
+        cleaned = str(nation_str).strip()
+        
+    # 常見金旭與觀光署的國籍名稱別名對應
+    synonyms = {
+        '澳大利亞': '澳洲',
+        '中國大陸': '大陸',
+        '中國': '大陸',
+        '南韓': '韓國',
+        '大韓民國': '韓國',
+        '紐西蘭': '紐西蘭', # 預防有時寫新西蘭
+        '新西蘭': '紐西蘭',
+        '阿拉伯聯合大公國': '阿聯'
+    }
+    
+    return synonyms.get(cleaned, cleaned)
 
 def parse_tourism_bureau_excel(uploaded_file):
     try:
