@@ -4960,47 +4960,48 @@ def render_nationality_tab():
                 
                 # 確保必要欄位存在
                 if set(['month', 'nation', 'person', 'rate', 'nights']).issubset(set(df_hotel.columns)):
-                    # 依據左側選單的月份進行過濾
                     curr_date = st.session_state.get('sidebar_date')
+                    df_agg = pd.DataFrame()
+                    df_prev_agg = pd.DataFrame()
+                    prev_date = None
+                    
                     if curr_date:
-                        curr_ym1 = curr_date.strftime("%Y%m")     # 202604
-                        curr_ym2 = curr_date.strftime("%Y-%m")    # 2026-04
-                        curr_ym3 = curr_date.strftime("%Y/%m")    # 2026/04
+                        import datetime
+                        prev_date = curr_date.replace(day=1) - datetime.timedelta(days=1)
                         
-                        mask = df_hotel['month'].astype(str).str.contains(f"{curr_ym1}|{curr_ym2}|{curr_ym3}", na=False, regex=True)
-                        df_hotel = df_hotel[mask].copy()
+                        def get_month_agg(target_date):
+                            ym1 = target_date.strftime("%Y%m")
+                            ym2 = target_date.strftime("%Y-%m")
+                            ym3 = target_date.strftime("%Y/%m")
+                            
+                            mask = df_hotel['month'].astype(str).str.contains(f"{ym1}|{ym2}|{ym3}", na=False, regex=True)
+                            df_t = df_hotel[mask].copy()
+                            
+                            if df_t.empty:
+                                return pd.DataFrame()
+                                
+                            for c in ['person', 'rate', 'nights']:
+                                df_t[c] = df_t[c].astype(str).str.replace(',', '', regex=False)
+                                df_t[c] = pd.to_numeric(df_t[c], errors='coerce').fillna(0)
+                            
+                            df_t = df_t[df_t['nights'] > 0]
+                            df_t = df_t[~df_t['nation'].astype(str).str.contains('合計|總計|Total', na=False, case=False)]
+                            
+                            if not df_t.empty:
+                                df_t['nation_clean'] = df_t['nation'].apply(clean_nation_name)
+                                d_agg = df_t.groupby(['nation', 'nation_clean'], as_index=False).agg({
+                                    'nights': 'sum', 'person': 'sum', 'rate': 'sum'
+                                })
+                                d_agg['adr'] = d_agg.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
+                                total_n = d_agg['nights'].sum()
+                                d_agg['nights_pct'] = (d_agg['nights'] / total_n * 100).round(1)
+                                return d_agg
+                            return pd.DataFrame()
+                            
+                        df_agg = get_month_agg(curr_date)
+                        df_prev_agg = get_month_agg(prev_date)
                         
-                        # 標示目前的過濾條件
                         st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
-                        
-                    # 數值轉換
-                    for c in ['person', 'rate', 'nights']:
-                        # 處理可能的逗號千分位
-                        df_hotel[c] = df_hotel[c].astype(str).str.replace(',', '', regex=False)
-                        df_hotel[c] = pd.to_numeric(df_hotel[c], errors='coerce').fillna(0)
-                    
-                    # 過濾掉 0 房晚的國家與合計/總計列
-                    df_hotel = df_hotel[df_hotel['nights'] > 0].copy()
-                    df_hotel = df_hotel[~df_hotel['nation'].astype(str).str.contains('合計|總計|Total', na=False, case=False)]
-                    
-                    if not df_hotel.empty:
-                        # 擷取純中文國名
-                        df_hotel['nation_clean'] = df_hotel['nation'].apply(clean_nation_name)
-                        
-                        # 計算 ADR (避免除以零)
-                        df_hotel['adr'] = df_hotel.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
-                        
-                        # 若有多個月分，先以總和呈現
-                        df_agg = df_hotel.groupby(['nation', 'nation_clean'], as_index=False).agg({
-                            'nights': 'sum',
-                            'person': 'sum',
-                            'rate': 'sum'
-                        })
-                        df_agg['adr'] = df_agg.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
-                        
-                        # 計算佔比
-                        total_nights = df_agg['nights'].sum()
-                        df_agg['nights_pct'] = (df_agg['nights'] / total_nights * 100).round(1)
         except Exception as e:
             st.error(f"讀取 RTS_backup(nationality_data) 發生錯誤: {e}")
     
@@ -5064,28 +5065,62 @@ def render_nationality_tab():
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("🏆 主力客源分佈 (依房晚數)")
+        st.subheader("🏆 主力客源分佈 (前五名與上月比較)")
         
-        # 處理 Top 10 與 Others
-        df_pie = df_agg.sort_values('nights', ascending=False).copy()
-        if len(df_pie) > 10:
-            top10 = df_pie.head(10)
-            others = pd.DataFrame([{
-                'nation': '其他 (Others)', 'nation_clean': '其他',
-                'nights': df_pie.iloc[10:]['nights'].sum(),
-                'person': df_pie.iloc[10:]['person'].sum(),
-                'rate': df_pie.iloc[10:]['rate'].sum(),
-                'nights_pct': df_pie.iloc[10:]['nights_pct'].sum(),
-                'adr': round(df_pie.iloc[10:]['rate'].sum() / df_pie.iloc[10:]['nights'].sum()) if df_pie.iloc[10:]['nights'].sum() > 0 else 0
-            }])
-            df_pie = pd.concat([top10, others], ignore_index=True)
+        curr_total = int(df_agg['nights'].sum()) if not df_agg.empty else 0
+        prev_total = int(df_prev_agg['nights'].sum()) if not df_prev_agg.empty else 0
         
-        pie_chart = alt.Chart(df_pie).mark_arc(innerRadius=50).encode(
-            theta=alt.Theta(field="nights", type="quantitative"),
-            color=alt.Color("nation:N", sort=alt.EncodingSortField(field="nights", order="descending"), legend=alt.Legend(title="國籍")),
-            tooltip=['nation', 'nights', 'nights_pct', 'rate']
-        ).properties(height=350)
-        st.altair_chart(pie_chart, use_container_width=True)
+        curr_date = st.session_state.get('sidebar_date')
+        curr_m_str = curr_date.month if curr_date else ""
+        
+        import datetime
+        prev_date = curr_date.replace(day=1) - datetime.timedelta(days=1) if curr_date else None
+        prev_m_str = prev_date.month if prev_date else ""
+        
+        def render_top5_table(df_a, bg_header, bg_row1, bg_row2):
+            if df_a.empty:
+                return "<p style='text-align:center; padding: 20px;'>無資料</p>"
+            
+            top5 = df_a.sort_values('nights', ascending=False).head(5)
+            rows_html = ""
+            for i, row in top5.reset_index(drop=True).iterrows():
+                bg_c = bg_row1 if (i % 2 == 0) else bg_row2
+                pct_str = f"{int(round(row['nights_pct']))}%"
+                rows_html += f"""
+                <tr style="background-color: {bg_c};">
+                    <td style="padding: 12px; border: 1px solid white;">{row['nation']}</td>
+                    <td style="padding: 12px; border: 1px solid white;">{int(row['nights'])}</td>
+                    <td style="padding: 12px; border: 1px solid white;">{pct_str}</td>
+                </tr>
+                """
+                
+            return f"""
+            <table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 16px;">
+              <tr style="background-color: {bg_header}; color: black; font-weight: bold;">
+                <th style="padding: 12px; border: 1px solid white; text-align: center;">國籍</th>
+                <th style="padding: 12px; border: 1px solid white; text-align: center;">間數</th>
+                <th style="padding: 12px; border: 1px solid white; text-align: center;">百分比</th>
+              </tr>
+              {rows_html}
+            </table>
+            """
+            
+        curr_html = render_top5_table(df_agg, "#f7a63b", "#fcebda", "#fef5ef")
+        prev_html = render_top5_table(df_prev_agg, "#08969e", "#d2e2e6", "#eef2f5")
+        
+        html_layout = f"""
+        <div style="display: flex; gap: 15px; width: 100%;">
+            <div style="flex: 1;">
+                <div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{curr_m_str}月 總間數 {curr_total}</div>
+                {curr_html}
+            </div>
+            <div style="flex: 1;">
+                <div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{prev_m_str}月 總間數 {prev_total}</div>
+                {prev_html}
+            </div>
+        </div>
+        """
+        st.markdown(html_layout, unsafe_allow_html=True)
         
     with col2:
         st.subheader("💰 國籍別營收與 ADR")
