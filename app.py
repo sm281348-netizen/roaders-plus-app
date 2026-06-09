@@ -5086,40 +5086,34 @@ def render_nationality_tab():
             for i, row in top5.reset_index(drop=True).iterrows():
                 bg_c = bg_row1 if (i % 2 == 0) else bg_row2
                 pct_str = f"{int(round(row['nights_pct']))}%"
-                rows_html += f"""
-                <tr style="background-color: {bg_c};">
-                    <td style="padding: 12px; border: 1px solid white;">{row['nation']}</td>
-                    <td style="padding: 12px; border: 1px solid white;">{int(row['nights'])}</td>
-                    <td style="padding: 12px; border: 1px solid white;">{pct_str}</td>
-                </tr>
-                """
+                rows_html += f"""<tr style="background-color: {bg_c};">
+<td style="padding: 12px; border: 1px solid white;">{row['nation']}</td>
+<td style="padding: 12px; border: 1px solid white;">{int(row['nights'])}</td>
+<td style="padding: 12px; border: 1px solid white;">{pct_str}</td>
+</tr>"""
                 
-            return f"""
-            <table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 16px;">
-              <tr style="background-color: {bg_header}; color: black; font-weight: bold;">
-                <th style="padding: 12px; border: 1px solid white; text-align: center;">國籍</th>
-                <th style="padding: 12px; border: 1px solid white; text-align: center;">間數</th>
-                <th style="padding: 12px; border: 1px solid white; text-align: center;">百分比</th>
-              </tr>
-              {rows_html}
-            </table>
-            """
+            return f"""<table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 16px;">
+<tr style="background-color: {bg_header}; color: black; font-weight: bold;">
+<th style="padding: 12px; border: 1px solid white; text-align: center;">國籍</th>
+<th style="padding: 12px; border: 1px solid white; text-align: center;">間數</th>
+<th style="padding: 12px; border: 1px solid white; text-align: center;">百分比</th>
+</tr>
+{rows_html}
+</table>"""
             
         curr_html = render_top5_table(df_agg, "#f7a63b", "#fcebda", "#fef5ef")
         prev_html = render_top5_table(df_prev_agg, "#08969e", "#d2e2e6", "#eef2f5")
         
-        html_layout = f"""
-        <div style="display: flex; gap: 15px; width: 100%;">
-            <div style="flex: 1;">
-                <div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{curr_m_str}月 總間數 {curr_total}</div>
-                {curr_html}
-            </div>
-            <div style="flex: 1;">
-                <div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{prev_m_str}月 總間數 {prev_total}</div>
-                {prev_html}
-            </div>
-        </div>
-        """
+        html_layout = f"""<div style="display: flex; gap: 15px; width: 100%;">
+<div style="flex: 1;">
+<div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{curr_m_str}月 總間數 {curr_total}</div>
+{curr_html}
+</div>
+<div style="flex: 1;">
+<div style="font-size: 20px; font-weight: bold; color: red; margin-bottom: 10px;">{prev_m_str}月 總間數 {prev_total}</div>
+{prev_html}
+</div>
+</div>"""
         st.markdown(html_layout, unsafe_allow_html=True)
         
     with col2:
