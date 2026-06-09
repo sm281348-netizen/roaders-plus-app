@@ -4852,25 +4852,57 @@ def parse_tourism_bureau_excel(uploaded_file):
                 start_row = i
                 break
                 
-        # 擷取開始行之後的資料，並固定取前 4 欄
-        # (通常第1欄國籍, 第2欄當期, 第3欄同期, 第4欄成長率)
-        if df.shape[1] >= 4:
-            res_df = df.iloc[start_row+1:, :4].copy()
-            res_df.columns = ['Nation_Raw', 'Curr_Arrivals', 'Prev_Arrivals', 'Growth_Rate_Pct']
+        data_df = df.iloc[start_row+1:].copy()
+        
+        # 動態尋找真正的「國籍」欄位（包含日本、韓國等字眼的欄位）
+        nat_col_idx = -1
+        for col in data_df.columns:
+            # 抓取該欄位前 15 筆非空值拼成字串來判斷
+            col_str = ' '.join([str(x) for x in data_df[col].dropna().head(15).values])
+            if '日本' in col_str or 'japan' in col_str.lower() or '韓國' in col_str or 'korea' in col_str.lower():
+                nat_col_idx = col
+                break
+                
+        if nat_col_idx != -1:
+            # 國籍欄位右邊的欄位，依序過濾出包含數字的實體數據欄位
+            numeric_cols = []
+            for col in data_df.columns:
+                if col > nat_col_idx:
+                    # 檢查這欄是否有很多數字 (排除空白欄位)
+                    num_count = pd.to_numeric(data_df[col], errors='coerce').notna().sum()
+                    if num_count > 5:  # 超過5個數字就認為是有效數據欄
+                        numeric_cols.append(col)
             
-            # 清理資料：移除空值與小計/總計列
-            res_df = res_df.dropna(subset=['Nation_Raw'])
-            res_df = res_df[~res_df['Nation_Raw'].astype(str).str.contains('Table|Total|計|小計|Growth|Nationality|Jan', na=False, case=False)]
-            
-            # 整理國籍名稱以便比對
-            res_df['Nation_Clean'] = res_df['Nation_Raw'].apply(clean_nation_name)
-            
-            # 確保數值正確
-            res_df['Curr_Arrivals'] = pd.to_numeric(res_df['Curr_Arrivals'], errors='coerce').fillna(0)
-            res_df['Growth_Rate_Pct'] = pd.to_numeric(res_df['Growth_Rate_Pct'], errors='coerce').fillna(0)
-            
-            return res_df
-        return None
+            # 通常至少需要 3 個數據欄位 (當期, 同期, 成長率)
+            if len(numeric_cols) >= 3:
+                curr_col = numeric_cols[0]
+                prev_col = numeric_cols[1]
+                growth_col = numeric_cols[2]
+                
+                res_df = data_df[[nat_col_idx, curr_col, prev_col, growth_col]].copy()
+                res_df.columns = ['Nation_Raw', 'Curr_Arrivals', 'Prev_Arrivals', 'Growth_Rate_Pct']
+                
+                # 清理資料：移除空值與小計/總計列
+                res_df = res_df.dropna(subset=['Nation_Raw'])
+                res_df = res_df[~res_df['Nation_Raw'].astype(str).str.contains('Table|Total|計|小計|Growth|Nationality|Jan|洲地區', na=False, case=False)]
+                
+                # 整理國籍名稱以便比對
+                res_df['Nation_Clean'] = res_df['Nation_Raw'].apply(clean_nation_name)
+                
+                # 確保數值正確
+                res_df['Curr_Arrivals'] = pd.to_numeric(res_df['Curr_Arrivals'], errors='coerce').fillna(0)
+                res_df['Growth_Rate_Pct'] = pd.to_numeric(res_df['Growth_Rate_Pct'], errors='coerce').fillna(0)
+                
+                # 過濾掉 Nation_Clean 為空
+                res_df = res_df[res_df['Nation_Clean'].str.len() > 0]
+                
+                return res_df
+            else:
+                st.error("找不到足夠的數據欄位 (當期、同期、成長率)。")
+                return None
+        else:
+            st.error("在檔案中找不到包含國名的欄位。")
+            return None
     except Exception as e:
         st.error(f"解析觀光署報表失敗: {e}")
         return None
