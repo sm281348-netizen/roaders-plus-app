@@ -4924,7 +4924,20 @@ def render_nationality_tab():
                 df_hotel.columns = [str(c).strip().lower() for c in df_hotel.columns]
                 
                 # 確保必要欄位存在
-                if set(['nation', 'person', 'rate', 'nights']).issubset(set(df_hotel.columns)):
+                if set(['month', 'nation', 'person', 'rate', 'nights']).issubset(set(df_hotel.columns)):
+                    # 依據左側選單的月份進行過濾
+                    curr_date = st.session_state.get('sidebar_date')
+                    if curr_date:
+                        curr_ym1 = curr_date.strftime("%Y%m")     # 202604
+                        curr_ym2 = curr_date.strftime("%Y-%m")    # 2026-04
+                        curr_ym3 = curr_date.strftime("%Y/%m")    # 2026/04
+                        
+                        mask = df_hotel['month'].astype(str).str.contains(f"{curr_ym1}|{curr_ym2}|{curr_ym3}", na=False, regex=True)
+                        df_hotel = df_hotel[mask].copy()
+                        
+                        # 標示目前的過濾條件
+                        st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
+                        
                     # 數值轉換
                     for c in ['person', 'rate', 'nights']:
                         # 處理可能的逗號千分位
