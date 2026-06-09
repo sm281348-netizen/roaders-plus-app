@@ -4823,26 +4823,26 @@ def clean_nation_name(nation_str):
 
 def parse_tourism_bureau_excel(uploaded_file):
     try:
-        # 讀取觀光署 Excel
-        # 通常欄位在第 3 列 (index 2)，且有合併儲存格
-        df = pd.read_excel(uploaded_file, header=2)
+        # 改用無 header 讀取，避免合併儲存格造成欄位錯亂
+        df = pd.read_excel(uploaded_file, header=None)
         
-        # 找出國籍欄位 (可能叫 Nationality 或 居住地)
-        nat_col = next((c for c in df.columns if 'Nationality' in str(c) or '國籍' in str(c) or '居住地' in str(c) or 'Unnamed: 0' in str(c)), None)
-        
-        # 找出當期與去年同期欄位 (通常包含年份或月份)
-        # 假設結構：第1欄國籍，第2欄當期，第3欄同期，第4欄成長率
-        if len(df.columns) >= 4:
-            curr_col = df.columns[1]
-            prev_col = df.columns[2]
-            growth_col = df.columns[3]
-            
-            res_df = df[[nat_col, curr_col, prev_col, growth_col]].copy()
+        # 找出國籍與數據開始的那一行
+        start_row = 0
+        for i, row in df.iterrows():
+            row_str = ' '.join(row.astype(str).values).lower()
+            if 'nationality' in row_str or '國籍' in row_str or 'growth rate' in row_str or '成長率' in row_str:
+                start_row = i
+                break
+                
+        # 擷取開始行之後的資料，並固定取前 4 欄
+        # (通常第1欄國籍, 第2欄當期, 第3欄同期, 第4欄成長率)
+        if df.shape[1] >= 4:
+            res_df = df.iloc[start_row+1:, :4].copy()
             res_df.columns = ['Nation_Raw', 'Curr_Arrivals', 'Prev_Arrivals', 'Growth_Rate_Pct']
             
-            # 清理資料
+            # 清理資料：移除空值與小計/總計列
             res_df = res_df.dropna(subset=['Nation_Raw'])
-            res_df = res_df[~res_df['Nation_Raw'].astype(str).str.contains('Table|Total|Total|計|小計', na=False, case=False)]
+            res_df = res_df[~res_df['Nation_Raw'].astype(str).str.contains('Table|Total|計|小計|Growth|Nationality|Jan', na=False, case=False)]
             
             # 整理國籍名稱以便比對
             res_df['Nation_Clean'] = res_df['Nation_Raw'].apply(clean_nation_name)
@@ -4983,7 +4983,7 @@ def render_nationality_tab():
         
         pie_chart = alt.Chart(df_pie).mark_arc(innerRadius=50).encode(
             theta=alt.Theta(field="nights", type="quantitative"),
-            color=alt.Color(field="nation", type="nominal", sort='-q', legend=alt.Legend(title="國籍")),
+            color=alt.Color("nation:N", sort=alt.EncodingSortField(field="nights", order="descending"), legend=alt.Legend(title="國籍")),
             tooltip=['nation', 'nights', 'nights_pct', 'rate']
         ).properties(height=350)
         st.altair_chart(pie_chart, use_container_width=True)
