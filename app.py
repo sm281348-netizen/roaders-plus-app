@@ -437,7 +437,7 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     import datetime
                     
                     parsed_fb = []
-                    current_year = pd.to_datetime(df['date']).dt.year.min() if not df.empty else datetime.datetime.now().year
+                    current_year = 2026
                     prev_month = None
                     
                     current_month_rev = 0
@@ -466,12 +466,9 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             continue
                             
                         # Extract daily guests
-                        m_date = re.match(r'^(\d{1,2})/(\d{1,2})', col_a)
-                        if m_date:
-                            m, d = int(m_date.group(1)), int(m_date.group(2))
-                            if prev_month == 12 and m == 1:
-                                current_year += 1
-                            prev_month = m
+                        if col_a.isdigit() and 1 <= int(col_a) <= 31:
+                            m = 1
+                            d = int(col_a)
                             date_str = f"{current_year}-{m:02d}-{d:02d}"
                             
                             def safe_int(v):
