@@ -363,7 +363,44 @@ except Exception as e:
 def _get_cached_sheet(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。"""
-    return conn.read(worksheet=worksheet, ttl=0)
+    actual_sheet = "occ data" if worksheet == "daily_data" else worksheet
+    try:
+        df = conn.read(worksheet=actual_sheet, ttl=0)
+    except Exception as e:
+        # Fallback to original worksheet if occ data doesn't exist yet
+        if actual_sheet == "occ data":
+            df = conn.read(worksheet=worksheet, ttl=0)
+        else:
+            raise e
+
+    if worksheet == "daily_data" and df is not None and not df.empty:
+        # Check if it's the raw Golden System export by looking for 'Date' column
+        if 'Date' in df.columns or 'Net Occupancy' in df.columns:
+            # Column mapping
+            rename_map = {
+                'Date': 'date',
+                'Net Occupancy': 'occ_rate',
+                'ADR (Rooms Sold)': 'adr',
+                'Total Room Revenue': 'revenue',
+                'Rooms Available to Sell': 'total_rooms',
+                'Total Rooms Sold': 'sold_rooms'
+            }
+            df = df.rename(columns=rename_map)
+            
+            # Format date from '20250101' to '2025-01-01'
+            if 'date' in df.columns:
+                def format_golden_date(d):
+                    ds = str(d).strip()
+                    if len(ds) == 8 and ds.isdigit():
+                        return f"{ds[:4]}-{ds[4:6]}-{ds[6:]}"
+                    return ds
+                df['date'] = df['date'].apply(format_golden_date)
+                
+            # Filter out sum rows (only keep valid dates)
+            if 'date' in df.columns:
+                df = df[df['date'].astype(str).str.len() == 10]
+
+    return df
 
 
 def read_google_sheet(worksheet, ttl="1m"):
