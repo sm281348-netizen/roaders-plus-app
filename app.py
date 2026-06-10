@@ -399,6 +399,87 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             # Filter out sum rows (only keep valid dates)
             if 'date' in df.columns:
                 df = df[df['date'].astype(str).str.len() == 10]
+                
+            # --- Parse F&B Data from f&b_data ---
+            try:
+                df_fb = conn.read(worksheet="f&b_data", ttl=0)
+                if df_fb is not None and not df_fb.empty:
+                    import re
+                    import datetime
+                    
+                    parsed_fb = []
+                    current_year = pd.to_datetime(df['date']).dt.year.min() if not df.empty else datetime.datetime.now().year
+                    prev_month = None
+                    
+                    current_month_rev = 0
+                    current_month_avg_spent = 0
+                    current_month_dates = []
+
+                    for i, row in df_fb.iterrows():
+                        col_a = str(row.iloc[0]).strip()
+                        if not col_a or col_a == 'nan' or col_a == 'None':
+                            continue
+                            
+                        # Extract monthly summaries
+                        if "已結算營收" in col_a and "早餐" not in col_a and "下午茶" not in col_a:
+                            val = str(row.iloc[1]).replace("NT$", "").replace(",", "").strip()
+                            current_month_rev = int(float(val)) if val and val != 'nan' else 0
+                            continue
+                        elif "平均客單價" in col_a and "早餐" not in col_a and "下午茶" not in col_a:
+                            val = str(row.iloc[1]).replace("NT$", "").replace(",", "").strip()
+                            current_month_avg_spent = int(float(val)) if val and val != 'nan' else 0
+                            
+                            # Backfill to parsed dates of the current month block
+                            for r in current_month_dates:
+                                r['rest_month_rev'] = current_month_rev
+                                r['rest_avg_spent'] = current_month_avg_spent
+                            current_month_dates = []
+                            continue
+                            
+                        # Extract daily guests
+                        m_date = re.match(r'^(\d{1,2})/(\d{1,2})', col_a)
+                        if m_date:
+                            m, d = int(m_date.group(1)), int(m_date.group(2))
+                            if prev_month == 12 and m == 1:
+                                current_year += 1
+                            prev_month = m
+                            date_str = f"{current_year}-{m:02d}-{d:02d}"
+                            
+                            def safe_int(v):
+                                try:
+                                    return int(float(str(v).replace(",", "").strip()))
+                                except:
+                                    return 0
+                            
+                            # G (index 6): 早餐實際總和, M (index 12): 下午茶實際總和, N (index 13): HH
+                            rest_breakfast = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                            rest_day_guests = safe_int(row.iloc[12]) if len(row) > 12 else 0
+                            rest_hh_guests = safe_int(row.iloc[13]) if len(row) > 13 else 0
+                            
+                            row_dict = {
+                                'date': date_str,
+                                'rest_breakfast': rest_breakfast,
+                                'rest_day_guests': rest_day_guests,
+                                'rest_hh_guests': rest_hh_guests,
+                                'rest_month_rev': 0,
+                                'rest_avg_spent': 0
+                            }
+                            parsed_fb.append(row_dict)
+                            current_month_dates.append(row_dict)
+                            
+                    if parsed_fb:
+                        import pandas as pd
+                        df_fb_parsed = pd.DataFrame(parsed_fb)
+                        # Merge into df on 'date'
+                        df = pd.merge(df, df_fb_parsed, on='date', how='left')
+                        # Fill NaN with 0
+                        rest_cols = ['rest_breakfast', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent']
+                        for c in rest_cols:
+                            if c in df.columns:
+                                df[c] = df[c].fillna(0)
+            except Exception as e:
+                print(f"Error parsing f&b_data: {e}")
+            # ----------------------
 
     return df
 
