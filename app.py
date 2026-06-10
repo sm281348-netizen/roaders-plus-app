@@ -1788,6 +1788,10 @@ if current_hotel != "採購":
                 avg_total_af = 0
 
             mtd_avg_total = avg_total_bf + avg_total_af
+            
+            # --- INJECT DEBUG INFO TO UI ---
+            st.warning(f"🐛 [系統除錯] 選擇月份：{date_str}。df_mtd 欄位有：{df_mtd.columns.tolist() if not df_mtd.empty else '空的！'}。餐飲營收：{mtd_total_bf_act} (早), {mtd_total_af_act} (下午)")
+            # -----------------------------
 
             # 獲取餐廳月度總結
             # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
