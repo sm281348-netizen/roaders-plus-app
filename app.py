@@ -436,6 +436,8 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 if df_fb is not None and not df_fb.empty:
                     # Guarantee UI visibility for F&B structure
                     import streamlit as st
+                    raw_col_a = [str(x) for x in df_fb.iloc[:15, 0].tolist()]
+                    st.error(f"🚨 [F&B 第一欄診斷] 前 15 筆的原始值: {raw_col_a}")
                     
                     import re
                     import datetime
