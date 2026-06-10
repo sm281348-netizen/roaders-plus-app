@@ -441,15 +441,8 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     import datetime
                     
                     parsed_fb = []
-                    # 取得起始年份 (從 occ_data 推斷，或預設當年)
-                    if not df.empty and 'date' in df.columns:
-                        dt_series = pd.to_datetime(df['date'], errors='coerce').dropna()
-                        if not dt_series.empty:
-                            current_year = dt_series.dt.year.min()
-                        else:
-                            current_year = datetime.datetime.now().year
-                    else:
-                        current_year = datetime.datetime.now().year
+                    # 依據使用者需求，餐飲數據是從 2026 年 1 月開始
+                    current_year = 2026
                         
                     prev_month = None
                     
