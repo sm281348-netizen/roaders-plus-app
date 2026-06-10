@@ -853,11 +853,10 @@ def next_month():
     st.session_state['sidebar_date'] = next_m_first.replace(day=last_day)
 
 col1, col2 = st.sidebar.columns(2)
+col1.button("⬅️ 前月", on_click=prev_month)
+col2.button("後月 ➡️", on_click=next_month)
 
 if current_hotel == "採購":
-    col1.button("⬅️ 前一月", on_click=prev_month)
-    col2.button("下一月 ➡️", on_click=next_month)
-    
     def on_purchasing_date_change():
         # 當使用者手動選取日期時，強制將其轉換為該月最後一天
         import calendar
@@ -872,9 +871,6 @@ if current_hotel == "採購":
     )
     selected_date = st.session_state['sidebar_date']
 else:
-    col1.button("⬅️ 前一天", on_click=prev_day)
-    col2.button("後一天 ➡️", on_click=next_day)
-    
     selected_raw = st.sidebar.date_input(
         "選擇日期", 
         key='sidebar_date'
