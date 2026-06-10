@@ -421,17 +421,6 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             if 'date' in df.columns:
                 df = df[df['date'].astype(str).str.strip() != '']
                 df = df[~df['date'].astype(str).str.contains("合計|總計|total", case=False, na=False)]
-                
-            # --- INJECT DEBUG INFO TO UI ---
-            import streamlit as st
-            st.info(f"🐛 [系統除錯] 成功讀取 occ_data。目前的欄位名稱有：{df.columns.tolist()}")
-            if 'date' in df.columns and not df.empty:
-                st.info(f"🐛 [系統除錯] 成功辨識的前 3 筆日期資料：{df['date'].head(3).tolist()}")
-            elif df.empty:
-                st.warning("🐛 [系統除錯] DataFrame 是空的！")
-            else:
-                st.warning("🐛 [系統除錯] 找不到 date 欄位！")
-            # -----------------------------
 
         else:
             # Fallback: if it completely fails to find PMS headers, ensure 'date' exists to prevent crashes
@@ -439,11 +428,6 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 df['date'] = pd.Series(dtype='str')
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
-                
-            # --- INJECT DEBUG INFO TO UI ---
-            import streamlit as st
-            st.error(f"🚨 [系統除錯] 找不到金旭表頭！實際讀到的欄位是：{df.columns.tolist()}")
-            # -----------------------------
                 
             # --- Parse F&B Data from f&b_data ---
             try:
