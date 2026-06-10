@@ -1758,40 +1758,36 @@ if current_hotel != "採購":
             st.write("##### 🍽️ 餐廳營運累計 (MTD)")
 
             # MTD 餐廳計算
-            mtd_bf_theme = df_mtd['bf_theme_act'].sum(
-            ) if 'bf_theme_act' in df_mtd.columns else 0
-            mtd_bf_zq = df_mtd['bf_zq_act'].sum(
-            ) if 'bf_zq_act' in df_mtd.columns else 0
-            mtd_af_theme = df_mtd['af_theme_act'].sum(
-            ) if 'af_theme_act' in df_mtd.columns else 0
-            mtd_af_zq = df_mtd['af_zq_act'].sum(
-            ) if 'af_zq_act' in df_mtd.columns else 0
+            # MTD Breakfast
+            mtd_bf_theme = 0
+            mtd_bf_zq = 0
+            if 'rest_breakfast' in df_mtd.columns:
+                mtd_total_bf_act = df_mtd['rest_breakfast'].sum()
+            else:
+                mtd_total_bf_act = 0
 
-            # 本月整體總和
-            mtd_total_bf_act = df_mtd['bf_total_act'].sum(
-            ) if 'bf_total_act' in df_mtd.columns else 0
-            mtd_total_af_act = df_mtd['af_total_act'].sum(
-            ) if 'af_total_act' in df_mtd.columns else 0
+            # MTD Afternoon Tea
+            mtd_af_theme = 0
+            mtd_af_zq = 0
+            if 'rest_day_guests' in df_mtd.columns:
+                mtd_total_af_act = df_mtd['rest_day_guests'].sum()
+            else:
+                mtd_total_af_act = 0
 
             # 為了更精確，僅採計「有預估客數」或「有實際客數」的日子為工作日（這會完美略過月底那些全是 0 的未來天數）
-            if 'bf_total_act' in df_mtd.columns:
-                active_bf_days = len(
-                    df_mtd[(df_mtd['bf_total_est'] > 0) | (df_mtd['bf_total_act'] > 0)])
+            if 'rest_breakfast' in df_mtd.columns:
+                active_bf_days = len(df_mtd[df_mtd['rest_breakfast'] > 0])
+                avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
             else:
-                active_bf_days = 0
+                avg_total_bf = 0
 
-            if 'af_total_act' in df_mtd.columns:
-                active_af_days = len(
-                    df_mtd[(df_mtd['af_total_est'] > 0) | (df_mtd['af_total_act'] > 0)])
+            if 'rest_day_guests' in df_mtd.columns:
+                active_af_days = len(df_mtd[df_mtd['rest_day_guests'] > 0])
+                avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
             else:
-                active_af_days = 0
+                avg_total_af = 0
 
-            total_bf_days = active_bf_days if active_bf_days > 0 else 1
-            total_af_days = active_af_days if active_af_days > 0 else 1
-
-            mtd_avg_bf = mtd_total_bf_act / total_bf_days
-            mtd_avg_af = mtd_total_af_act / total_af_days
-            mtd_avg_total = mtd_avg_bf + mtd_avg_af
+            mtd_avg_total = avg_total_bf + avg_total_af
 
             # 獲取餐廳月度總結
             # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
@@ -1837,10 +1833,10 @@ if current_hotel != "採購":
             st.markdown(
                 "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
             a1, a2, a3 = st.columns(3)
-            a1.markdown(make_card("兩館早餐平均", f"{mtd_avg_bf:.1f} 人/日",
+            a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
                         "card-theme-orange", "", "✨"), unsafe_allow_html=True)
             a2.markdown(make_card(
-                "兩館下午茶平均", f"{mtd_avg_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
+                "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
             a3.markdown(make_card(
                 "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
 
