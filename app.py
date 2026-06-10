@@ -4902,6 +4902,16 @@ def parse_tourism_bureau_excel(uploaded_file):
         st.error(f"解析觀光署報表失敗: {e}")
         return None
 
+def format_pct(val):
+    if pd.isna(val) or val == 0:
+        return "0%"
+    if val < 0.5:
+        if val >= 0.01:
+            return f"{val:.2f}%"
+        else:
+            return f"{val:.3f}%"
+    return f"{int(val + 0.5)}%"
+
 def clean_channel_name(name):
     name = str(name).strip().upper()
     if 'AGODA' in name: return 'AGODA'
@@ -4951,7 +4961,7 @@ def render_channel_tab():
                                 df_agg = df_t.groupby('channel_clean', as_index=False).agg({'rooms': 'sum'})
                                 
                                 total_rooms = df_agg['rooms'].sum()
-                                df_agg['rooms_pct'] = (df_agg['rooms'] / total_rooms * 100).round(1)
+                                df_agg['rooms_pct'] = (df_agg['rooms'] / total_rooms * 100).round(3)
                                 
                         st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
         except Exception as e:
@@ -4979,7 +4989,7 @@ def render_channel_tab():
             rows_html = ""
             for i, row in top10.reset_index(drop=True).iterrows():
                 bg_c = bg_row1 if (i % 2 == 0) else bg_row2
-                pct_str = f"{int(round(row['rooms_pct']))}%" if not pd.isna(row['rooms_pct']) else "0%"
+                pct_str = format_pct(row['rooms_pct'])
                 rows_html += f"""<tr style="background-color: {bg_c};">
 <td style="padding: 12px; border: 1px solid white;">{row['channel_clean']}</td>
 <td style="padding: 12px; border: 1px solid white;">{int(row['rooms'])}</td>
@@ -5100,7 +5110,7 @@ def render_nationality_tab():
                                 })
                                 d_agg['adr'] = d_agg.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
                                 total_n = d_agg['nights'].sum()
-                                d_agg['nights_pct'] = (d_agg['nights'] / total_n * 100).round(1)
+                                d_agg['nights_pct'] = (d_agg['nights'] / total_n * 100).round(3)
                                 return d_agg
                             return pd.DataFrame()
                             
@@ -5191,7 +5201,7 @@ def render_nationality_tab():
             rows_html = ""
             for i, row in top5.reset_index(drop=True).iterrows():
                 bg_c = bg_row1 if (i % 2 == 0) else bg_row2
-                pct_str = f"{int(round(row['nights_pct']))}%"
+                pct_str = format_pct(row['nights_pct'])
                 rows_html += f"""<tr style="background-color: {bg_c};">
 <td style="padding: 12px; border: 1px solid white;">{row['nation']}</td>
 <td style="padding: 12px; border: 1px solid white;">{int(row['nights'])}</td>
