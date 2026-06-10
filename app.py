@@ -402,24 +402,48 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             # Remove any empty column names
             df = df.loc[:, df.columns.notna() & (df.columns != 'nan') & (df.columns != '')]
             
-            # Format date from '20250101' to '2025-01-01'
+            # Format date to handle variations
             if 'date' in df.columns:
                 def format_golden_date(d):
                     ds = str(d).strip()
+                    if ds.endswith('.0'):
+                        ds = ds[:-2]
                     if len(ds) == 8 and ds.isdigit():
                         return f"{ds[:4]}-{ds[4:6]}-{ds[6:]}"
+                    if ds.isdigit() and 40000 < int(ds) < 60000:
+                        import datetime
+                        dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=int(ds))
+                        return dt.strftime('%Y-%m-%d')
                     return ds
                 df['date'] = df['date'].apply(format_golden_date)
                 
-            # Filter out sum rows (only keep valid dates)
+            # Filter out sum rows safely (instead of strict length 10)
             if 'date' in df.columns:
-                df = df[df['date'].astype(str).str.len() == 10]
+                df = df[df['date'].astype(str).str.strip() != '']
+                df = df[~df['date'].astype(str).str.contains("合計|總計|total", case=False, na=False)]
+                
+            # --- INJECT DEBUG INFO TO UI ---
+            import streamlit as st
+            st.info(f"🐛 [系統除錯] 成功讀取 occ_data。目前的欄位名稱有：{df.columns.tolist()}")
+            if 'date' in df.columns and not df.empty:
+                st.info(f"🐛 [系統除錯] 成功辨識的前 3 筆日期資料：{df['date'].head(3).tolist()}")
+            elif df.empty:
+                st.warning("🐛 [系統除錯] DataFrame 是空的！")
+            else:
+                st.warning("🐛 [系統除錯] 找不到 date 欄位！")
+            # -----------------------------
+
         else:
             # Fallback: if it completely fails to find PMS headers, ensure 'date' exists to prevent crashes
             if 'date' not in df.columns:
                 df['date'] = pd.Series(dtype='str')
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
+                
+            # --- INJECT DEBUG INFO TO UI ---
+            import streamlit as st
+            st.error(f"🚨 [系統除錯] 找不到金旭表頭！實際讀到的欄位是：{df.columns.tolist()}")
+            # -----------------------------
                 
             # --- Parse F&B Data from f&b_data ---
             try:
