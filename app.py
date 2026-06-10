@@ -374,6 +374,18 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             raise e
 
     if worksheet == "daily_data" and df is not None and not df.empty:
+        # Strip string columns to avoid whitespace issues
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Check if the header is pushed down (e.g. Row 2)
+        if 'Date' not in df.columns and 'Net Occupancy' not in df.columns:
+            for idx, r in df.head(10).iterrows():
+                row_vals = [str(v).strip() for v in r.values]
+                if 'Date' in row_vals or 'Net Occupancy' in row_vals:
+                    df.columns = row_vals
+                    df = df.iloc[idx+1:].reset_index(drop=True)
+                    break
+                    
         # Check if it's the raw Golden System export by looking for 'Date' column
         if 'Date' in df.columns or 'Net Occupancy' in df.columns:
             # Column mapping
@@ -399,6 +411,12 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             # Filter out sum rows (only keep valid dates)
             if 'date' in df.columns:
                 df = df[df['date'].astype(str).str.len() == 10]
+        else:
+            # Fallback: if it completely fails to find PMS headers, ensure 'date' exists to prevent crashes
+            if 'date' not in df.columns:
+                df['date'] = pd.Series(dtype='str')
+            if 'revenue' not in df.columns:
+                df['revenue'] = 0
                 
             # --- Parse F&B Data from f&b_data ---
             try:
