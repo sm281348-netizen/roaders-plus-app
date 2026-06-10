@@ -5006,7 +5006,7 @@ def render_nationality_tab():
             st.error(f"讀取 RTS_backup(nationality_data) 發生錯誤: {e}")
     
     if df_agg is None or df_agg.empty:
-        st.warning("⚠️ 找不到本月份的客源資料，或資料庫中無大於 0 房晚的紀錄。請確認您的日期選擇與 Google Sheet 的 nationality_data 分頁。")
+        st.warning("⚠️ 尚無資料")
         return
         
     st.divider()
