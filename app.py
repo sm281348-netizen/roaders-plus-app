@@ -530,7 +530,12 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                         for c in rest_cols:
                             if c in df.columns:
                                 df[c] = df[c].fillna(0)
+                else:
+                    import streamlit as st
+                    st.error("🚨 [系統除錯] 讀取成功，但 f&b_data 竟然是空的！")
             except Exception as e:
+                import streamlit as st
+                st.error(f"🚨 [系統除錯] 讀取 f&b_data 發生錯誤: {e}")
                 print(f"Error parsing f&b_data: {e}")
             # ----------------------
 
