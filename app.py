@@ -436,13 +436,21 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 if df_fb is not None and not df_fb.empty:
                     # Guarantee UI visibility for F&B structure
                     import streamlit as st
-                    st.error(f"🚨 [F&B 原始資料] 第一欄的前五個值: {df_fb.iloc[:5, 0].tolist()}。第二欄: {df_fb.iloc[:5, 1].tolist()}")
                     
                     import re
                     import datetime
                     
                     parsed_fb = []
-                    current_year = 2026
+                    # 取得起始年份 (從 occ_data 推斷，或預設當年)
+                    if not df.empty and 'date' in df.columns:
+                        dt_series = pd.to_datetime(df['date'], errors='coerce').dropna()
+                        if not dt_series.empty:
+                            current_year = dt_series.dt.year.min()
+                        else:
+                            current_year = datetime.datetime.now().year
+                    else:
+                        current_year = datetime.datetime.now().year
+                        
                     prev_month = None
                     
                     current_month_rev = 0
@@ -470,10 +478,13 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             current_month_dates = []
                             continue
                             
-                        # Extract daily guests
-                        if col_a.isdigit() and 1 <= int(col_a) <= 31:
-                            m = 1
-                            d = int(col_a)
+                        # Extract daily guests (e.g. "1/25週日" or "2/1週日")
+                        m_date = re.match(r'^(\d{1,2})[/-](\d{1,2})', col_a)
+                        if m_date:
+                            m, d = int(m_date.group(1)), int(m_date.group(2))
+                            if prev_month == 12 and m == 1:
+                                current_year += 1
+                            prev_month = m
                             date_str = f"{current_year}-{m:02d}-{d:02d}"
                             
                             def safe_int(v):
@@ -482,14 +493,26 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                                 except:
                                     return 0
                             
-                            # G (index 6): 早餐實際總和, M (index 12): 下午茶實際總和, N (index 13): HH
+                            # C(2): 主題早餐, E(4): 站前早餐, G(6): 兩館早餐
+                            # I(8): 主題下午茶, K(10): 站前下午茶, M(12): 兩館下午茶
+                            # N(13): HH
+                            bf_theme_act = safe_int(row.iloc[2]) if len(row) > 2 else 0
+                            bf_zq_act = safe_int(row.iloc[4]) if len(row) > 4 else 0
                             rest_breakfast = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                            
+                            af_theme_act = safe_int(row.iloc[8]) if len(row) > 8 else 0
+                            af_zq_act = safe_int(row.iloc[10]) if len(row) > 10 else 0
                             rest_day_guests = safe_int(row.iloc[12]) if len(row) > 12 else 0
+                            
                             rest_hh_guests = safe_int(row.iloc[13]) if len(row) > 13 else 0
                             
                             row_dict = {
                                 'date': date_str,
+                                'bf_theme_act': bf_theme_act,
+                                'bf_zq_act': bf_zq_act,
                                 'rest_breakfast': rest_breakfast,
+                                'af_theme_act': af_theme_act,
+                                'af_zq_act': af_zq_act,
                                 'rest_day_guests': rest_day_guests,
                                 'rest_hh_guests': rest_hh_guests,
                                 'rest_month_rev': 0,
@@ -503,7 +526,7 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                         # Merge into df on 'date' using outer to preserve non-overlapping dates
                         df = pd.merge(df, df_fb_parsed, on='date', how='outer')
                         # Fill NaN with 0 for f&b cols
-                        rest_cols = ['rest_breakfast', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent', 'revenue']
+                        rest_cols = ['bf_theme_act', 'bf_zq_act', 'rest_breakfast', 'af_theme_act', 'af_zq_act', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent', 'revenue']
                         for c in rest_cols:
                             if c in df.columns:
                                 df[c] = df[c].fillna(0)
@@ -1763,21 +1786,15 @@ if current_hotel != "採購":
             st.write("##### 🍽️ 餐廳營運累計 (MTD)")
 
             # MTD 餐廳計算
-            # MTD Breakfast
-            mtd_bf_theme = 0
-            mtd_bf_zq = 0
-            if 'rest_breakfast' in df_mtd.columns:
-                mtd_total_bf_act = df_mtd['rest_breakfast'].sum()
-            else:
-                mtd_total_bf_act = 0
+            # MTD 早餐統計
+            mtd_bf_theme = df_mtd['bf_theme_act'].sum() if 'bf_theme_act' in df_mtd.columns else 0
+            mtd_bf_zq = df_mtd['bf_zq_act'].sum() if 'bf_zq_act' in df_mtd.columns else 0
+            mtd_total_bf_act = df_mtd['rest_breakfast'].sum() if 'rest_breakfast' in df_mtd.columns else (mtd_bf_theme + mtd_bf_zq)
 
-            # MTD Afternoon Tea
-            mtd_af_theme = 0
-            mtd_af_zq = 0
-            if 'rest_day_guests' in df_mtd.columns:
-                mtd_total_af_act = df_mtd['rest_day_guests'].sum()
-            else:
-                mtd_total_af_act = 0
+            # MTD 下午茶統計
+            mtd_af_theme = df_mtd['af_theme_act'].sum() if 'af_theme_act' in df_mtd.columns else 0
+            mtd_af_zq = df_mtd['af_zq_act'].sum() if 'af_zq_act' in df_mtd.columns else 0
+            mtd_total_af_act = df_mtd['rest_day_guests'].sum() if 'rest_day_guests' in df_mtd.columns else (mtd_af_theme + mtd_af_zq)
 
             # 為了更精確，僅採計「有預估客數」或「有實際客數」的日子為工作日（這會完美略過月底那些全是 0 的未來天數）
             if 'rest_breakfast' in df_mtd.columns:
