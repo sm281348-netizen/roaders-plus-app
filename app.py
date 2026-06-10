@@ -495,10 +495,10 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             
                     if parsed_fb:
                         df_fb_parsed = pd.DataFrame(parsed_fb)
-                        # Merge into df on 'date'
-                        df = pd.merge(df, df_fb_parsed, on='date', how='left')
-                        # Fill NaN with 0
-                        rest_cols = ['rest_breakfast', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent']
+                        # Merge into df on 'date' using outer to preserve non-overlapping dates
+                        df = pd.merge(df, df_fb_parsed, on='date', how='outer')
+                        # Fill NaN with 0 for f&b cols
+                        rest_cols = ['rest_breakfast', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent', 'revenue']
                         for c in rest_cols:
                             if c in df.columns:
                                 df[c] = df[c].fillna(0)
