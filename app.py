@@ -363,12 +363,12 @@ except Exception as e:
 def _get_cached_sheet(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。"""
-    actual_sheet = "occ data" if worksheet == "daily_data" else worksheet
+    actual_sheet = "occ_data" if worksheet == "daily_data" else worksheet
     try:
         df = conn.read(worksheet=actual_sheet, ttl=0)
     except Exception as e:
-        # Fallback to original worksheet if occ data doesn't exist yet
-        if actual_sheet == "occ data":
+        # Fallback to original worksheet if occ_data doesn't exist yet
+        if actual_sheet == "occ_data":
             df = conn.read(worksheet=worksheet, ttl=0)
         else:
             raise e
