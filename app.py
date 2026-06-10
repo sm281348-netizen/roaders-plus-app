@@ -832,14 +832,14 @@ def fetch_month_summary(year, month):
         df = pd.DataFrame()
 
     res = {
-        'rev': 0.0, 'rooms': 0.0, 'sellable': 0.0, 'occ90_days': 0,
+        'rev': 0.0, 'rooms': 0.0, 'sold_rooms': 0.0, 'sellable': 0.0, 'occ90_days': 0,
         'avg_occ': 0.0, 'avg_adr': 0.0, 'revpar': 0.0, 'df': df,
         'month_label': f"{year}-{month:02d}"
     }
 
     if not df.empty:
         # 確保數值欄位為 float
-        num_cols = ['revenue', 'total_rooms', 'occ_rate', 'adr']
+        num_cols = ['revenue', 'total_rooms', 'sold_rooms', 'occ_rate', 'adr']
         for c in num_cols:
             if c in df.columns:
                 df[c] = df[c].astype(str).str.replace(
@@ -847,29 +847,21 @@ def fetch_month_summary(year, month):
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
 
         for _, r in df.iterrows():
-            rev = float(r['revenue'])
-            rm = float(r['total_rooms'])
-            occ = float(r['occ_rate'])
-            adr = float(r['adr'])
+            rev = float(r.get('revenue', 0.0))
+            rm = float(r.get('total_rooms', 0.0))
+            sold = float(r.get('sold_rooms', 0.0))
+            occ = float(r.get('occ_rate', 0.0))
 
-            if rev == 0 and adr > 0 and rm > 0:
-                rev = adr * rm
-            if rm == 0 and rev > 0 and adr > 0:
-                rm = rev / adr
-
-            if rm > 0 or rev > 0:
+            if rm > 0 or rev > 0 or sold > 0:
                 res['rev'] += rev
                 res['rooms'] += rm
-                if occ > 0:
-                    res['sellable'] += (rm / (occ / 100.0))
+                res['sold_rooms'] += sold
                 if occ >= 90.0:
                     res['occ90_days'] += 1
 
-        res['avg_occ'] = (res['rooms'] / res['sellable'] *
-                          100.0) if res['sellable'] > 0 else 0.0
-        res['avg_adr'] = (res['rev'] / res['rooms']
-                          ) if res['rooms'] > 0 else 0.0
-        res['revpar'] = (res['avg_occ'] / 100.0) * res['avg_adr']
+        res['avg_occ'] = (res['sold_rooms'] / res['rooms'] * 100.0) if res['rooms'] > 0 else 0.0
+        res['avg_adr'] = (res['rev'] / res['sold_rooms']) if res['sold_rooms'] > 0 else 0.0
+        res['revpar'] = res['avg_adr'] * (res['avg_occ'] / 100.0)
 
     return res
 
