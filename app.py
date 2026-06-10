@@ -486,7 +486,6 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             current_month_dates.append(row_dict)
                             
                     if parsed_fb:
-                        import pandas as pd
                         df_fb_parsed = pd.DataFrame(parsed_fb)
                         # Merge into df on 'date'
                         df = pd.merge(df, df_fb_parsed, on='date', how='left')
