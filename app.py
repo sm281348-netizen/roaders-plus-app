@@ -374,30 +374,33 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             raise e
 
     if worksheet == "daily_data" and df is not None and not df.empty:
-        # Strip string columns to avoid whitespace issues
-        df.columns = [str(c).strip() for c in df.columns]
+        # Strip and lowercase string columns to avoid whitespace and case issues
+        df.columns = [str(c).strip().lower() for c in df.columns]
         
         # Check if the header is pushed down (e.g. Row 2)
-        if 'Date' not in df.columns and 'Net Occupancy' not in df.columns:
+        if 'date' not in df.columns and 'net occupancy' not in df.columns:
             for idx, r in df.head(10).iterrows():
-                row_vals = [str(v).strip() for v in r.values]
-                if 'Date' in row_vals or 'Net Occupancy' in row_vals:
+                row_vals = [str(v).strip().lower() for v in r.values]
+                if 'date' in row_vals or 'net occupancy' in row_vals:
                     df.columns = row_vals
                     df = df.iloc[idx+1:].reset_index(drop=True)
                     break
                     
-        # Check if it's the raw Golden System export by looking for 'Date' column
-        if 'Date' in df.columns or 'Net Occupancy' in df.columns:
-            # Column mapping
+        # Check if it's the raw Golden System export by looking for 'date' column
+        if 'date' in df.columns or 'net occupancy' in df.columns:
+            # Column mapping (case-insensitive keys)
             rename_map = {
-                'Date': 'date',
-                'Net Occupancy': 'occ_rate',
-                'ADR (Rooms Sold)': 'adr',
-                'Total Room Revenue': 'revenue',
-                'Rooms Available to Sell': 'total_rooms',
-                'Total Rooms Sold': 'sold_rooms'
+                'date': 'date',
+                'net occupancy': 'occ_rate',
+                'adr (rooms sold)': 'adr',
+                'total room revenue': 'revenue',
+                'rooms available to sell': 'total_rooms',
+                'total rooms sold': 'sold_rooms'
             }
             df = df.rename(columns=rename_map)
+            
+            # Remove any empty column names
+            df = df.loc[:, df.columns.notna() & (df.columns != 'nan') & (df.columns != '')]
             
             # Format date from '20250101' to '2025-01-01'
             if 'date' in df.columns:
