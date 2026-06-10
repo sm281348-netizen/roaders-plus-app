@@ -1411,10 +1411,10 @@ if current_hotel == "採購":
     # 採購模式：只顯示採購分析與菜價分析
     tab_p, tab_s = st.tabs(["💰 採購分析", "🛒 菜價分析"])
     # 其餘 tab 用空容器佔位，確保後面的 with tab_x 語法不出錯
-    tab1 = tab_m = tab6 = tab_p_dummy = tab_s_dummy = tab3 = tab4 = tab5 = tab7 = tab_n = st.container()
+    tab1 = tab_m = tab6 = tab_p_dummy = tab_s_dummy = tab3 = tab4 = tab5 = tab7 = tab_n = tab_channel = st.container()
 else:
-    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7, tab_n = st.tabs(
-        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", "🌍 國籍分析"])
+    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7, tab_n, tab_channel = st.tabs(
+        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", "🌍 國籍分析", "📉 渠道分析"])
 
 
 if current_hotel != "採購":
@@ -4902,6 +4902,116 @@ def parse_tourism_bureau_excel(uploaded_file):
         st.error(f"解析觀光署報表失敗: {e}")
         return None
 
+def clean_channel_name(name):
+    name = str(name).strip().upper()
+    if 'AGODA' in name: return 'AGODA'
+    if 'CTRIP' in name or 'TRIP.COM' in name: return 'CTRIP'
+    if 'BOOKING' in name: return 'BOOKING'
+    if 'EXPEDIA' in name: return 'EXPEDIA'
+    if 'RAKUTEN' in name: return 'RAKUTEN'
+    if '官網' in name: return '官網'
+    if '小鹿文娛' in name or 'FG' in name: return '小鹿文娛'
+    if '【' in name and '】' in name:
+        return name.split('】')[0].replace('【', '')
+    return name
+
+def render_channel_tab():
+    st.header("📉 渠道分析專區")
+    st.markdown("分析本飯店各訂房渠道之訂單分佈與佔比。")
+    
+    with st.spinner("載入渠道資料中..."):
+        try:
+            df_raw = read_google_sheet("marketing_channel_data")
+            if df_raw is not None and not df_raw.empty:
+                # 處理合併儲存格 (向前填補 date)
+                df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
+                
+                # 清理與統一欄位名稱
+                df_raw.columns = [str(c).strip().lower() for c in df_raw.columns]
+                
+                if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
+                    curr_date = st.session_state.get('sidebar_date')
+                    df_agg = pd.DataFrame()
+                    
+                    if curr_date:
+                        curr_ym1 = curr_date.strftime("%Y%m")
+                        curr_ym2 = curr_date.strftime("%Y-%m")
+                        curr_ym3 = curr_date.strftime("%Y/%m")
+                        
+                        mask = df_raw['date'].astype(str).str.contains(f"{curr_ym1}|{curr_ym2}|{curr_ym3}", na=False, regex=True)
+                        df_t = df_raw[mask].copy()
+                        
+                        if not df_t.empty:
+                            df_t['rooms'] = df_t['rooms'].astype(str).str.replace(',', '', regex=False)
+                            df_t['rooms'] = pd.to_numeric(df_t['rooms'], errors='coerce').fillna(0)
+                            df_t = df_t[df_t['rooms'] > 0]
+                            
+                            if not df_t.empty:
+                                df_t['channel_clean'] = df_t['company name'].apply(clean_channel_name)
+                                df_agg = df_t.groupby('channel_clean', as_index=False).agg({'rooms': 'sum'})
+                                
+                                total_rooms = df_agg['rooms'].sum()
+                                df_agg['rooms_pct'] = (df_agg['rooms'] / total_rooms * 100).round(1)
+                                
+                        st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
+        except Exception as e:
+            st.error(f"讀取 RTS_backup(marketing_channel_data) 發生錯誤: {e}")
+            
+    if 'df_agg' not in locals() or df_agg.empty:
+        st.warning("⚠️ 尚無資料")
+        return
+        
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🏆 主力渠道分佈")
+        
+        curr_total = int(df_agg['rooms'].sum()) if not df_agg.empty else 0
+        curr_m_str = curr_date.month if curr_date else ""
+        
+        def render_channel_table(df_a, bg_header, bg_row1, bg_row2):
+            if df_a.empty:
+                return "<p style='text-align:center; padding: 20px;'>無資料</p>"
+            
+            top10 = df_a.sort_values('rooms', ascending=False).head(10)
+            rows_html = ""
+            for i, row in top10.reset_index(drop=True).iterrows():
+                bg_c = bg_row1 if (i % 2 == 0) else bg_row2
+                pct_str = f"{int(round(row['rooms_pct']))}%" if not pd.isna(row['rooms_pct']) else "0%"
+                rows_html += f"""<tr style="background-color: {bg_c};">
+<td style="padding: 12px; border: 1px solid white;">{row['channel_clean']}</td>
+<td style="padding: 12px; border: 1px solid white;">{int(row['rooms'])}</td>
+<td style="padding: 12px; border: 1px solid white;">{pct_str}</td>
+</tr>"""
+            
+            # 加入合計
+            total_sum = int(df_a['rooms'].sum())
+            rows_html += f"""<tr style="background-color: {bg_row1 if (len(top10) % 2 == 0) else bg_row2}; font-weight: bold;">
+<td style="padding: 12px; border: 1px solid white;">合計</td>
+<td style="padding: 12px; border: 1px solid white;">{total_sum}</td>
+<td style="padding: 12px; border: 1px solid white;"></td>
+</tr>"""
+
+            return f"""<table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 16px;">
+<tr style="background-color: {bg_header}; color: black; font-weight: bold;">
+<th style="padding: 12px; border: 1px solid white; text-align: center;">住宿</th>
+<th style="padding: 12px; border: 1px solid white; text-align: center;">筆數</th>
+<th style="padding: 12px; border: 1px solid white; text-align: center;">百分比</th>
+</tr>
+{rows_html}
+</table>"""
+
+        curr_html = render_channel_table(df_agg, "#f7a63b", "#fcebda", "#fef5ef")
+        
+        html_layout = f"""<div style="display: flex; gap: 15px; width: 100%;">
+<div style="flex: 1;">
+{curr_html}
+</div>
+</div>"""
+        st.markdown(html_layout, unsafe_allow_html=True)
+
 def render_nationality_tab():
     st.header("🌍 國籍客源分析專區")
     st.markdown("分析本飯店各國籍旅客分佈，並可結合交通部觀光署大盤數據進行交叉比對。")
@@ -5158,3 +5268,6 @@ def render_nationality_tab():
 if current_hotel != "採購":
     with tab_n:
         render_nationality_tab()
+    
+    with tab_channel:
+        render_channel_tab()
