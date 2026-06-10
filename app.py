@@ -471,16 +471,25 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             current_month_dates = []
                             continue
                             
-                        # Extract daily guests (e.g. "1/25週日" or "2/1週日")
+                        # Extract daily guests
                         m_date = re.match(r'^(\d{1,2})[/-](\d{1,2})', col_a)
-                        if m_date:
+                        m_dt = re.match(r'^(\d{4})-(\d{2})-(\d{2})', col_a)
+                        
+                        if m_dt:
+                            # It's a datetime format like 2026-02-01
+                            date_str = f"{m_dt.group(1)}-{m_dt.group(2)}-{m_dt.group(3)}"
+                        elif m_date:
+                            # It's a string format like 2/1週日
                             m, d = int(m_date.group(1)), int(m_date.group(2))
                             if prev_month == 12 and m == 1:
                                 current_year += 1
                             prev_month = m
                             date_str = f"{current_year}-{m:02d}-{d:02d}"
+                        else:
+                            continue
                             
-                            def safe_int(v):
+                        # If we reached here, it's a valid date row
+                        def safe_int(v):
                                 try:
                                     return int(float(str(v).replace(",", "").strip()))
                                 except:
