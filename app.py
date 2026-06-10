@@ -490,38 +490,38 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             
                         # If we reached here, it's a valid date row
                         def safe_int(v):
-                                try:
-                                    return int(float(str(v).replace(",", "").strip()))
-                                except:
-                                    return 0
+                            try:
+                                return int(float(str(v).replace(",", "").strip()))
+                            except:
+                                return 0
                             
-                            # C(2): 主題早餐, E(4): 站前早餐, G(6): 兩館早餐
-                            # I(8): 主題下午茶, K(10): 站前下午茶, M(12): 兩館下午茶
-                            # N(13): HH
-                            bf_theme_act = safe_int(row.iloc[2]) if len(row) > 2 else 0
-                            bf_zq_act = safe_int(row.iloc[4]) if len(row) > 4 else 0
-                            rest_breakfast = safe_int(row.iloc[6]) if len(row) > 6 else 0
-                            
-                            af_theme_act = safe_int(row.iloc[8]) if len(row) > 8 else 0
-                            af_zq_act = safe_int(row.iloc[10]) if len(row) > 10 else 0
-                            rest_day_guests = safe_int(row.iloc[12]) if len(row) > 12 else 0
-                            
-                            rest_hh_guests = safe_int(row.iloc[13]) if len(row) > 13 else 0
-                            
-                            row_dict = {
-                                'date': date_str,
-                                'bf_theme_act': bf_theme_act,
-                                'bf_zq_act': bf_zq_act,
-                                'rest_breakfast': rest_breakfast,
-                                'af_theme_act': af_theme_act,
-                                'af_zq_act': af_zq_act,
-                                'rest_day_guests': rest_day_guests,
-                                'rest_hh_guests': rest_hh_guests,
-                                'rest_month_rev': 0,
-                                'rest_avg_spent': 0
-                            }
-                            parsed_fb.append(row_dict)
-                            current_month_dates.append(row_dict)
+                        # C(2): 主題早餐, E(4): 站前早餐, G(6): 兩館早餐
+                        # I(8): 主題下午茶, K(10): 站前下午茶, M(12): 兩館下午茶
+                        # N(13): HH
+                        bf_theme_act = safe_int(row.iloc[2]) if len(row) > 2 else 0
+                        bf_zq_act = safe_int(row.iloc[4]) if len(row) > 4 else 0
+                        rest_breakfast = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                        
+                        af_theme_act = safe_int(row.iloc[8]) if len(row) > 8 else 0
+                        af_zq_act = safe_int(row.iloc[10]) if len(row) > 10 else 0
+                        rest_day_guests = safe_int(row.iloc[12]) if len(row) > 12 else 0
+                        
+                        rest_hh_guests = safe_int(row.iloc[13]) if len(row) > 13 else 0
+                        
+                        row_dict = {
+                            'date': date_str,
+                            'bf_theme_act': bf_theme_act,
+                            'bf_zq_act': bf_zq_act,
+                            'rest_breakfast': rest_breakfast,
+                            'af_theme_act': af_theme_act,
+                            'af_zq_act': af_zq_act,
+                            'rest_day_guests': rest_day_guests,
+                            'rest_hh_guests': rest_hh_guests,
+                            'rest_month_rev': 0,
+                            'rest_avg_spent': 0
+                        }
+                        parsed_fb.append(row_dict)
+                        current_month_dates.append(row_dict)
                             
                     if parsed_fb:
                         df_fb_parsed = pd.DataFrame(parsed_fb)
