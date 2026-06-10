@@ -433,12 +433,11 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             try:
                 df_fb = conn.read(worksheet="f&b_data", ttl=0)
                 
-                # --- INJECT DEBUG INFO TO UI ---
-                import streamlit as st
-                st.error(f"🐛 [系統除錯] 成功讀取 f&b_data。前三筆資料：{df_fb.head(3).values.tolist()}。欄位：{df_fb.columns.tolist()}")
-                # -----------------------------
-                
                 if df_fb is not None and not df_fb.empty:
+                    # Guarantee UI visibility for F&B structure
+                    import streamlit as st
+                    st.error(f"🚨 [F&B 原始資料] 第一欄的前五個值: {df_fb.iloc[:5, 0].tolist()}。第二欄: {df_fb.iloc[:5, 1].tolist()}")
+                    
                     import re
                     import datetime
                     
