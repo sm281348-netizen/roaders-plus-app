@@ -5193,23 +5193,23 @@ def render_channel_tab():
                     rest_inputs.append({'occ': r_occ, 'adr': r_adr})
 
         table_html = f"""
-        <table style="width: 100%; text-align: center; border-collapse: collapse; font-family: sans-serif;">
-            <tr style="background-color: #f7a037; color: white; font-weight: bold;">
-                <td rowspan="2" style="border: 1px solid white; padding: 10px;">{curr_date.year}年</td>
-                <td colspan="2" style="border: 1px solid white; padding: 10px;">住宿</td>
-                <td colspan="2" style="border: 1px solid white; padding: 10px;">休息</td>
-                <td rowspan="2" style="border: 1px solid white; padding: 10px;">RevPAR<br>(元)</td>
-                <td rowspan="2" style="border: 1px solid white; padding: 10px;">房費<br>總額</td>
-                <td rowspan="2" style="border: 1px solid white; padding: 10px;">其他<br>收入</td>
-                <td rowspan="2" style="border: 1px solid white; padding: 10px;">營業總額</td>
-            </tr>
-            <tr style="background-color: #fce2c4; color: black; font-weight: bold; font-size: 0.9em;">
-                <td style="border: 1px solid white; padding: 10px;">訂房率(%)</td>
-                <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
-                <td style="border: 1px solid white; padding: 10px;">使用率(%)</td>
-                <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
-            </tr>
-        """
+<table style="width: 100%; text-align: center; border-collapse: collapse; font-family: sans-serif;">
+    <tr style="background-color: #f7a037; color: white; font-weight: bold;">
+        <td rowspan="2" style="border: 1px solid white; padding: 10px;">{curr_date.year}年</td>
+        <td colspan="2" style="border: 1px solid white; padding: 10px;">住宿</td>
+        <td colspan="2" style="border: 1px solid white; padding: 10px;">休息</td>
+        <td rowspan="2" style="border: 1px solid white; padding: 10px;">RevPAR<br>(元)</td>
+        <td rowspan="2" style="border: 1px solid white; padding: 10px;">房費<br>總額</td>
+        <td rowspan="2" style="border: 1px solid white; padding: 10px;">其他<br>收入</td>
+        <td rowspan="2" style="border: 1px solid white; padding: 10px;">營業總額</td>
+    </tr>
+    <tr style="background-color: #fce2c4; color: black; font-weight: bold; font-size: 0.9em;">
+        <td style="border: 1px solid white; padding: 10px;">訂房率(%)</td>
+        <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
+        <td style="border: 1px solid white; padding: 10px;">使用率(%)</td>
+        <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
+    </tr>
+"""
         
         for i, s in enumerate(stats):
             bg_color = "#fffaf0" if i % 2 != 0 else "#faece6"
@@ -5225,21 +5225,21 @@ def render_channel_tab():
             total_revenue = total_room_rev + other_rev
             
             table_html += f"""
-            <tr style="background-color: {bg_color}; font-size: 1.1em;">
-                <td style="border: 1px solid white; padding: 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{s['occ']:.1f}%</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['adr']):,}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_adr_str}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['revpar']):,}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_room_rev):,}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(other_rev):,}</td>
-                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_revenue):,}</td>
-            </tr>
-            """
+    <tr style="background-color: {bg_color}; font-size: 1.1em;">
+        <td style="border: 1px solid white; padding: 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{s['occ']:.1f}%</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['adr']):,}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_adr_str}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['revpar']):,}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_room_rev):,}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(other_rev):,}</td>
+        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_revenue):,}</td>
+    </tr>
+"""
             
         table_html += "</table><br>"
-        st.write(table_html, unsafe_allow_html=True)
+        st.markdown(table_html, unsafe_allow_html=True)
         st.divider()
 
     st.subheader("📊 訂房渠道分析")
