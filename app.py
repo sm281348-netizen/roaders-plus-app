@@ -866,6 +866,60 @@ def fetch_month_summary(year, month):
     return res
 
 
+def get_other_revenue(year_month_str):
+    """
+    從 EIS_data 分頁取得特定月份（例如 '202601'）的「其他收入」。
+    白名單項目：['電話費', '影印費', '傳真費', '冰箱飲料', '洗衣費', '付費電視', '清潔費', '場租', '設施使用費', '雜項', '客房其他收入', '餐飲費', '商品收入']
+    """
+    try:
+        df = _get_cached_sheet("EIS_data", hotel_type=current_hotel)
+    except Exception:
+        return 0.0
+        
+    if df is None or df.empty:
+        return 0.0
+    
+    # 清理欄位名稱
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    
+    if '年/月' not in df.columns or '項目' not in df.columns or '本月實際' not in df.columns:
+        col_ym = next((c for c in df.columns if '年' in c and '月' in c), None)
+        col_item = next((c for c in df.columns if '項目' in c), None)
+        col_actual = next((c for c in df.columns if '本月實際' in c), None)
+        if not col_ym or not col_item or not col_actual:
+            return 0.0
+    else:
+        col_ym = '年/月'
+        col_item = '項目'
+        col_actual = '本月實際'
+        
+    # 向下填滿「年月」欄位
+    df[col_ym] = df[col_ym].replace('', pd.NA).ffill()
+    df[col_ym] = df[col_ym].astype(str).str.strip().str.replace('.0', '', regex=False)
+    
+    # 篩選月份
+    df_month = df[df[col_ym] == str(year_month_str)]
+    if df_month.empty:
+        return 0.0
+        
+    # 白名單
+    whitelist = ['電話費', '影印費', '傳真費', '冰箱飲料', '洗衣費', '付費電視', '清潔費', '場租', '設施使用費', '雜項', '客房其他收入', '餐飲費', '商品收入']
+    
+    # 過濾與加總
+    df_month = df_month.copy()
+    df_month[col_item] = df_month[col_item].astype(str).str.strip()
+    mask = df_month[col_item].isin(whitelist)
+    
+    df_filtered = df_month[mask].copy()
+    if df_filtered.empty:
+        return 0.0
+        
+    # 將本月實際轉為數值
+    df_filtered[col_actual] = df_filtered[col_actual].astype(str).str.replace(',', '').str.replace('%', '')
+    df_filtered[col_actual] = pd.to_numeric(df_filtered[col_actual], errors='coerce').fillna(0.0)
+    
+    return float(df_filtered[col_actual].sum())
+
 @st.cache_data(ttl=3600)
 def fetch_yearly_metrics(year):
     try:
@@ -5093,6 +5147,102 @@ def clean_channel_name(name):
 
 def render_channel_tab():
     st.header("📉 渠道分析專區")
+    
+    # -----------------------------------
+    # 新增：營收統計區塊
+    # -----------------------------------
+    st.subheader("💰 營收統計")
+    st.markdown("呈現近三個月的住宿、休息與其他營收綜合指標。")
+    
+    curr_date = st.session_state.get('sidebar_date')
+    if curr_date:
+        import datetime
+        from dateutil.relativedelta import relativedelta
+        
+        dates = [
+            curr_date,
+            curr_date - relativedelta(months=1),
+            curr_date - relativedelta(months=2)
+        ]
+        
+        stats = []
+        for d in dates:
+            y, m = d.year, d.month
+            msum = fetch_month_summary(y, m)
+            other_rev = get_other_revenue(f"{y}{m:02d}")
+            stats.append({
+                'month_label': f"{m}月",
+                'occ': msum['avg_occ'],
+                'adr': msum['avg_adr'],
+                'revpar': msum['revpar'],
+                'room_rev': msum['rev'],
+                'other_rev': other_rev,
+                'year': y,
+                'month': m
+            })
+            
+        with st.expander("📝 填寫 / 編輯休息數據 (點擊展開)", expanded=False):
+            st.caption("填寫完成後，下方的表格將會立即更新。")
+            cols = st.columns(3)
+            rest_inputs = []
+            for i, s in enumerate(stats):
+                with cols[i]:
+                    st.markdown(f"**{s['month_label']} 休息數據**")
+                    r_occ = st.number_input("使用率 (%)", value=0.00, step=0.01, format="%.2f", key=f"r_occ_{s['year']}_{s['month']}")
+                    r_adr = st.number_input("ADR (元)", value=0, step=10, key=f"r_adr_{s['year']}_{s['month']}")
+                    rest_inputs.append({'occ': r_occ, 'adr': r_adr})
+
+        table_html = f"""
+        <table style="width: 100%; text-align: center; border-collapse: collapse; font-family: sans-serif;">
+            <tr style="background-color: #f7a037; color: white; font-weight: bold;">
+                <td rowspan="2" style="border: 1px solid white; padding: 10px;">{curr_date.year}年</td>
+                <td colspan="2" style="border: 1px solid white; padding: 10px;">住宿</td>
+                <td colspan="2" style="border: 1px solid white; padding: 10px;">休息</td>
+                <td rowspan="2" style="border: 1px solid white; padding: 10px;">RevPAR<br>(元)</td>
+                <td rowspan="2" style="border: 1px solid white; padding: 10px;">房費<br>總額</td>
+                <td rowspan="2" style="border: 1px solid white; padding: 10px;">其他<br>收入</td>
+                <td rowspan="2" style="border: 1px solid white; padding: 10px;">營業總額</td>
+            </tr>
+            <tr style="background-color: #fce2c4; color: black; font-weight: bold; font-size: 0.9em;">
+                <td style="border: 1px solid white; padding: 10px;">訂房率(%)</td>
+                <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
+                <td style="border: 1px solid white; padding: 10px;">使用率(%)</td>
+                <td style="border: 1px solid white; padding: 10px;">ADR<br>(元)</td>
+            </tr>
+        """
+        
+        for i, s in enumerate(stats):
+            bg_color = "#fffaf0" if i % 2 != 0 else "#faece6"
+            month_color = "red" if i == 0 else "black"
+            font_weight = "bold" if i == 0 else "normal"
+            
+            r_in = rest_inputs[i]
+            rest_occ_str = f"{r_in['occ']:g}" if r_in['occ'] > 0 else ""
+            rest_adr_str = f"${int(r_in['adr']):,}" if r_in['adr'] > 0 else ""
+            
+            total_room_rev = s['room_rev']
+            other_rev = s['other_rev']
+            total_revenue = total_room_rev + other_rev
+            
+            table_html += f"""
+            <tr style="background-color: {bg_color}; font-size: 1.1em;">
+                <td style="border: 1px solid white; padding: 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{s['occ']:.1f}%</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['adr']):,}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_adr_str}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['revpar']):,}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_room_rev):,}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(other_rev):,}</td>
+                <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_revenue):,}</td>
+            </tr>
+            """
+            
+        table_html += "</table><br>"
+        st.write(table_html, unsafe_allow_html=True)
+        st.divider()
+
+    st.subheader("📊 訂房渠道分析")
     st.markdown("分析本飯店各訂房渠道之訂單分佈與佔比。")
     
     with st.spinner("載入渠道資料中..."):
