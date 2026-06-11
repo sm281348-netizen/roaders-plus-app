@@ -5193,7 +5193,7 @@ def render_channel_tab():
                     rest_inputs.append({'occ': r_occ, 'adr': r_adr})
 
         table_html = f"""
-<div style="display: flex; justify-content: center;">
+<div style="display: flex; justify-content: flex-start;">
 <table style="width: auto; text-align: center; border-collapse: collapse; font-family: sans-serif; white-space: nowrap;">
 <tr style="background-color: #f7a037; color: white; font-weight: bold;">
 <td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">{curr_date.year}年</td>
