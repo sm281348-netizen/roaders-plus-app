@@ -5192,102 +5192,55 @@ def render_channel_tab():
                     r_adr = st.number_input("ADR (元)", value=0, step=10, key=f"r_adr_{s['year']}_{s['month']}")
                     rest_inputs.append({'occ': r_occ, 'adr': r_adr})
 
-        import plotly.graph_objects as go
-        
-        # 建立 Plotly 表格的資料欄 (Column-oriented)
-        col_month = []
-        col_occ = []
-        col_adr = []
-        col_rest_occ = []
-        col_rest_adr = []
-        col_revpar = []
-        col_room_rev = []
-        col_other = []
-        col_total = []
-        
-        # 顏色的設定
-        fill_colors = []
-        font_colors = []
+        table_html = f"""
+<div style="display: flex; justify-content: center;">
+<table style="width: auto; text-align: center; border-collapse: collapse; font-family: sans-serif; white-space: nowrap;">
+<tr style="background-color: #f7a037; color: white; font-weight: bold;">
+<td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">{curr_date.year}年</td>
+<td colspan="2" style="border: 1px solid white; padding: 8px 15px;">住宿</td>
+<td colspan="2" style="border: 1px solid white; padding: 8px 15px;">休息</td>
+<td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">RevPAR<br>(元)</td>
+<td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">房費<br>總額</td>
+<td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">其他<br>收入</td>
+<td rowspan="2" style="border: 1px solid white; padding: 8px 15px;">營業總額</td>
+</tr>
+<tr style="background-color: #fce2c4; color: black; font-weight: bold; font-size: 0.9em;">
+<td style="border: 1px solid white; padding: 8px 15px;">訂房率(%)</td>
+<td style="border: 1px solid white; padding: 8px 15px;">ADR<br>(元)</td>
+<td style="border: 1px solid white; padding: 8px 15px;">使用率(%)</td>
+<td style="border: 1px solid white; padding: 8px 15px;">ADR<br>(元)</td>
+</tr>
+"""
         
         for i, s in enumerate(stats):
+            bg_color = "#fffaf0" if i % 2 != 0 else "#faece6"
+            month_color = "red" if i == 0 else "black"
+            font_weight = "bold" if i == 0 else "normal"
+            
             r_in = rest_inputs[i]
-            rest_occ_str = f"{r_in['occ']:g}%" if r_in['occ'] > 0 else ""
+            rest_occ_str = f"{r_in['occ']:g}" if r_in['occ'] > 0 else ""
             rest_adr_str = f"${int(r_in['adr']):,}" if r_in['adr'] > 0 else ""
             
             total_room_rev = s['room_rev']
             other_rev = s['other_rev']
             total_revenue = total_room_rev + other_rev
             
-            # 若為當月加上粗體標籤
-            m_label = f"<b>{s['month_label']}</b>" if i == 0 else s['month_label']
+            table_html += f"""
+<tr style="background-color: {bg_color}; font-size: 1.05em;">
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{s['occ']:.1f}%</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(s['adr']):,}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{rest_adr_str}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(s['revpar']):,}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(total_room_rev):,}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(other_rev):,}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(total_revenue):,}</td>
+</tr>
+"""
             
-            col_month.append(m_label)
-            col_occ.append(f"<b>{s['occ']:.1f}%</b>" if i == 0 else f"{s['occ']:.1f}%")
-            col_adr.append(f"<b>${int(s['adr']):,}</b>" if i == 0 else f"${int(s['adr']):,}")
-            col_rest_occ.append(f"<b>{rest_occ_str}</b>" if i == 0 else rest_occ_str)
-            col_rest_adr.append(f"<b>{rest_adr_str}</b>" if i == 0 else rest_adr_str)
-            col_revpar.append(f"<b>${int(s['revpar']):,}</b>" if i == 0 else f"${int(s['revpar']):,}")
-            col_room_rev.append(f"<b>${int(total_room_rev):,}</b>" if i == 0 else f"${int(total_room_rev):,}")
-            col_other.append(f"<b>${int(other_rev):,}</b>" if i == 0 else f"${int(other_rev):,}")
-            col_total.append(f"<b>${int(total_revenue):,}</b>" if i == 0 else f"${int(total_revenue):,}")
-            
-            bg_c = "#fffaf0" if i % 2 != 0 else "#faece6"
-            fc = "red" if i == 0 else "black"
-            
-            fill_colors.append(bg_c)
-            font_colors.append(fc)
-
-        fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=[
-                    f"<b>{curr_date.year}年</b>",
-                    "<b>住宿<br>訂房率(%)</b>", 
-                    "<b>住宿<br>ADR(元)</b>", 
-                    "<b>休息<br>使用率(%)</b>", 
-                    "<b>休息<br>ADR(元)</b>", 
-                    "<b>RevPAR<br>(元)</b>", 
-                    "<b>房費<br>總額</b>", 
-                    "<b>其他<br>收入</b>", 
-                    "<b>營業總額</b>"
-                ],
-                fill_color='#f7a037',
-                font=dict(color='white', size=15, family="sans-serif"),
-                align='center',
-                line_color='white',
-                height=45
-            ),
-            cells=dict(
-                values=[
-                    col_month,
-                    col_occ,
-                    col_adr,
-                    col_rest_occ,
-                    col_rest_adr,
-                    col_revpar,
-                    col_room_rev,
-                    col_other,
-                    col_total
-                ],
-                fill_color=[fill_colors]*9,
-                font=dict(color=[font_colors]*9, size=15, family="sans-serif"),
-                align='center',
-                height=40,
-                line_color='white'
-            )
-        )])
-        
-        fig.update_layout(
-            margin=dict(l=0, r=0, t=10, b=0),
-            height=200
-        )
-        
-        st.plotly_chart(fig, use_container_width=True, config={
-            'displayModeBar': True, 
-            'toImageButtonOptions': {
-                'format': 'png', 
-                'filename': f"{curr_date.year}年_營收統計"
-            }
-        })
+        table_html += "</table></div><br>"
+        st.markdown(table_html, unsafe_allow_html=True)
         st.divider()
 
     st.subheader("📊 訂房渠道分析")
