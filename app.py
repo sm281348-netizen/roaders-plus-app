@@ -5225,17 +5225,17 @@ def render_channel_tab():
             total_revenue = total_room_rev + other_rev
             
             table_html += f"""
-    <tr style="background-color: {bg_color}; font-size: 1.1em;">
-        <td style="border: 1px solid white; padding: 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{s['occ']:.1f}%</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['adr']):,}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_adr_str}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['revpar']):,}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_room_rev):,}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(other_rev):,}</td>
-        <td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_revenue):,}</td>
-    </tr>
+<tr style="background-color: {bg_color}; font-size: 1.1em;">
+<td style="border: 1px solid white; padding: 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">{s['occ']:.1f}%</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['adr']):,}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">{rest_adr_str}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(s['revpar']):,}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_room_rev):,}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(other_rev):,}</td>
+<td style="border: 1px solid white; padding: 15px; color: {month_color};">${int(total_revenue):,}</td>
+</tr>
 """
             
         table_html += "</table><br>"
