@@ -544,6 +544,12 @@ def standardize_df_dates(df):
         if pd.isna(val) or str(val).strip() == '' or str(val).strip() == 'NaT':
             return ""
         v_str = str(val).split(' ')[0].strip()
+        
+        # 處理 Excel 數字日期 (例如 45809)
+        if v_str.isdigit() and 40000 < int(v_str) < 60000:
+            import datetime
+            dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=int(v_str))
+            return dt.strftime('%Y-%m-%d')
 
         import re
         # 處理民國年或簡寫 (例如 115/4/30 或 115-04-30)
@@ -1728,16 +1734,11 @@ if current_hotel != "採購":
 
         try:
             df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
-            st.warning(f"🔧 [診斷模式] df_all shape: {df_all.shape if df_all is not None else 'None'}")
-            if df_all is not None:
-                st.warning(f"🔧 [診斷模式] df_all columns: {df_all.columns.tolist()[:15]}")
             if df_all is not None and not df_all.empty:
                 df_all = standardize_df_dates(df_all)
-                st.info(f"🔧 [診斷模式] After standardizing dates, date sample: {df_all['date'].head(3).tolist() if 'date' in df_all.columns else 'No date col'}")
                 df_all = df_all.drop_duplicates(subset='date', keep='last')
                 df_mtd = df_all[(df_all['date'] >= start_of_month)
                                 & (df_all['date'] <= date_str)].copy()
-                st.info(f"🔧 [診斷模式] df_mtd shape: {df_mtd.shape}")
             else:
                 df_mtd = pd.DataFrame()
         except Exception as e:
@@ -5204,12 +5205,9 @@ def render_channel_tab():
                     # 處理合併儲存格 (向前填補 date)
                     df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
                 
-                st.warning(f"🔧 [渠道診斷] 欄位有: {df_raw.columns.tolist()}")
-                
                 if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
                     # 將日期格式統一轉換為 YYYY-MM-DD
                     df_raw = standardize_df_dates(df_raw)
-                    st.info(f"🔧 [渠道診斷] 轉換後日期範例: {df_raw['date'].dropna().head(3).tolist()}")
                     
                     curr_date = st.session_state.get('sidebar_date')
                     df_agg = pd.DataFrame()
@@ -5218,7 +5216,6 @@ def render_channel_tab():
                         curr_ym2 = curr_date.strftime("%Y-%m")
                         mask = df_raw['date'].astype(str).str.startswith(curr_ym2, na=False)
                         df_t = df_raw[mask].copy()
-                        st.info(f"🔧 [渠道診斷] 符合 {curr_ym2} 的筆數: {len(df_t)}")
                         
                         if not df_t.empty:
                             df_t['rooms'] = df_t['rooms'].astype(str).str.replace(',', '', regex=False)
