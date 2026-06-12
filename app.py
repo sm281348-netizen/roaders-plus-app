@@ -532,6 +532,70 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
     return result
 
 
+@st.cache_data(ttl=300)
+def fetch_fb_daily_df(year, month, _dummy_hotel=""):
+    """
+    從 f&b_report 讀取指定年月的每日 F&B 來客數。
+    回傳 DataFrame，欄位為：date (YYYY-MM-DD), bf_act, af_act, hh_act, peak_guests
+    """
+    import re
+    from streamlit_gsheets import GSheetsConnection
+
+    def safe_int(v):
+        try:
+            return int(float(str(v).replace(',', '').strip()))
+        except:
+            return 0
+
+    def parse_date(raw):
+        s = str(raw).replace('.0', '').strip()
+        m1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+        m2 = re.match(r'^(\d{8})$', s)
+        if m1:
+            return f"{m1.group(1)}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
+        if m2 and s.isdigit():
+            return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+        return None
+
+    m_start = f"{year}-{month:02d}-01"
+    import calendar
+    _, last_day = calendar.monthrange(year, month)
+    m_end = f"{year}-{month:02d}-{last_day:02d}"
+
+    rows = []
+    try:
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        c_st = _ConnWrapper(raw_st, url_st)
+        df_report = c_st.read(worksheet="f&b_report", ttl=0)
+        if df_report is not None and not df_report.empty:
+            for _, row in df_report.iterrows():
+                d = parse_date(row.iloc[0])
+                if d and m_start <= d <= m_end:
+                    bf_theme = safe_int(row.iloc[2]) if len(row) > 2 else 0
+                    bf_zq    = safe_int(row.iloc[4]) if len(row) > 4 else 0
+                    af_theme = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                    af_zq    = safe_int(row.iloc[8]) if len(row) > 8 else 0
+                    hh_act   = safe_int(row.iloc[9]) if len(row) > 9 else 0
+                    bf_act   = bf_theme + bf_zq
+                    af_act   = af_theme + af_zq
+                    rows.append({
+                        'date': d,
+                        'bf_act': bf_act,
+                        'af_act': af_act,
+                        'hh_act': hh_act,
+                        'peak_guests': bf_act + af_act
+                    })
+    except Exception:
+        pass
+
+    if rows:
+        return pd.DataFrame(rows)
+    return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
+
+
+
+
 def read_google_sheet(worksheet, ttl="1m"):
     try:
         return _get_cached_sheet_v3(worksheet, hotel_type=current_hotel)
@@ -3411,16 +3475,35 @@ with tab_p:
                     selected_date.year, selected_date.month)
                 df_daily_rest = m_data['df']
 
+                # 【關鍵修正】occ_data 沒有 F&B 欄位，直接從 f&b_report 注入每日來客數
+                df_fb_daily = fetch_fb_daily_df(
+                    selected_date.year, selected_date.month, _dummy_hotel=current_hotel)
+                if not df_fb_daily.empty and not df_daily_rest.empty:
+                    df_daily_rest = df_daily_rest.merge(df_fb_daily, on='date', how='left')
+                    df_daily_rest['bf_act']      = df_daily_rest['bf_act'].fillna(0)
+                    df_daily_rest['af_act']      = df_daily_rest['af_act'].fillna(0)
+                    df_daily_rest['hh_act']      = df_daily_rest['hh_act'].fillna(0)
+                    df_daily_rest['peak_guests'] = df_daily_rest['peak_guests'].fillna(0)
+                elif not df_fb_daily.empty:
+                    # df_daily_rest 是空的，用 fb_daily 代替
+                    df_daily_rest = df_fb_daily.copy()
+
                 if not df_daily_rest.empty:
                     # 確保必要欄位存在並轉為數值
-                    target_cols = ['rest_day_guests', 'rest_hh_guests',
-                                   'revenue', 'bf_total_act', 'af_total_act']
+                    target_cols = ['peak_guests', 'hh_act', 'revenue', 'bf_act', 'af_act']
                     for c in target_cols:
                         if c in df_daily_rest.columns:
                             df_daily_rest[c] = pd.to_numeric(df_daily_rest[c].astype(
                                 str).str.replace(',', ''), errors='coerce').fillna(0)
                         else:
                             df_daily_rest[c] = 0
+
+                    # 使用真實 F&B 來客數 (直接用 peak_guests 和 hh_act)
+                    df_daily_rest['rest_day_guests'] = df_daily_rest['peak_guests']
+                    df_daily_rest['rest_hh_guests']  = df_daily_rest['hh_act']
+                    df_daily_rest['bf_total_act']    = df_daily_rest['bf_act']
+                    df_daily_rest['af_total_act']    = df_daily_rest['af_act']
+
 
                     # --- 自動化邏輯：如果 The Peak 來客數為 0，則自動加總 早餐 + 下午茶 ---
                     def calculate_peak_guests(row):
