@@ -1728,11 +1728,16 @@ if current_hotel != "採購":
 
         try:
             df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+            st.warning(f"🔧 [診斷模式] df_all shape: {df_all.shape if df_all is not None else 'None'}")
+            if df_all is not None:
+                st.warning(f"🔧 [診斷模式] df_all columns: {df_all.columns.tolist()[:15]}")
             if df_all is not None and not df_all.empty:
                 df_all = standardize_df_dates(df_all)
+                st.info(f"🔧 [診斷模式] After standardizing dates, date sample: {df_all['date'].head(3).tolist() if 'date' in df_all.columns else 'No date col'}")
                 df_all = df_all.drop_duplicates(subset='date', keep='last')
                 df_mtd = df_all[(df_all['date'] >= start_of_month)
                                 & (df_all['date'] <= date_str)].copy()
+                st.info(f"🔧 [診斷模式] df_mtd shape: {df_mtd.shape}")
             else:
                 df_mtd = pd.DataFrame()
         except Exception as e:
