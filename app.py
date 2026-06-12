@@ -459,7 +459,8 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
         'total_act_af': 0,
         'revenue': 0,
         'avg_spent': 0,
-        'matched_days': 0,
+        'matched_days': 0,   # 有早餐客數的天數（為日平均分母）
+        'active_af_days': 0, # 有下午茶客數的天數
         'report_rows': 0,
         'error': ''
     }
@@ -495,16 +496,26 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
         for _, row in df_report.iterrows():
             d = parse_date(row.iloc[0])
             if d and start_date_str <= d <= end_date_str:
+                bf_theme_act = safe_int(row.iloc[2]) if len(row) > 2 else 0
+                bf_zq_act    = safe_int(row.iloc[4]) if len(row) > 4 else 0
+                af_theme_act = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                af_zq_act    = safe_int(row.iloc[8]) if len(row) > 8 else 0
+
                 result['bf_theme_est'] += safe_int(row.iloc[1]) if len(row) > 1 else 0
-                result['bf_theme_act'] += safe_int(row.iloc[2]) if len(row) > 2 else 0
+                result['bf_theme_act'] += bf_theme_act
                 result['bf_zq_est']    += safe_int(row.iloc[3]) if len(row) > 3 else 0
-                result['bf_zq_act']    += safe_int(row.iloc[4]) if len(row) > 4 else 0
+                result['bf_zq_act']    += bf_zq_act
                 result['af_theme_est'] += safe_int(row.iloc[5]) if len(row) > 5 else 0
-                result['af_theme_act'] += safe_int(row.iloc[6]) if len(row) > 6 else 0
+                result['af_theme_act'] += af_theme_act
                 result['af_zq_est']    += safe_int(row.iloc[7]) if len(row) > 7 else 0
-                result['af_zq_act']    += safe_int(row.iloc[8]) if len(row) > 8 else 0
+                result['af_zq_act']    += af_zq_act
                 result['hh_act']       += safe_int(row.iloc[9]) if len(row) > 9 else 0
-                result['matched_days'] += 1
+
+                # 只計算有早餐/下午茶實際客數的天數，避免把「未來空白日」也計入分母
+                if (bf_theme_act + bf_zq_act) > 0:
+                    result['matched_days'] += 1
+                if (af_theme_act + af_zq_act) > 0:
+                    result['active_af_days'] += 1
 
     # 彙總計算
     result['total_est'] = (result['bf_theme_est'] + result['bf_zq_est'] +
@@ -1834,8 +1845,9 @@ if current_hotel != "採購":
             mtd_total_af_act = fb['total_act_af']
 
             active_bf_days = fb['matched_days']
+            active_af_days = fb.get('active_af_days', active_bf_days)
             avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
-            avg_total_af = (mtd_total_af_act / active_bf_days) if active_bf_days > 0 else 0
+            avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
             mtd_avg_total = avg_total_bf + avg_total_af
 
             rest_avg_spent = fb['avg_spent']
