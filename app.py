@@ -476,8 +476,8 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     for _, row in df_raw.iterrows():
                         if len(row) > 9:
                             srv = str(row.iloc[5]).strip()
-                            date_raw = str(row.iloc[6]).strip()
-                            qty_raw = str(row.iloc[9]).strip()
+                            date_raw = str(row.iloc[6]).replace('.0', '').strip()
+                            qty_raw = str(row.iloc[9]).replace('.0', '').replace(',', '').strip()
                             
                             date_str = None
                             m_dt1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', date_raw)
@@ -1828,8 +1828,10 @@ if current_hotel != "採購":
             d_re = c_st.read(worksheet="f&b_report", ttl=0)
             st.info(f"📊 [直接讀取] Theme f&b_data: {len(d_th)} 筆 | Station f&b_data: {len(d_st)} 筆 | Station f&b_report: {len(d_re)} 筆")
             if d_re is not None and len(d_re) > 0:
-                st.info(f"📊 [Report 日期範例] A欄第一筆資料: `{d_re.iloc[0, 0]}` (型態: {type(d_re.iloc[0, 0])})")
-                st.info(f"📊 [Report 原始欄位] {d_re.columns.tolist()}")
+                first_10_a = d_re.iloc[:10, 0].apply(lambda x: f"'{x}' ({type(x)})").tolist()
+                st.info(f"📊 [Report A欄前10筆] {first_10_a}")
+                first_10_c = d_re.iloc[:10, 2].apply(lambda x: f"'{x}'").tolist()
+                st.info(f"📊 [Report C欄前10筆] {first_10_c}")
         except Exception as e:
             st.error(f"🚨 [直接讀取失敗] {e}")
             
