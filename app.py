@@ -521,26 +521,6 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
     return result
 
 
-                    # Fill NaN
-                    rest_cols = ['bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act', 'rest_breakfast',
-                                 'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act', 'rest_day_guests',
-                                 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent']
-                    for c in rest_cols:
-                        if c in df.columns:
-                            df[c] = df[c].fillna(0)
-                else:
-                    import streamlit as st
-                    st.error(f"🚨 [系統深度除錯] 嚴重錯誤：parsed_fb 是空的！theme: {len(theme_fb)}, zq: {len(station_fb)}, report: {len(report_data)}")
-                            
-            except Exception as e:
-                import streamlit as st
-                st.error(f"🚨 [系統除錯] 跨館讀取 F&B 資料發生錯誤: {e}")
-                print(f"Error parsing dual-connection F&B data: {e}")
-            # ----------------------
-
-    return df
-
-
 def read_google_sheet(worksheet, ttl="1m"):
     try:
         return _get_cached_sheet_v3(worksheet, hotel_type=current_hotel)
