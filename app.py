@@ -462,6 +462,11 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     df_fb_report = conn_station.read(worksheet="f&b_report", ttl=0)
                 except Exception as e:
                     st.error(f"🚨 讀取 f&b_report 發生錯誤: {e}")
+                    
+                import streamlit as st
+                st.info(f"📊 [連線診斷] Theme: {'OK' if df_fb_theme is not None else 'Fail'} ({len(df_fb_theme) if df_fb_theme is not None else 0} 筆) | Station: {'OK' if df_fb_station is not None else 'Fail'} ({len(df_fb_station) if df_fb_station is not None else 0} 筆) | Report: {'OK' if df_fb_report is not None else 'Fail'} ({len(df_fb_report) if df_fb_report is not None else 0} 筆)")
+                if df_fb_report is not None and not df_fb_report.empty:
+                    st.info(f"📊 [Report 第一筆 A欄]: `{df_fb_report.iloc[0, 0]}`")
                 
                 # 1. Parse Raw Estimated Logs
                 def parse_raw_fb(df_raw):
