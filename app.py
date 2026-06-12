@@ -5205,9 +5205,15 @@ def render_channel_tab():
                     # 處理合併儲存格 (向前填補 date)
                     df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
                 
+                # 診斷：顯示原始資料
+                raw_dates = df_raw['date'].dropna().head(5).tolist() if 'date' in df_raw.columns else '無 date 欄'
+                st.warning(f"🔧 [渠道診斷2] 總筆數={len(df_raw)}, 原始日期範例: {raw_dates}")
+
                 if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
                     # 將日期格式統一轉換為 YYYY-MM-DD
                     df_raw = standardize_df_dates(df_raw)
+                    clean_dates = df_raw['date'].dropna().head(5).tolist()
+                    st.info(f"🔧 [渠道診斷2] 轉換後日期: {clean_dates}")
                     
                     curr_date = st.session_state.get('sidebar_date')
                     df_agg = pd.DataFrame()
@@ -5216,6 +5222,7 @@ def render_channel_tab():
                         curr_ym2 = curr_date.strftime("%Y-%m")
                         mask = df_raw['date'].astype(str).str.startswith(curr_ym2, na=False)
                         df_t = df_raw[mask].copy()
+                        st.info(f"🔧 [渠道診斷2] 篩選 '{curr_ym2}' 後: {len(df_t)} 筆")
                         
                         if not df_t.empty:
                             df_t['rooms'] = df_t['rooms'].astype(str).str.replace(',', '', regex=False)
