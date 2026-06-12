@@ -474,8 +474,15 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                             date_raw = str(row.iloc[6]).strip()
                             qty_raw = str(row.iloc[9]).strip()
                             
-                            if len(date_raw) == 8 and date_raw.isdigit():
+                            date_str = None
+                            m_dt1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', date_raw)
+                            m_dt2 = re.match(r'^(\d{8})$', date_raw)
+                            if m_dt1:
+                                date_str = f"{m_dt1.group(1)}-{int(m_dt1.group(2)):02d}-{int(m_dt1.group(3)):02d}"
+                            elif m_dt2 and date_raw.isdigit():
                                 date_str = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}"
+                                
+                            if date_str:
                                 try:
                                     qty = int(float(qty_raw))
                                 except:
@@ -499,9 +506,16 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     import re
                     for i, row in df_fb_report.iterrows():
                         col_a = str(row.iloc[0]).strip()
-                        m_dt = re.match(r'^(\d{4})-(\d{2})-(\d{2})', col_a)
-                        if m_dt:
-                            date_str = f"{m_dt.group(1)}-{m_dt.group(2)}-{m_dt.group(3)}"
+                        # 支援 2026-01-01, 2026/01/01, 20260101
+                        date_str = None
+                        m_dt1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', col_a)
+                        m_dt2 = re.match(r'^(\d{8})$', col_a)
+                        if m_dt1:
+                            date_str = f"{m_dt1.group(1)}-{int(m_dt1.group(2)):02d}-{int(m_dt1.group(3)):02d}"
+                        elif m_dt2 and col_a.isdigit():
+                            date_str = f"{col_a[:4]}-{col_a[4:6]}-{col_a[6:]}"
+                            
+                        if date_str:
                             def safe_int(v):
                                 try: return int(float(str(v).replace(",", "").strip()))
                                 except: return 0
