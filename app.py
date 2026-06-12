@@ -360,7 +360,7 @@ except Exception as e:
 
 
 @st.cache_data(ttl=1)
-def _get_cached_sheet(worksheet, hotel_type=""):
+def _get_cached_sheet_v3(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。"""
     actual_sheet = "occ_data" if worksheet == "daily_data" else worksheet
@@ -617,7 +617,7 @@ def _get_cached_sheet(worksheet, hotel_type=""):
 
 def read_google_sheet(worksheet, ttl="1m"):
     try:
-        return _get_cached_sheet(worksheet, hotel_type=current_hotel)
+        return _get_cached_sheet_v3(worksheet, hotel_type=current_hotel)
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
         msg = f"Google Sheet 讀取失敗：{worksheet} ({e})"
@@ -671,7 +671,7 @@ def standardize_df_dates(df):
 def get_daily_data(d_str):
     try:
         # 走集中快取層 (60s TTL)，避免大量 rerun 打爆 API
-        df = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+        df = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
         if df is not None and not df.empty:
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             df = standardize_df_dates(df)
@@ -720,7 +720,7 @@ def save_daily_data(d_str, data_dict):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_data", data=df.fillna(""))
-        _get_cached_sheet.clear()
+        _get_cached_sheet_v3.clear()
         return True
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
@@ -761,7 +761,7 @@ def save_monthly_target(month_str, target):
             df = pd.concat([df, new_row], ignore_index=True)
 
         conn.update(worksheet="targets", data=df.fillna(""))
-        _get_cached_sheet.clear()
+        _get_cached_sheet_v3.clear()
         return True
     except:
         return False
@@ -783,7 +783,7 @@ def get_daily_log(d_str):
     # Fallback to daily_data if not found in daily_logs (backward compatibility)
     # 直接走快取，不額外打 API
     try:
-        df_old = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+        df_old = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
         if df_old is not None and not df_old.empty:
             df_old = standardize_df_dates(df_old)
             res = df_old[df_old['date'] == d_str]
@@ -819,7 +819,7 @@ def save_daily_log(d_str, log_text):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="daily_logs", data=df.fillna(""))
-        _get_cached_sheet.clear()
+        _get_cached_sheet_v3.clear()
         st.toast(f"✅ {d_str} 日誌已自動對齊 Google Sheet！")
         return True
     except Exception as e:
@@ -845,7 +845,7 @@ def get_month_delta(d, delta):
 
 def prepare_monthly_report(year, month):
     try:
-        df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
         month_str = f"{year}-{month:02d}"
         df = df_all[df_all['date'].str.startswith(
             month_str, na=False)].sort_values('date')
@@ -888,7 +888,7 @@ def fetch_month_summary(year, month):
     m_end = f"{year}-{month:02d}-{last_day:02d}"
 
     try:
-        df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
         if df_all is not None and not df_all.empty:
             df_all = standardize_df_dates(df_all)
             # 確保日期唯一，避免重複加總
@@ -941,7 +941,7 @@ def get_other_revenue(year_month_str):
     白名單項目：['電話費', '影印費', '傳真費', '冰箱飲料', '洗衣費', '付費電視', '清潔費', '場租', '設施使用費', '雜項', '客房其他收入', '餐飲費', '商品收入']
     """
     try:
-        df = _get_cached_sheet("EIS_data", hotel_type=current_hotel)
+        df = _get_cached_sheet_v3("EIS_data", hotel_type=current_hotel)
     except Exception:
         return 0.0
         
@@ -992,7 +992,7 @@ def get_other_revenue(year_month_str):
 @st.cache_data(ttl=3600)
 def fetch_yearly_metrics(year):
     try:
-        df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
         if df_all is None or df_all.empty:
             return 0.0, 0.0
         df_all = standardize_df_dates(df_all)
@@ -1295,7 +1295,7 @@ if current_hotel != "採購":
     if f"monthly_report_{month_str}" not in st.session_state:
         if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
             # 匯出按鈕走快取即可，不需要強制最新
-            df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+            df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
             df_month = df_all[df_all['date'].str.startswith(
                 month_str, na=False)].sort_values('date')
 
@@ -1522,7 +1522,7 @@ def parse_and_save_jinxu(file):
                            'adr': adr, 'revenue': rev, 'total_rooms': rooms})
 
         if updates:
-            df_existing = _get_cached_sheet("daily_data", hotel_type=current_hotel).copy()
+            df_existing = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel).copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
             df_existing = standardize_df_dates(df_existing)
@@ -1540,7 +1540,7 @@ def parse_and_save_jinxu(file):
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
-            _get_cached_sheet.clear()
+            _get_cached_sheet_v3.clear()
             return len(updates)
 
         return 0
@@ -1645,7 +1645,7 @@ def parse_and_save_restaurant(file, current_year):
 
         if parsed_days:
             # 讀取現有庫內資料
-            df_existing = _get_cached_sheet("daily_data", hotel_type=current_hotel).copy()
+            df_existing = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel).copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
 
@@ -1681,7 +1681,7 @@ def parse_and_save_restaurant(file, current_year):
 
             # 寫回資料庫
             conn.update(worksheet="daily_data", data=df_final.fillna(""))
-            _get_cached_sheet.clear()
+            _get_cached_sheet_v3.clear()
 
         # 清除快取以確保重整後能看到新數據
         st.session_state['_last_loaded_date'] = None
@@ -1839,7 +1839,7 @@ if current_hotel != "採購":
         start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
         try:
-            df_all = _get_cached_sheet("daily_data", hotel_type=current_hotel)
+            df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
             if df_all is not None and not df_all.empty:
                 df_all = standardize_df_dates(df_all)
                 # 防止重複資料毀掉加總
@@ -5425,8 +5425,9 @@ def render_nationality_tab():
     st.header("🌍 國籍客源分析專區")
     st.markdown("分析本飯店各國籍旅客分佈，並可結合交通部觀光署大盤數據進行交叉比對。")
     
-    # 1. 讀取飯店資料
+    # 1. 讀取現有飯店國籍數據
     df_hotel = None
+    df_agg = None
     with st.spinner("載入飯店客源資料中..."):
         try:
             # 透過系統現有的 read_google_sheet 幫助函式讀取，解決 Spreadsheet URL 權限問題
