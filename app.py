@@ -5197,22 +5197,23 @@ def render_channel_tab():
         try:
             df_raw = read_google_sheet("marketing_channel_data")
             if df_raw is not None and not df_raw.empty:
-                # 處理合併儲存格 (向前填補 date)
-                df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
-                
                 # 清理與統一欄位名稱
                 df_raw.columns = [str(c).strip().lower() for c in df_raw.columns]
+
+                if 'date' in df_raw.columns:
+                    # 處理合併儲存格 (向前填補 date)
+                    df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
                 
                 if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
+                    # 將日期格式統一轉換為 YYYY-MM-DD
+                    df_raw = standardize_df_dates(df_raw)
+                    
                     curr_date = st.session_state.get('sidebar_date')
                     df_agg = pd.DataFrame()
                     
                     if curr_date:
-                        curr_ym1 = curr_date.strftime("%Y%m")
                         curr_ym2 = curr_date.strftime("%Y-%m")
-                        curr_ym3 = curr_date.strftime("%Y/%m")
-                        
-                        mask = df_raw['date'].astype(str).str.contains(f"{curr_ym1}|{curr_ym2}|{curr_ym3}", na=False, regex=True)
+                        mask = df_raw['date'].astype(str).str.startswith(curr_ym2, na=False)
                         df_t = df_raw[mask].copy()
                         
                         if not df_t.empty:
