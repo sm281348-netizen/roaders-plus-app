@@ -572,6 +572,9 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 
                 if parsed_fb:
                     df_fb_parsed = pd.DataFrame(parsed_fb)
+                    import streamlit as st
+                    st.warning(f"🐛 [系統深度除錯] theme_fb 長度: {len(theme_fb)} | station_fb 長度: {len(station_fb)} | report_data 長度: {len(report_data)} | parsed_fb 長度: {len(parsed_fb)}")
+                    st.warning(f"🐛 [第一筆 parsed_fb] {parsed_fb[0] if len(parsed_fb) > 0 else 'None'}")
                     df = pd.merge(df, df_fb_parsed, on='date', how='outer')
                     # Fill NaN
                     rest_cols = ['bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act', 'rest_breakfast',
@@ -580,6 +583,9 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                     for c in rest_cols:
                         if c in df.columns:
                             df[c] = df[c].fillna(0)
+                else:
+                    import streamlit as st
+                    st.error(f"🚨 [系統深度除錯] 嚴重錯誤：parsed_fb 是空的！theme: {len(theme_fb)}, zq: {len(station_fb)}, report: {len(report_data)}")
                             
             except Exception as e:
                 import streamlit as st
