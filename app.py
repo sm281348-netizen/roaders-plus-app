@@ -1817,6 +1817,22 @@ if current_hotel != "採購":
         st.divider()
 
         # -- 月度累計模式 (MTD Analysis) --
+        # === 強制 F&B 除錯 UI (不快取) ===
+        st.subheader("🛠️ F&B 連線直接診斷")
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            c_th = _ConnWrapper(st.connection("gsheets_theme", type=GSheetsConnection), st.secrets["connections"]["gsheets_theme"]["spreadsheet"])
+            c_st = _ConnWrapper(st.connection("gsheets_station", type=GSheetsConnection), st.secrets["connections"]["gsheets_station"]["spreadsheet"])
+            d_th = c_th.read(worksheet="f&b_data", ttl=0)
+            d_st = c_st.read(worksheet="f&b_data", ttl=0)
+            d_re = c_st.read(worksheet="f&b_report", ttl=0)
+            st.info(f"📊 [直接讀取] Theme f&b_data: {len(d_th)} 筆 | Station f&b_data: {len(d_st)} 筆 | Station f&b_report: {len(d_re)} 筆")
+            if d_re is not None and len(d_re) > 0:
+                st.info(f"📊 [Report 日期範例] A欄第一筆資料: `{d_re.iloc[0, 0]}` (型態: {type(d_re.iloc[0, 0])})")
+                st.info(f"📊 [Report 原始欄位] {d_re.columns.tolist()}")
+        except Exception as e:
+            st.error(f"🚨 [直接讀取失敗] {e}")
+            
         st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
         start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
