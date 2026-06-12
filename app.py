@@ -359,7 +359,7 @@ except Exception as e:
     st.stop()
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=1)
 def _get_cached_sheet(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。"""
