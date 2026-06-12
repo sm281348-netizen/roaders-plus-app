@@ -405,12 +405,31 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
             
             # Format date to handle variations
             if 'date' in df.columns:
-         else:
+                def format_golden_date(d):
+                    ds = str(d).strip()
+                    if ds.endswith('.0'):
+                        ds = ds[:-2]
+                    if len(ds) == 8 and ds.isdigit():
+                        return f"{ds[:4]}-{ds[4:6]}-{ds[6:]}"
+                    if ds.isdigit() and 40000 < int(ds) < 60000:
+                        import datetime
+                        dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=int(ds))
+                        return dt.strftime('%Y-%m-%d')
+                    return ds
+                df['date'] = df['date'].apply(format_golden_date)
+
+            # Filter out sum rows safely
+            if 'date' in df.columns:
+                df = df[df['date'].astype(str).str.strip() != '']
+                df = df[~df['date'].astype(str).str.contains("合計|總計|total", case=False, na=False)]
+
+        else:
             # Fallback: if it completely fails to find PMS headers, ensure 'date' exists to prevent crashes
             if 'date' not in df.columns:
                 df['date'] = pd.Series(dtype='str')
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
+
 
     return df
 
