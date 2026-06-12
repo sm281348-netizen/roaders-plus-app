@@ -435,20 +435,26 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 from streamlit_gsheets import GSheetsConnection
                 
                 # Fetch f&b_data from both RTS (Station) and RTH (Theme)
-                conn_theme = st.connection("gsheets_theme", type=GSheetsConnection)
-                conn_station = st.connection("gsheets_station", type=GSheetsConnection)
+                raw_theme = st.connection("gsheets_theme", type=GSheetsConnection)
+                url_theme = st.secrets["connections"]["gsheets_theme"]["spreadsheet"]
+                conn_theme = _ConnWrapper(raw_theme, url_theme)
+                
+                raw_station = st.connection("gsheets_station", type=GSheetsConnection)
+                url_station = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+                conn_station = _ConnWrapper(raw_station, url_station)
                 
                 df_fb_theme = None
                 df_fb_station = None
                 
                 try:
                     df_fb_theme = conn_theme.read(worksheet="f&b_data", ttl=0)
-                except:
-                    pass
+                except Exception as e:
+                    st.error(f"🚨 讀取主題館 f&b_data 發生錯誤: {e}")
+                    
                 try:
                     df_fb_station = conn_station.read(worksheet="f&b_data", ttl=0)
-                except:
-                    pass
+                except Exception as e:
+                    st.error(f"🚨 讀取站前館 f&b_data 發生錯誤: {e}")
                     
                 # Fetch f&b_report from RTS (Station) because user placed it there
                 df_fb_report = None
