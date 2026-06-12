@@ -544,12 +544,26 @@ def standardize_df_dates(df):
         if pd.isna(val) or str(val).strip() == '' or str(val).strip() == 'NaT':
             return ""
         v_str = str(val).split(' ')[0].strip()
-        
+
+        # 去掉 .0 尾綴 (Google Sheets 浮點數)
+        if v_str.endswith('.0'):
+            v_str = v_str[:-2]
+
         # 處理 Excel 數字日期 (例如 45809)
         if v_str.isdigit() and 40000 < int(v_str) < 60000:
             import datetime
             dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=int(v_str))
             return dt.strftime('%Y-%m-%d')
+
+        # 處理 YYYYMM 6位數 (例如 202605 → 2026-05-01)
+        if v_str.isdigit() and len(v_str) == 6:
+            y, m = int(v_str[:4]), int(v_str[4:])
+            if 1900 < y < 2100 and 1 <= m <= 12:
+                return f"{y:04d}-{m:02d}-01"
+
+        # 處理 YYYYMMDD 8位數 (例如 20260611 → 2026-06-11)
+        if v_str.isdigit() and len(v_str) == 8:
+            return f"{v_str[:4]}-{v_str[4:6]}-{v_str[6:]}"
 
         import re
         # 處理民國年或簡寫 (例如 115/4/30 或 115-04-30)
@@ -5205,15 +5219,9 @@ def render_channel_tab():
                     # 處理合併儲存格 (向前填補 date)
                     df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
                 
-                # 診斷：顯示原始資料
-                raw_dates = df_raw['date'].dropna().head(5).tolist() if 'date' in df_raw.columns else '無 date 欄'
-                st.warning(f"🔧 [渠道診斷2] 總筆數={len(df_raw)}, 原始日期範例: {raw_dates}")
-
                 if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
                     # 將日期格式統一轉換為 YYYY-MM-DD
                     df_raw = standardize_df_dates(df_raw)
-                    clean_dates = df_raw['date'].dropna().head(5).tolist()
-                    st.info(f"🔧 [渠道診斷2] 轉換後日期: {clean_dates}")
                     
                     curr_date = st.session_state.get('sidebar_date')
                     df_agg = pd.DataFrame()
@@ -5222,7 +5230,6 @@ def render_channel_tab():
                         curr_ym2 = curr_date.strftime("%Y-%m")
                         mask = df_raw['date'].astype(str).str.startswith(curr_ym2, na=False)
                         df_t = df_raw[mask].copy()
-                        st.info(f"🔧 [渠道診斷2] 篩選 '{curr_ym2}' 後: {len(df_t)} 筆")
                         
                         if not df_t.empty:
                             df_t['rooms'] = df_t['rooms'].astype(str).str.replace(',', '', regex=False)
