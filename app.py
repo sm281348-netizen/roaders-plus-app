@@ -434,7 +434,7 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 import streamlit as st
                 from streamlit_gsheets import GSheetsConnection
                 
-                # Fetch f&b_data from both RTS (Theme) and RTH (Station)
+                # Fetch f&b_data from both RTS (Station) and RTH (Theme)
                 conn_theme = st.connection("gsheets_theme", type=GSheetsConnection)
                 conn_station = st.connection("gsheets_station", type=GSheetsConnection)
                 
@@ -450,10 +450,10 @@ def _get_cached_sheet(worksheet, hotel_type=""):
                 except:
                     pass
                     
-                # Fetch f&b_report from RTS (Theme) because user placed it there
+                # Fetch f&b_report from RTS (Station) because user placed it there
                 df_fb_report = None
                 try:
-                    df_fb_report = conn_theme.read(worksheet="f&b_report", ttl=0)
+                    df_fb_report = conn_station.read(worksheet="f&b_report", ttl=0)
                 except Exception as e:
                     st.error(f"🚨 讀取 f&b_report 發生錯誤: {e}")
                 
