@@ -429,118 +429,156 @@ def _get_cached_sheet(worksheet, hotel_type=""):
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
                 
-            # --- Parse F&B Data from f&b_data ---
+            # --- Parse F&B Data from Dual-Connection ---
             try:
-                df_fb = conn.read(worksheet="f&b_data", ttl=0)
+                import streamlit as st
+                from streamlit_gsheets import GSheetsConnection
                 
-                if df_fb is not None and not df_fb.empty:
-                    # Guarantee UI visibility for F&B structure
-                    import streamlit as st
-                    raw_col_a = [str(x) for x in df_fb.iloc[:15, 0].tolist()]
-                    st.error(f"🚨 [F&B 第一欄診斷] 前 15 筆的原始值: {raw_col_a}")
+                # Fetch f&b_data from both RTS (Theme) and RTH (Station)
+                conn_theme = st.connection("gsheets_theme", type=GSheetsConnection)
+                conn_station = st.connection("gsheets_station", type=GSheetsConnection)
+                
+                df_fb_theme = None
+                df_fb_station = None
+                
+                try:
+                    df_fb_theme = conn_theme.read(worksheet="f&b_data", ttl=0)
+                except:
+                    pass
+                try:
+                    df_fb_station = conn_station.read(worksheet="f&b_data", ttl=0)
+                except:
+                    pass
                     
-                    import re
-                    import datetime
-                    
-                    parsed_fb = []
-                    # 依據使用者需求，餐飲數據是從 2026 年 1 月開始
-                    current_year = 2026
-                        
-                    prev_month = None
-                    
-                    current_month_rev = 0
-                    current_month_avg_spent = 0
-                    current_month_dates = []
+                # Fetch f&b_report from RTS (Theme) because user placed it there
+                df_fb_report = None
+                try:
+                    df_fb_report = conn_theme.read(worksheet="f&b_report", ttl=0)
+                except Exception as e:
+                    st.error(f"🚨 讀取 f&b_report 發生錯誤: {e}")
+                
+                # 1. Parse Raw Estimated Logs
+                def parse_raw_fb(df_raw):
+                    res = {}
+                    if df_raw is None or df_raw.empty:
+                        return res
+                    for _, row in df_raw.iterrows():
+                        if len(row) > 9:
+                            srv = str(row.iloc[5]).strip()
+                            date_raw = str(row.iloc[6]).strip()
+                            qty_raw = str(row.iloc[9]).strip()
+                            
+                            if len(date_raw) == 8 and date_raw.isdigit():
+                                date_str = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}"
+                                try:
+                                    qty = int(float(qty_raw))
+                                except:
+                                    qty = 0
+                                
+                                if date_str not in res:
+                                    res[date_str] = {'bf': 0, 'af': 0}
+                                    
+                                if '早餐' in srv:
+                                    res[date_str]['bf'] += qty
+                                elif '下午茶' in srv:
+                                    res[date_str]['af'] += qty
+                    return res
 
-                    for i, row in df_fb.iterrows():
+                theme_fb = parse_raw_fb(df_fb_theme)
+                station_fb = parse_raw_fb(df_fb_station)
+                
+                # 2. Parse Aggregated Actual Logs
+                report_data = {}
+                if df_fb_report is not None and not df_fb_report.empty:
+                    import re
+                    for i, row in df_fb_report.iterrows():
                         col_a = str(row.iloc[0]).strip()
-                        if not col_a or col_a == 'nan' or col_a == 'None':
-                            continue
-                            
-                        # Extract monthly summaries
-                        if "已結算營收" in col_a and "早餐" not in col_a and "下午茶" not in col_a:
-                            val = str(row.iloc[1]).replace("NT$", "").replace(",", "").strip()
-                            current_month_rev = int(float(val)) if val and val != 'nan' else 0
-                            continue
-                        elif "平均客單價" in col_a and "早餐" not in col_a and "下午茶" not in col_a:
-                            val = str(row.iloc[1]).replace("NT$", "").replace(",", "").strip()
-                            current_month_avg_spent = int(float(val)) if val and val != 'nan' else 0
-                            
-                            # Backfill to parsed dates of the current month block
-                            for r in current_month_dates:
-                                r['rest_month_rev'] = current_month_rev
-                                r['rest_avg_spent'] = current_month_avg_spent
-                            current_month_dates = []
-                            continue
-                            
-                        # Extract daily guests
-                        m_date = re.match(r'^(\d{1,2})[/-](\d{1,2})', col_a)
                         m_dt = re.match(r'^(\d{4})-(\d{2})-(\d{2})', col_a)
-                        
                         if m_dt:
-                            # It's a datetime format like 2026-02-01
                             date_str = f"{m_dt.group(1)}-{m_dt.group(2)}-{m_dt.group(3)}"
-                        elif m_date:
-                            # It's a string format like 2/1週日
-                            m, d = int(m_date.group(1)), int(m_date.group(2))
-                            if prev_month == 12 and m == 1:
-                                current_year += 1
-                            prev_month = m
-                            date_str = f"{current_year}-{m:02d}-{d:02d}"
-                        else:
-                            continue
-                            
-                        # If we reached here, it's a valid date row
-                        def safe_int(v):
-                            try:
-                                return int(float(str(v).replace(",", "").strip()))
-                            except:
-                                return 0
-                            
-                        # C(2): 主題早餐, E(4): 站前早餐, G(6): 兩館早餐
-                        # I(8): 主題下午茶, K(10): 站前下午茶, M(12): 兩館下午茶
-                        # N(13): HH
-                        bf_theme_act = safe_int(row.iloc[2]) if len(row) > 2 else 0
-                        bf_zq_act = safe_int(row.iloc[4]) if len(row) > 4 else 0
-                        rest_breakfast = safe_int(row.iloc[6]) if len(row) > 6 else 0
+                            def safe_int(v):
+                                try: return int(float(str(v).replace(",", "").strip()))
+                                except: return 0
+                                
+                            report_data[date_str] = {
+                                'theme_bf_est': safe_int(row.iloc[1]) if len(row) > 1 else 0,
+                                'theme_bf_act': safe_int(row.iloc[2]) if len(row) > 2 else 0,
+                                'zq_bf_est': safe_int(row.iloc[3]) if len(row) > 3 else 0,
+                                'zq_bf_act': safe_int(row.iloc[4]) if len(row) > 4 else 0,
+                                'theme_af_est': safe_int(row.iloc[5]) if len(row) > 5 else 0,
+                                'theme_af_act': safe_int(row.iloc[6]) if len(row) > 6 else 0,
+                                'zq_af_est': safe_int(row.iloc[7]) if len(row) > 7 else 0,
+                                'zq_af_act': safe_int(row.iloc[8]) if len(row) > 8 else 0,
+                                'rest_hh_guests': safe_int(row.iloc[9]) if len(row) > 9 else 0
+                            }
+                
+                # 3. Merge all parsed data
+                all_dates = set(theme_fb.keys()).union(station_fb.keys()).union(report_data.keys())
+                parsed_fb = []
+                for d in all_dates:
+                    t_est = theme_fb.get(d, {'bf':0, 'af':0})
+                    z_est = station_fb.get(d, {'bf':0, 'af':0})
+                    rep = report_data.get(d, {})
+                    
+                    # 總預估 (from f&b_data raw log, or fallback to report)
+                    bf_theme_est = t_est['bf'] or rep.get('theme_bf_est', 0)
+                    bf_zq_est = z_est['bf'] or rep.get('zq_bf_est', 0)
+                    af_theme_est = t_est['af'] or rep.get('theme_af_est', 0)
+                    af_zq_est = z_est['af'] or rep.get('zq_af_est', 0)
+                    
+                    bf_total_est = bf_theme_est + bf_zq_est
+                    af_total_est = af_theme_est + af_zq_est
+                    
+                    # 總實際 (from f&b_report)
+                    bf_theme_act = rep.get('theme_bf_act', 0)
+                    bf_zq_act = rep.get('zq_bf_act', 0)
+                    af_theme_act = rep.get('theme_af_act', 0)
+                    af_zq_act = rep.get('zq_af_act', 0)
+                    
+                    bf_total_act = bf_theme_act + bf_zq_act
+                    af_total_act = af_theme_act + af_zq_act
+                    
+                    # 每日營收 = 預估人數 * 300
+                    daily_rev = (bf_theme_est + bf_zq_est + af_theme_est + af_zq_est) * 300
+                    
+                    parsed_fb.append({
+                        'date': d,
+                        'bf_theme_est': bf_theme_est,
+                        'bf_theme_act': bf_theme_act,
+                        'bf_zq_est': bf_zq_est,
+                        'bf_zq_act': bf_zq_act,
+                        'bf_total_est': bf_total_est,
+                        'bf_total_act': bf_total_act,
+                        'rest_breakfast': bf_total_act, # 為了相容舊版變數
                         
-                        af_theme_act = safe_int(row.iloc[8]) if len(row) > 8 else 0
-                        af_zq_act = safe_int(row.iloc[10]) if len(row) > 10 else 0
-                        rest_day_guests = safe_int(row.iloc[12]) if len(row) > 12 else 0
+                        'af_theme_est': af_theme_est,
+                        'af_theme_act': af_theme_act,
+                        'af_zq_est': af_zq_est,
+                        'af_zq_act': af_zq_act,
+                        'af_total_est': af_total_est,
+                        'af_total_act': af_total_act,
+                        'rest_day_guests': af_total_act, # 為了相容舊版變數
                         
-                        rest_hh_guests = safe_int(row.iloc[13]) if len(row) > 13 else 0
-                        
-                        row_dict = {
-                            'date': date_str,
-                            'bf_theme_act': bf_theme_act,
-                            'bf_zq_act': bf_zq_act,
-                            'rest_breakfast': rest_breakfast,
-                            'af_theme_act': af_theme_act,
-                            'af_zq_act': af_zq_act,
-                            'rest_day_guests': rest_day_guests,
-                            'rest_hh_guests': rest_hh_guests,
-                            'rest_month_rev': 0,
-                            'rest_avg_spent': 0
-                        }
-                        parsed_fb.append(row_dict)
-                        current_month_dates.append(row_dict)
+                        'rest_hh_guests': rep.get('rest_hh_guests', 0),
+                        'rest_month_rev': daily_rev, # 每日營收，後續 MTD 會加總
+                        'rest_avg_spent': 0 # 將在 MTD 動態計算
+                    })
+                
+                if parsed_fb:
+                    df_fb_parsed = pd.DataFrame(parsed_fb)
+                    df = pd.merge(df, df_fb_parsed, on='date', how='outer')
+                    # Fill NaN
+                    rest_cols = ['bf_theme_est', 'bf_theme_act', 'bf_zq_est', 'bf_zq_act', 'bf_total_est', 'bf_total_act', 'rest_breakfast',
+                                 'af_theme_est', 'af_theme_act', 'af_zq_est', 'af_zq_act', 'af_total_est', 'af_total_act', 'rest_day_guests',
+                                 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent']
+                    for c in rest_cols:
+                        if c in df.columns:
+                            df[c] = df[c].fillna(0)
                             
-                    if parsed_fb:
-                        df_fb_parsed = pd.DataFrame(parsed_fb)
-                        # Merge into df on 'date' using outer to preserve non-overlapping dates
-                        df = pd.merge(df, df_fb_parsed, on='date', how='outer')
-                        # Fill NaN with 0 for f&b cols
-                        rest_cols = ['bf_theme_act', 'bf_zq_act', 'rest_breakfast', 'af_theme_act', 'af_zq_act', 'rest_day_guests', 'rest_hh_guests', 'rest_month_rev', 'rest_avg_spent', 'revenue']
-                        for c in rest_cols:
-                            if c in df.columns:
-                                df[c] = df[c].fillna(0)
-                else:
-                    import streamlit as st
-                    st.error("🚨 [系統除錯] 讀取成功，但 f&b_data 竟然是空的！")
             except Exception as e:
                 import streamlit as st
-                st.error(f"🚨 [系統除錯] 讀取 f&b_data 發生錯誤: {e}")
-                print(f"Error parsing f&b_data: {e}")
+                st.error(f"🚨 [系統除錯] 跨館讀取 F&B 資料發生錯誤: {e}")
+                print(f"Error parsing dual-connection F&B data: {e}")
             # ----------------------
 
     return df
@@ -1810,12 +1848,10 @@ if current_hotel != "採購":
                        100.0) if total_sellable > 0 else 0.0
             mtd_adr = (mtd_rev / mtd_rooms) if mtd_rooms > 0 else 0.0
 
-            # 獲取餐廳資料 (正確結算，不重複加總)
+            # 獲取餐廳資料 (動態加總每日營收)
             rest_mrev = 0
             if not df_mtd.empty and 'rest_month_rev' in df_mtd.columns:
-                valid_rest = df_mtd[df_mtd['rest_month_rev'] > 0]
-                if not valid_rest.empty:
-                    rest_mrev = valid_rest.iloc[-1]['rest_month_rev']
+                rest_mrev = df_mtd['rest_month_rev'].sum()
 
             grand_total_rev = mtd_rev + rest_mrev
 
@@ -1871,13 +1907,10 @@ if current_hotel != "採購":
             # -----------------------------
 
             # 獲取餐廳月度總結
-            # 改用最後一筆有值的記錄作為結算值，通常比較準確 (假設報表是累計生成的)
-            rest_month_rev = rest_mrev  # 前面已計算過
-            rest_avg_spent = 0
-            if not df_mtd.empty and 'rest_avg_spent' in df_mtd.columns:
-                valid_aspent = df_mtd[df_mtd['rest_avg_spent'] > 0]
-                if not valid_aspent.empty:
-                    rest_avg_spent = valid_aspent.iloc[-1]['rest_avg_spent']
+            # 動態計算 MTD 平均客單價：總營收 / 總實際來客數
+            rest_month_rev = rest_mrev  # 前面已累加過
+            total_act_guests = mtd_total_bf_act + mtd_total_af_act
+            rest_avg_spent = int(rest_month_rev / total_act_guests) if total_act_guests > 0 else 0
 
             st.markdown(
                 "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
