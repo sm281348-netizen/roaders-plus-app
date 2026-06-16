@@ -50,7 +50,10 @@ def fetch_taipei_events():
 def fetch_supplier_prices():
     """讀取菜價表 supplier_prices 分頁，回傳標準化 DataFrame"""
     try:
-        df = read_google_sheet("supplier_prices", ttl="10m")
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        df = raw_st.read(worksheet="supplier_prices", spreadsheet=url_st, ttl="10m")
         if df is None or df.empty:
             return pd.DataFrame()
         # 欄位名稱標準化 (item name → item_name)
@@ -3310,9 +3313,13 @@ with tab_p:
         df_purchase = None
         used_name = ""
 
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        
         for name in possible_names:
             try:
-                df_purchase = conn.read(worksheet=name, ttl="1m")
+                df_purchase = raw_st.read(worksheet=name, spreadsheet=url_st, ttl="1m")
                 if df_purchase is not None and not df_purchase.empty:
                     used_name = name
                     break
