@@ -3382,6 +3382,79 @@ with tab_p:
             pm_end = prev_m_date.replace(day=pm_last_day)
             df_prev_month = df_purchase[(df_purchase['日期'] >= pm_start) & (
                 df_purchase['日期'] <= pm_end)].copy()
+            # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
+            st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
+            
+            # 1. 計算 The Peak 本月已花費
+            peak_spent = 0
+            if not df_month.empty:
+                _df_m_tmp = df_month.copy()
+                _df_m_tmp['小計'] = pd.to_numeric(_df_m_tmp[total_col], errors='coerce').fillna(0)
+                curr_depts_tmp = _df_m_tmp.groupby(dept_col)['小計'].sum().reset_index()
+                all_d_list = curr_depts_tmp[dept_col].astype(str).tolist()
+                hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
+                peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
+            
+            # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
+            import datetime
+            import calendar
+            today_d = datetime.date.today()
+            hist_guests = 0
+            future_guests = 0
+            
+            # 歷史客數
+            df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
+            if not df_fb_hist.empty:
+                df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
+                if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
+                    hist_guests = df_fb_hist['peak_guests'].sum()
+                elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
+                    past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
+                    hist_guests = past_df['peak_guests'].sum()
+            
+            # 未來客數
+            if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
+                df_fb_fut = fetch_fb_future_data()
+                if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
+                    df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
+                    _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
+                    m_start = datetime.date(selected_date.year, selected_date.month, 1)
+                    m_end = datetime.date(selected_date.year, selected_date.month, last_d)
+                    calc_start = max(m_start, today_d)
+                    fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end)
+                    if '數量' in df_fb_fut.columns:
+                        future_guests = df_fb_fut.loc[fut_mask, '數量'].sum()
+            
+            total_est_guests = hist_guests + future_guests
+            
+            # 3. UI 呈現
+            col_w1, col_w2 = st.columns([1, 2])
+            with col_w1:
+                target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
+            
+            total_budget = total_est_guests * target_cpg
+            remaining_budget = total_budget - peak_spent
+            remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+            
+            with col_w2:
+                st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人 (歷史已發生 `{int(hist_guests):,}` + 未來預約 `{int(future_guests):,}`)")
+                st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
+                st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
+            
+            st.markdown("#### 🚨 接下來採購戰略指標")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("剩餘可用預算", f"NT$ {int(remaining_budget):,}")
+            c2.metric("未來預約人數", f"{int(future_guests):,} 人")
+            
+            if remaining_cpg < 0:
+                c3.error(f"❌ 已經超支！無法計算剩餘 CPG")
+            elif remaining_cpg < target_cpg * 0.8:
+                c3.warning(f"⚠️ 剩餘 CPG: ${remaining_cpg:.1f} (預算吃緊，請調整高價食材比例)")
+            else:
+                c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
+
+            st.divider()
 
             if not df_month.empty:
                 # 數值清理
@@ -3419,77 +3492,6 @@ with tab_p:
                     st.metric(
                         "月增長百分比", f"{mom_pcnt:.1f}%", delta=f"{mom_pcnt:.1f}%", delta_color="inverse")
 
-                st.divider()
-
-                # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
-                st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
-                
-                # 1. 計算 The Peak 本月已花費
-                curr_depts_tmp = df_month.groupby(dept_col)['小計'].sum().reset_index()
-                all_d_list = curr_depts_tmp[dept_col].astype(str).tolist()
-                hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
-                peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
-                
-                # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
-                import datetime
-                import calendar
-                today_d = datetime.date.today()
-                hist_guests = 0
-                future_guests = 0
-                
-                # 歷史客數
-                df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
-                if not df_fb_hist.empty:
-                    df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
-                    if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
-                        hist_guests = df_fb_hist['peak_guests'].sum()
-                    elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
-                        past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
-                        hist_guests = past_df['peak_guests'].sum()
-                
-                # 未來客數
-                if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
-                    df_fb_fut = fetch_fb_future_data()
-                    if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
-                        df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
-                        _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
-                        m_start = datetime.date(selected_date.year, selected_date.month, 1)
-                        m_end = datetime.date(selected_date.year, selected_date.month, last_d)
-                        calc_start = max(m_start, today_d)
-                        fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end)
-                        if '數量' in df_fb_fut.columns:
-                            future_guests = df_fb_fut.loc[fut_mask, '數量'].sum()
-                
-                total_est_guests = hist_guests + future_guests
-                
-                # 3. UI 呈現
-                col_w1, col_w2 = st.columns([1, 2])
-                with col_w1:
-                    target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
-                
-                total_budget = total_est_guests * target_cpg
-                remaining_budget = total_budget - peak_spent
-                remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
-                
-                with col_w2:
-                    st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人 (歷史已發生 `{int(hist_guests):,}` + 未來預約 `{int(future_guests):,}`)")
-                    st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
-                    st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
-                
-                st.markdown("#### 🚨 接下來採購戰略指標")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("剩餘可用預算", f"NT$ {int(remaining_budget):,}")
-                c2.metric("未來預約人數", f"{int(future_guests):,} 人")
-                
-                if remaining_cpg < 0:
-                    c3.error(f"❌ 已經超支！無法計算剩餘 CPG")
-                elif remaining_cpg < target_cpg * 0.8:
-                    c3.warning(f"⚠️ 剩餘 CPG: ${remaining_cpg:.1f} (預算吃緊，請調整高價食材比例)")
-                else:
-                    c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
-
-                st.divider()
 
                 # --- 異常值監控：找出增長過快的部門 ---
                 st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
