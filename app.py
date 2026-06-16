@@ -5230,15 +5230,23 @@ def render_channel_tab():
             })
             
         with st.expander("📝 填寫 / 編輯休息數據 (點擊展開)", expanded=False):
-            st.caption("填寫完成後，下方的表格將會立即更新。")
-            cols = st.columns(3)
-            rest_inputs = []
-            for i, s in enumerate(stats):
-                with cols[i]:
-                    st.markdown(f"**{s['month_label']} 休息數據**")
-                    r_occ = st.number_input("使用率 (%)", value=0.00, step=0.01, format="%.2f", key=f"r_occ_{s['year']}_{s['month']}")
-                    r_adr = st.number_input("ADR (元)", value=0, step=10, key=f"r_adr_{s['year']}_{s['month']}")
-                    rest_inputs.append({'occ': r_occ, 'adr': r_adr})
+            st.caption("填寫完成後，點擊「🔄 更新表格」，下方表格才會更新（不會再每個欄位觸發一次）。")
+            with st.form("form_rest_stats"):
+                cols = st.columns(3)
+                rest_inputs_temp = []
+                for i, s in enumerate(stats):
+                    with cols[i]:
+                        st.markdown(f"**{s['month_label']} 休息數據**")
+                        r_occ = st.number_input("使用率 (%)", value=0.00, step=0.01, format="%.2f", key=f"r_occ_{s['year']}_{s['month']}")
+                        r_adr = st.number_input("ADR (元)", value=0, step=10, key=f"r_adr_{s['year']}_{s['month']}")
+                        rest_inputs_temp.append({'occ': r_occ, 'adr': r_adr})
+                if st.form_submit_button("🔄 更新表格", type="primary", use_container_width=True):
+                    st.session_state['_rest_inputs_submitted'] = rest_inputs_temp
+
+        # 從 session_state 讀取已提交的數值（只有按「更新表格」後才會 rerun）
+        rest_inputs = st.session_state.get('_rest_inputs_submitted', [{'occ': 0, 'adr': 0}] * len(stats))
+        if len(rest_inputs) < len(stats):
+            rest_inputs = rest_inputs + [{'occ': 0, 'adr': 0}] * (len(stats) - len(rest_inputs))
 
         table_html = f"""
 <div style="display: flex; justify-content: flex-start;">
