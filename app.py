@@ -4643,9 +4643,26 @@ with tab_p:
                 days_cnt = len(wdates)
                 
                 week_guests = 0
+                week_bf = 0
+                week_af = 0
                 if not df_fb_fut.empty and '數量' in df_fb_fut.columns:
                     w_mask = (df_fb_fut['date_obj'] >= ws) & (df_fb_fut['date_obj'] <= we)
                     week_guests = df_fb_fut.loc[w_mask, '數量'].sum()
+                    # 區分早餐 vs 下午茶（依 f&b_data 的「餐別」或「類型」欄位）
+                    _meal_col = next((c for c in df_fb_fut.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                    if _meal_col:
+                        _bf_kw = ['早', 'breakfast', 'bf']
+                        _af_kw = ['下午', 'afternoon', 'tea', 'af']
+                        _bf_mask = w_mask & df_fb_fut[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
+                        _af_mask = w_mask & df_fb_fut[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
+                        week_bf = df_fb_fut.loc[_bf_mask, '數量'].sum()
+                        week_af = df_fb_fut.loc[_af_mask, '數量'].sum()
+                    else:
+                        # 無餐別欄位：用歷史比例估算
+                        _w_bf_r = _bf_ratio if '_bf_ratio' in locals() else 0.93
+                        _w_af_r = _af_ratio if '_af_ratio' in locals() else 0.07
+                        week_bf = int(week_guests * _w_bf_r)
+                        week_af = int(week_guests * _w_af_r)
                 
                 total_fut_guests_in_weeks += week_guests
                 
@@ -4664,6 +4681,8 @@ with tab_p:
                     'standard_need': standard_need,
                     'allocated_limit': allocated_limit,
                     'week_guests': week_guests,
+                    'week_bf': week_bf,
+                    'week_af': week_af,
                     'dual_labels': [d[5:] for d in wdates if d in fw_dual_dates],
                     'days_cnt': days_cnt,
                 })
@@ -4677,6 +4696,24 @@ with tab_p:
                 
                 alloc = wp['allocated_limit']
                 std = wp['standard_need']
+                w_bf = wp.get('week_bf', 0)
+                w_af = wp.get('week_af', 0)
+                
+                # 早/午人次說明文字
+                if w_bf + w_af > 0:
+                    bf_af_label = f"🍳 早餐 <strong>{int(w_bf)}</strong> 人 ／ 🍰 下午茶 <strong>{int(w_af)}</strong> 人"
+                else:
+                    bf_af_label = f"合計 <strong>{int(wp['week_guests'])}</strong> 人"
+                
+                # 早/午成本拆分（如果 k 值系統的 cb / ca 在作用域中）
+                _cb = cb if 'cb' in locals() and cb > 0 else None
+                _ca = ca if 'ca' in locals() and ca > 0 else None
+                if _cb and _ca and w_bf + w_af > 0:
+                    _bf_cost = int(_cb * w_bf)
+                    _af_cost = int(_ca * w_af)
+                    cost_hint = f"<span style='font-size:11px; color:#aaa;'>🍳 早餐食材 NT${_bf_cost:,} ／ 🍰 下午茶食材 NT${_af_cost:,}</span>"
+                else:
+                    cost_hint = ""
                 
                 if alloc == 0 and std > 0:
                     status_color = '#c0392b'
@@ -4692,7 +4729,13 @@ with tab_p:
                     status_text = "✅ 預算充裕安全 (有額外結餘可運用)"
                 
                 c1, c2, c3 = st.columns([1.5, 1, 1])
-                c1.markdown(f"**{wp['label']}** (預估 **{wp['week_guests']}** 人)<br><span style='font-size:13px;color:{status_color};font-weight:600;'>{status_text}</span><span style='font-size:12px;color:#888;'>{dual_note}</span>", unsafe_allow_html=True)
+                c1.markdown(
+                    f"**{wp['label']}**（{bf_af_label}）<br>"
+                    f"{cost_hint}<br>"
+                    f"<span style='font-size:13px;color:{status_color};font-weight:600;'>{status_text}</span>"
+                    f"<span style='font-size:12px;color:#888;'>{dual_note}</span>",
+                    unsafe_allow_html=True
+                )
                 
                 c2.markdown(
                     f"<div style='background:#f1f2f6; border-left:3px solid #7f8fa6; padding:8px; border-radius:6px; text-align:center;'>"
