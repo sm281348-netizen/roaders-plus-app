@@ -4823,31 +4823,19 @@ with tab_s:
         # ── B. 本月食材安全預算範圍 ──────────────────────────────
         st.markdown("#### 💰 B. 本月食材安全預算範圍")
 
-        # 抓取本月總早餐人數 (從 m_curr)
-        total_bf_guests = 0
-        current_month_str = ""
-        if 'm_curr' in locals() and m_curr.get('df') is not None and not m_curr['df'].empty:
-            m_df = m_curr['df']
-            current_month_str = m_curr.get('month_label', '')
-            for _, r in m_df.iterrows():
-                act = pd.to_numeric(r.get('bf_total_act', 0), errors='coerce')
-                est = pd.to_numeric(r.get('bf_total_est', 0), errors='coerce')
-                if pd.isna(act):
-                    act = 0
-                if pd.isna(est):
-                    est = 0
-                total_bf_guests += act if act > 0 else est
+        # 抓取本月總預算與客數 (直接沿用採購分析 tab_p 戰情室的計算結果)
+        total_guests_for_budget = total_est_guests if 'total_est_guests' in locals() else 0
+        cur_budget = total_budget if 'total_budget' in locals() else 0
+        current_month_str = f"{selected_date.year}-{selected_date.month:02d}"
 
-        if total_bf_guests > 0:
+        if total_guests_for_budget > 0 and cur_budget > 0:
             bc1, bc2 = st.columns([1, 2])
             with bc1:
-                target_cpg = st.number_input(
-                    "🎯 目標 CPG (單客成本預算)", min_value=0, value=150, step=5, help="預設為 150 元，主管可依據大盤指數彈性放寬或緊縮。")
-                total_budget = total_bf_guests * target_cpg
-                st.metric(f"本月預估總備餐 ({current_month_str})",
-                          f"{int(total_bf_guests):,} 人")
-                st.metric("本月食材總預算 (Budget)",
-                          f"${int(total_budget):,}", help="總備餐人數 × 目標 CPG")
+                st.metric(f"本月總備餐人次 ({current_month_str})", f"{int(total_guests_for_budget):,} 人", help="包含早餐與下午茶的總預估客數 (與戰情室連動)")
+                st.metric("本月食材總預算額度", f"NT$ {int(cur_budget):,}", help="此為根據「採購分析」戰情室設定所計算出的總額度")
+                
+                # 將 cur_budget 賦值給 total_budget，供右側 bc2 的分配邏輯使用
+                total_budget = cur_budget
 
             with bc2:
                 # 根據 latest_idx 決定配額
