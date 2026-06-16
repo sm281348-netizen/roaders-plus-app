@@ -3409,16 +3409,22 @@ with tab_p:
             today_d = datetime.date.today()
             hist_guests = 0
             future_guests = 0
+            hist_bf = 0
+            hist_af = 0
             
-            # 歷史客數
+            # 歷史客數 (拆分早餐/下午茶)
             df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
             if not df_fb_hist.empty:
                 df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
                 if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
                     hist_guests = df_fb_hist['peak_guests'].sum()
+                    hist_bf = df_fb_hist['bf_act'].sum()
+                    hist_af = df_fb_hist['af_act'].sum()
                 elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
                     past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
                     hist_guests = past_df['peak_guests'].sum()
+                    hist_bf = past_df['bf_act'].sum()
+                    hist_af = past_df['af_act'].sum()
             
             # 未來客數
             if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
@@ -3426,15 +3432,26 @@ with tab_p:
                 if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
                     df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
                     _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
-                    m_start = datetime.date(selected_date.year, selected_date.month, 1)
-                    m_end = datetime.date(selected_date.year, selected_date.month, last_d)
-                    calc_start = max(m_start, today_d)
-                    fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end)
+                    m_start_dt = datetime.date(selected_date.year, selected_date.month, 1)
+                    m_end_dt = datetime.date(selected_date.year, selected_date.month, last_d)
+                    calc_start = max(m_start_dt, today_d)
+                    fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end_dt)
                     if '數量' in df_fb_fut.columns:
                         future_guests = df_fb_fut.loc[fut_mask, '數量'].sum()
             
             total_est_guests = hist_guests + future_guests
-            
+            # 本月早/午估計比例 (用歷史已知數據推算全月)
+            _total_hist_peak = hist_bf + hist_af
+            if _total_hist_peak > 0:
+                _bf_ratio = hist_bf / _total_hist_peak
+                _af_ratio = hist_af / _total_hist_peak
+            else:
+                _bf_ratio = 0.93  # 預設：早餐佔 93%
+                _af_ratio = 0.07
+            # 本月估計早餐 / 下午茶總人次
+            est_bf_total = int(total_est_guests * _bf_ratio)
+            est_af_total = max(int(total_est_guests * _af_ratio), 1)
+
             # 3. UI 呈現
             col_w1, col_w2 = st.columns([1, 2])
             with col_w1:
@@ -3461,7 +3478,98 @@ with tab_p:
             else:
                 c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
 
+            # ─────────────────────────────────────────────────
+            # 🔢 早餐 / 下午茶 CPG 拆分分析 (k 值系統)
+            # ─────────────────────────────────────────────────
             st.divider()
+            st.markdown("#### 🍳 早餐 vs 🍰 下午茶 單客成本拆分分析")
+
+            # 說明早/午比例來源
+            _has_hist = hist_bf + hist_af > 0
+            _ratio_src = f"本月已發生數據 (早餐 {int(hist_bf):,} 人 / 下午茶 {int(hist_af):,} 人)" if _has_hist else "預設估算 (早餐 93% / 下午茶 7%)"
+            st.caption(f"📊 本月客數比例來源：{_ratio_src} → 估計早餐 `{est_bf_total:,}` 人 / 下午茶 `{est_af_total:,}` 人")
+
+            # 計算 k 值動態上限
+            CB_MIN = 80   # 早餐每人食材成本的絕對底線
+            B = est_bf_total
+            A = est_af_total
+            T = target_cpg
+            if A > 0 and CB_MIN > 0:
+                k_max_raw = ((B + A) * T - CB_MIN * B) / (CB_MIN * A)
+                k_max = max(1.0, round(k_max_raw, 1))
+            else:
+                k_max = 5.0
+
+            k_col1, k_col2 = st.columns([1, 2])
+            with k_col1:
+                k_val = st.slider(
+                    "⚖️ 下午茶相對成本係數 k",
+                    min_value=1.0,
+                    max_value=float(k_max),
+                    value=min(1.8, float(k_max)),
+                    step=0.1,
+                    help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
+                )
+
+            # 核心公式
+            if B + k_val * A > 0:
+                cb = (B + A) * T / (B + k_val * A)
+                ca = k_val * cb
+            else:
+                cb = T
+                ca = T
+
+            _check = (B * cb + A * ca) / (B + A) if (B + A) > 0 else 0
+
+            with k_col2:
+                cb_color = "#27ae60" if cb >= 100 else ("#f39c12" if cb >= CB_MIN else "#e74c3c")
+                ca_color = "#27ae60" if ca <= 250 else ("#f39c12" if ca <= 350 else "#e74c3c")
+                st.markdown(f"""
+                <div style="display:flex; gap:12px; margin-top:8px;">
+                    <div style="flex:1; background:#1e2d40; border-left:5px solid {cb_color}; border-radius:10px; padding:16px; text-align:center;">
+                        <div style="color:#aaa; font-size:0.8rem;">🍳 早餐 每人食材成本上限</div>
+                        <div style="color:{cb_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {cb:.0f}</div>
+                        <div style="color:#aaa; font-size:0.75rem;">預估 {est_bf_total:,} 人次</div>
+                    </div>
+                    <div style="flex:1; background:#1e2d40; border-left:5px solid {ca_color}; border-radius:10px; padding:16px; text-align:center;">
+                        <div style="color:#aaa; font-size:0.8rem;">🍰 下午茶 每人食材成本上限</div>
+                        <div style="color:{ca_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {ca:.0f}</div>
+                        <div style="color:#aaa; font-size:0.75rem;">預估 {est_af_total:,} 人次</div>
+                    </div>
+                    <div style="flex:1; background:#1e2d40; border-left:5px solid #3498db; border-radius:10px; padding:16px; text-align:center;">
+                        <div style="color:#aaa; font-size:0.8rem;">⚖️ 加權驗算總 CPG</div>
+                        <div style="color:#3498db; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {_check:.0f}</div>
+                        <div style="color:#aaa; font-size:0.75rem;">✅ 應等於目標 {int(T)} 元</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # k 值動態說明文字
+            st.markdown("")
+            if k_val >= k_max * 0.95:
+                st.error(f"🚫 **k 值已達上限 ({k_val:.1f} / 上限 {k_max:.1f})**\n\n早餐每人成本已壓至 NT${cb:.0f}（接近最低底線 ${CB_MIN}）。繼續調高 k 將導致早餐食材嚴重縮水，影響餐點品質與住客滿意度。建議立即調低 k 值。")
+            elif k_val > 2.5:
+                st.warning(f"⚠️ **k 值偏高 ({k_val:.1f})**\n\n目前下午茶每人食材預算達 NT${ca:.0f}，早餐僅剩 NT${cb:.0f}。\n- **再往高調的風險**：早餐供應品質下滑，住客投訴風險提升。\n- **往低調的效果**：早餐食材預算提升至 NT${((B+A)*T/(B+(k_val-0.3)*A)):.0f}，下午茶縮至 NT${((k_val-0.3)*(B+A)*T/(B+(k_val-0.3)*A)):.0f}。\n→ 建議範圍：k = 1.5 ～ 2.2")
+            elif k_val < 1.2:
+                st.info(f"ℹ️ **k 值偏低 ({k_val:.1f})**\n\n早餐與下午茶每人食材成本幾乎相同（NT${cb:.0f} vs NT${ca:.0f}）。\n- **再往低調的風險**：下午茶預算不足，甜點備料品質難以維持。\n- **往高調的效果**：下午茶預算提升至 NT${((k_val+0.3)*(B+A)*T/(B+(k_val+0.3)*A)):.0f}，更真實反映備料成本。\n→ 建議至少設 k = 1.5")
+            else:
+                st.success(f"✅ **k 值合理 ({k_val:.1f})** ─ 早餐 NT${cb:.0f} / 下午茶 NT${ca:.0f}\n\n目前分配符合業界常規，加權總 CPG = NT${_check:.0f}（等於目標 ${int(T)}）。\n- 若往上調 k 至 {k_val+0.2:.1f} → 下午茶提升至 NT${((k_val+0.2)*(B+A)*T/(B+(k_val+0.2)*A)):.0f}，早餐降至 NT${((B+A)*T/(B+(k_val+0.2)*A)):.0f}\n- 若往下調 k 至 {k_val-0.2:.1f} → 早餐提升至 NT${((B+A)*T/(B+(k_val-0.2)*A)):.0f}，下午茶降至 NT${((k_val-0.2)*(B+A)*T/(B+(k_val-0.2)*A)):.0f}")
+
+            # 月份早/午預算總額概覽
+            bf_budget_total = cb * est_bf_total
+            af_budget_total = ca * est_af_total
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,#1a1a2e,#16213e); border-radius:12px; padding:16px; margin-top:12px; display:flex; justify-content:space-around; text-align:center;">
+                <div><div style="color:#aaa;font-size:0.8rem;">🍳 本月早餐食材總預算</div><div style="color:#2ecc71;font-size:1.4rem;font-weight:700;">NT$ {int(bf_budget_total):,}</div></div>
+                <div style="color:#555;font-size:2rem; align-self:center;">+</div>
+                <div><div style="color:#aaa;font-size:0.8rem;">🍰 本月下午茶食材總預算</div><div style="color:#e67e22;font-size:1.4rem;font-weight:700;">NT$ {int(af_budget_total):,}</div></div>
+                <div style="color:#555;font-size:2rem; align-self:center;">=</div>
+                <div><div style="color:#aaa;font-size:0.8rem;">🎯 本月總預算上限</div><div style="color:#3498db;font-size:1.4rem;font-weight:700;">NT$ {int(total_budget):,}</div></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.divider()
+
 
             if not df_month.empty:
                 # 數值清理
