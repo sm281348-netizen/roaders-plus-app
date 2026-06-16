@@ -593,6 +593,42 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
         return pd.DataFrame(rows)
     return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
 
+@st.cache_data(ttl=300)
+def fetch_fb_future_data():
+    """
+    從 f&b_data 讀取包含未來的 F&B 預約客數明細。
+    回傳清理後的 DataFrame。
+    """
+    import pandas as pd
+    import re
+    from streamlit_gsheets import GSheetsConnection
+    try:
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        c_st = _ConnWrapper(raw_st, url_st)
+        df = c_st.read(worksheet="f&b_data", ttl=0)
+        
+        if df is not None and not df.empty:
+            if '數量' in df.columns:
+                df['數量'] = pd.to_numeric(df['數量'], errors='coerce').fillna(0).astype(int)
+            if '服務日期' in df.columns:
+                df['服務日期'] = df['服務日期'].astype(str).str.replace('.0', '', regex=False).str.strip()
+                def format_dt(s):
+                    if len(s) == 8 and s.isdigit():
+                        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+                    m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+                    if m:
+                        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+                    return s
+                df['date'] = df['服務日期'].apply(format_dt)
+            return df
+    except Exception as e:
+        import logging
+        logging.error(f"Error reading f&b_data: {e}")
+        pass
+    return pd.DataFrame()
+
+
 
 
 
@@ -3385,6 +3421,76 @@ with tab_p:
 
                 st.divider()
 
+                # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
+                st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
+                
+                # 1. 計算 The Peak 本月已花費
+                curr_depts_tmp = df_month.groupby(dept_col)['小計'].sum().reset_index()
+                all_d_list = curr_depts_tmp[dept_col].astype(str).tolist()
+                hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
+                peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
+                
+                # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
+                import datetime
+                import calendar
+                today_d = datetime.date.today()
+                hist_guests = 0
+                future_guests = 0
+                
+                # 歷史客數
+                df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
+                if not df_fb_hist.empty:
+                    df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
+                    if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
+                        hist_guests = df_fb_hist['peak_guests'].sum()
+                    elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
+                        past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
+                        hist_guests = past_df['peak_guests'].sum()
+                
+                # 未來客數
+                if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
+                    df_fb_fut = fetch_fb_future_data()
+                    if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
+                        df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
+                        _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
+                        m_start = datetime.date(selected_date.year, selected_date.month, 1)
+                        m_end = datetime.date(selected_date.year, selected_date.month, last_d)
+                        calc_start = max(m_start, today_d)
+                        fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end)
+                        if '數量' in df_fb_fut.columns:
+                            future_guests = df_fb_fut.loc[fut_mask, '數量'].sum()
+                
+                total_est_guests = hist_guests + future_guests
+                
+                # 3. UI 呈現
+                col_w1, col_w2 = st.columns([1, 2])
+                with col_w1:
+                    target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
+                
+                total_budget = total_est_guests * target_cpg
+                remaining_budget = total_budget - peak_spent
+                remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+                
+                with col_w2:
+                    st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人 (歷史已發生 `{int(hist_guests):,}` + 未來預約 `{int(future_guests):,}`)")
+                    st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
+                    st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
+                
+                st.markdown("#### 🚨 接下來採購戰略指標")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("剩餘可用預算", f"NT$ {int(remaining_budget):,}")
+                c2.metric("未來預約人數", f"{int(future_guests):,} 人")
+                
+                if remaining_cpg < 0:
+                    c3.error(f"❌ 已經超支！無法計算剩餘 CPG")
+                elif remaining_cpg < target_cpg * 0.8:
+                    c3.warning(f"⚠️ 剩餘 CPG: ${remaining_cpg:.1f} (預算吃緊，請調整高價食材比例)")
+                else:
+                    c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
+
+                st.divider()
+
                 # --- 異常值監控：找出增長過快的部門 ---
                 st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
                 # 計算各部門本月 vs 上月
@@ -4366,44 +4472,27 @@ with tab_p:
         today_dt2.year, today_dt2.month)
 
     if is_cur_or_fut:
-        # 1. 優先用本月餐廳數據
-        fw_m_data = fetch_month_summary(
-            selected_date.year, selected_date.month)
-        fw_df = fw_m_data.get('df', pd.DataFrame())
-        avg_fw = 0
-        fw_label = ''
-        if not fw_df.empty and 'bf_total_act' in fw_df.columns:
-            fw_df = fw_df.copy()
-            fw_df['_bf'] = pd.to_numeric(fw_df['bf_total_act'].astype(
-                str).str.replace(',', ''), errors='coerce').fillna(0)
-            active_fw = fw_df[fw_df['_bf'] > 0]['_bf']
-            if not active_fw.empty:
-                avg_fw = active_fw.mean()
-                fw_label = f"本月實際 ({len(active_fw)} 天記錄)"
-
-        # 2. 備援：改用上個月早餐來客數
-        if avg_fw == 0:
-            prev_month_dt = selected_date.replace(day=1) - dt_timedelta(days=1)
-            fw_prev = fetch_month_summary(prev_month_dt.year, prev_month_dt.month)
-            fw_prev_df = fw_prev.get(
-                'df', pd.DataFrame()) if fw_prev else pd.DataFrame()
-            if not fw_prev_df.empty and 'bf_total_act' in fw_prev_df.columns:
-                fw_prev_df = fw_prev_df.copy()
-                fw_prev_df['_bf'] = pd.to_numeric(fw_prev_df['bf_total_act'].astype(
-                    str).str.replace(',', ''), errors='coerce').fillna(0)
-                prev_active = fw_prev_df[fw_prev_df['_bf'] > 0]['_bf']
-                if not prev_active.empty:
-                    avg_fw = prev_active.mean()
-                    fw_label = f"⚠️ 以上月平均推估（本月尚無餐廳資料）"
-
-        # 3. 雙冠日清單（來自 tab_m 的 calc_key_metrics）
+        # 新邏輯：直接讀取未來的預約資料
+        df_fb_fut = fetch_fb_future_data()
+        if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
+            df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
+        else:
+            df_fb_fut = pd.DataFrame()
+            
+        # 取得雙冠日清單（來自 tab_m 的 calc_key_metrics）
+        fw_m_data = fetch_month_summary(selected_date.year, selected_date.month)
         fw_curr_metrics = calc_key_metrics(fw_m_data)
         fw_dual_dates = set(fw_curr_metrics.get('dual_match_dates', []))
 
-        # 4. 逐週生成
+        # 逐週生成
         fw_week_plans = []
         fw_cursor = today_dt2
         fw_seen = set()
+        total_fut_guests_in_weeks = 0
+        
+        # 確保 target_cpg 變數存在 (從上方戰情室繼承，若無則預設 150)
+        cpg_val = target_cpg if 'target_cpg' in locals() else 150
+        
         while fw_cursor <= month_end_dt2:
             mon = fw_cursor - dt_timedelta(days=fw_cursor.weekday())
             sun = mon + dt_timedelta(days=6)
@@ -4415,23 +4504,32 @@ with tab_p:
                           for i in range((we - ws).days + 1)]
                 has_d = any(d in fw_dual_dates for d in wdates)
                 days_cnt = len(wdates)
+                
+                week_guests = 0
+                if not df_fb_fut.empty and '數量' in df_fb_fut.columns:
+                    w_mask = (df_fb_fut['date_obj'] >= ws) & (df_fb_fut['date_obj'] <= we)
+                    week_guests = df_fb_fut.loc[w_mask, '數量'].sum()
+                
+                total_fut_guests_in_weeks += week_guests
+                
                 fw_week_plans.append({
                     'label': f"{ws.strftime('%m/%d')} ～ {we.strftime('%m/%d')}",
                     'has_dual': has_d,
-                    'recommended': int((150 * 1.15 if has_d else 150) * avg_fw * days_cnt),
+                    'recommended': int((cpg_val * 1.15 if has_d else cpg_val) * week_guests),
+                    'week_guests': week_guests,
                     'dual_labels': [d[5:] for d in wdates if d in fw_dual_dates],
                     'days_cnt': days_cnt,
                 })
             fw_cursor = sun + dt_timedelta(days=1)
 
-        if avg_fw > 0 and fw_week_plans:
+        if total_fut_guests_in_weeks > 0 and fw_week_plans:
             st.caption(
-                f"💡 預估基準：每日平均來客數 **{avg_fw:.1f} 人**（{fw_label}）。雙冠週採購上限自動提高 15%。")
+                f"💡 預估基準：直接從 `f&b_data` 讀取未來的「精準預約客數」，取代過去的平均值推估。目標單客成本設定為 **${cpg_val}**。雙冠週採購上限自動提高 15%。")
             for wp in fw_week_plans:
                 color = '#e67e22' if wp['has_dual'] else '#2980b9'
                 dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
                 c1, c2 = st.columns([2, 1])
-                c1.markdown(f"**{wp['label']}**{dual_note}")
+                c1.markdown(f"**{wp['label']}** (預估 **{wp['week_guests']}** 人){dual_note}")
                 c2.markdown(
                     f"<div style='background:{color}22; border-left:3px solid {color}; padding:8px 12px; border-radius:6px; text-align:center;'>"
                     f"<strong style='font-size:16px;'>NT$ {wp['recommended']:,}</strong>"
@@ -4440,7 +4538,7 @@ with tab_p:
                     unsafe_allow_html=True
                 )
         else:
-            st.info("💡 尚無足夠的來客數據來估算週採購預算。請確認上個月的餐廳早餐來客數已填寫。")
+            st.info("💡 目前 `f&b_data` 中沒有這段時間的預約人數資料，或是預約客數為 0，無法估算週採購預算。")
     else:
         st.info("💡 「週採購建議」僅適用於當月或未來月份。")
 
