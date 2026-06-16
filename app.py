@@ -4383,8 +4383,8 @@ with tab_p:
 
         # 2. 備援：改用上個月早餐來客數
         if avg_fw == 0:
-            fw_prev = fetch_month_summary(
-                m_prev['year'], m_prev['month']) if 'year' in m_prev else {}
+            prev_month_dt = selected_date.replace(day=1) - dt_timedelta(days=1)
+            fw_prev = fetch_month_summary(prev_month_dt.year, prev_month_dt.month)
             fw_prev_df = fw_prev.get(
                 'df', pd.DataFrame()) if fw_prev else pd.DataFrame()
             if not fw_prev_df.empty and 'bf_total_act' in fw_prev_df.columns:
