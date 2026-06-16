@@ -4486,14 +4486,34 @@ with tab_p:
         fw_curr_metrics = calc_key_metrics(fw_m_data)
         fw_dual_dates = set(fw_curr_metrics.get('dual_match_dates', []))
 
+        # 取得剩餘可用總預算 (從上方戰情室傳遞)
+        rem_budget_val = remaining_budget if 'remaining_budget' in locals() else 0
+        rem_budget_val = max(0, rem_budget_val)  # 若為負數(超支)，強制配額為 0
+        
+        # 先計算這段時間的未來總客數，以計算分配比例
+        temp_cursor = today_dt2
+        temp_seen = set()
+        overall_future_guests = 0
+        while temp_cursor <= month_end_dt2:
+            mon = temp_cursor - dt_timedelta(days=temp_cursor.weekday())
+            sun = mon + dt_timedelta(days=6)
+            ws = max(mon, dt_date(selected_date.year, selected_date.month, 1))
+            we = min(sun, month_end_dt2)
+            if ws not in temp_seen and we >= today_dt2:
+                temp_seen.add(ws)
+                if not df_fb_fut.empty and '數量' in df_fb_fut.columns:
+                    w_mask = (df_fb_fut['date_obj'] >= ws) & (df_fb_fut['date_obj'] <= we)
+                    overall_future_guests += df_fb_fut.loc[w_mask, '數量'].sum()
+            temp_cursor = sun + dt_timedelta(days=1)
+            
+        # 確保 target_cpg 變數存在 (從上方戰情室繼承，若無則預設 150)
+        cpg_val = target_cpg if 'target_cpg' in locals() else 150
+        
         # 逐週生成
         fw_week_plans = []
         fw_cursor = today_dt2
         fw_seen = set()
         total_fut_guests_in_weeks = 0
-        
-        # 確保 target_cpg 變數存在 (從上方戰情室繼承，若無則預設 150)
-        cpg_val = target_cpg if 'target_cpg' in locals() else 150
         
         while fw_cursor <= month_end_dt2:
             mon = fw_cursor - dt_timedelta(days=fw_cursor.weekday())
@@ -4514,10 +4534,20 @@ with tab_p:
                 
                 total_fut_guests_in_weeks += week_guests
                 
+                # 1. 計算「理論需求 (Standard Need)」
+                standard_need = int((cpg_val * 1.15 if has_d else cpg_val) * week_guests)
+                
+                # 2. 計算「戰情室分配限額 (Adjusted Limit)」
+                allocated_limit = 0
+                if overall_future_guests > 0:
+                    guest_ratio = week_guests / overall_future_guests
+                    allocated_limit = int(rem_budget_val * guest_ratio)
+                
                 fw_week_plans.append({
                     'label': f"{ws.strftime('%m/%d')} ～ {we.strftime('%m/%d')}",
                     'has_dual': has_d,
-                    'recommended': int((cpg_val * 1.15 if has_d else cpg_val) * week_guests),
+                    'standard_need': standard_need,
+                    'allocated_limit': allocated_limit,
                     'week_guests': week_guests,
                     'dual_labels': [d[5:] for d in wdates if d in fw_dual_dates],
                     'days_cnt': days_cnt,
@@ -4526,19 +4556,45 @@ with tab_p:
 
         if total_fut_guests_in_weeks > 0 and fw_week_plans:
             st.caption(
-                f"💡 預估基準：直接從 `f&b_data` 讀取未來的「精準預約客數」，取代過去的平均值推估。目標單客成本設定為 **${cpg_val}**。雙冠週採購上限自動提高 15%。")
+                f"💡 **雙軌預算系統**：系統自動將「戰情室真實剩餘預算」按各週客數佔比分配給未來的每一週。")
             for wp in fw_week_plans:
-                color = '#e67e22' if wp['has_dual'] else '#2980b9'
                 dual_note = f"　🎯 含雙冠日：{', '.join(wp['dual_labels'])}" if wp['has_dual'] else ""
-                c1, c2 = st.columns([2, 1])
-                c1.markdown(f"**{wp['label']}** (預估 **{wp['week_guests']}** 人){dual_note}")
+                
+                alloc = wp['allocated_limit']
+                std = wp['standard_need']
+                
+                if alloc == 0 and std > 0:
+                    status_color = '#c0392b'
+                    status_text = "🚨 預算已徹底透支"
+                elif alloc < std * 0.8:
+                    status_color = '#e74c3c'
+                    status_text = "🚨 預算嚴重吃緊 (月初超支)"
+                elif alloc < std:
+                    status_color = '#f39c12'
+                    status_text = "⚠️ 預算稍微緊縮 (需採購平價替代品)"
+                else:
+                    status_color = '#27ae60'
+                    status_text = "✅ 預算充裕安全 (有額外結餘可運用)"
+                
+                c1, c2, c3 = st.columns([1.5, 1, 1])
+                c1.markdown(f"**{wp['label']}** (預估 **{wp['week_guests']}** 人)<br><span style='font-size:13px;color:{status_color};font-weight:600;'>{status_text}</span><span style='font-size:12px;color:#888;'>{dual_note}</span>", unsafe_allow_html=True)
+                
                 c2.markdown(
-                    f"<div style='background:{color}22; border-left:3px solid {color}; padding:8px 12px; border-radius:6px; text-align:center;'>"
-                    f"<strong style='font-size:16px;'>NT$ {wp['recommended']:,}</strong>"
-                    f"<br><span style='font-size:11px; color:#666;'>建議週採購上限 ({wp['days_cnt']}天)</span>"
+                    f"<div style='background:#f1f2f6; border-left:3px solid #7f8fa6; padding:8px; border-radius:6px; text-align:center;'>"
+                    f"<strong style='font-size:14px; color:#2f3640;'>NT$ {std:,}</strong>"
+                    f"<br><span style='font-size:11px; color:#7f8fa6;'>單純客量理論需求</span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
+                
+                c3.markdown(
+                    f"<div style='background:{status_color}15; border-left:3px solid {status_color}; padding:8px; border-radius:6px; text-align:center;'>"
+                    f"<strong style='font-size:15px; color:{status_color};'>NT$ {alloc:,}</strong>"
+                    f"<br><span style='font-size:11px; color:{status_color};'>戰情室真實配額</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                st.write("") # small spacing
         else:
             st.info("💡 目前 `f&b_data` 中沒有這段時間的預約人數資料，或是預約客數為 0，無法估算週採購預算。")
     else:
