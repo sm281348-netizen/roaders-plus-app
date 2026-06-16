@@ -2954,14 +2954,14 @@ if current_hotel != "採購":
 if current_hotel != "採購":
     with tab3:
         st.header("🧹 房務數據")
-        st.number_input("今日總清消房數", min_value=0, step=1,
-                        key="input_cleaned", on_change=on_input_change)
-        st.number_input("退/續數量", min_value=0, step=1,
-                        key="input_hk_co", on_change=on_input_change)
-        st.number_input("每人平均掃房數", min_value=0.0, step=0.1,
-                        key="input_hk_avg", on_change=on_input_change)
-        st.number_input("房務請購費用", min_value=0, step=100,
-                        key="input_hk_exp", on_change=on_input_change)
+        with st.form(f"form_hk_{date_str}"):
+            st.number_input("今日總清消房數", min_value=0, step=1, key="input_cleaned")
+            st.number_input("退/續數量", min_value=0, step=1, key="input_hk_co")
+            st.number_input("每人平均掃房數", min_value=0.0, step=0.1, key="input_hk_avg")
+            st.number_input("房務請購費用", min_value=0, step=100, key="input_hk_exp")
+            if st.form_submit_button("💾 儲存房務數據", type="primary", use_container_width=True):
+                sync_st_to_db(date_str)
+                st.success("✅ 房務數據已儲存！")
 
 if current_hotel != "採購":
     with tab4:
@@ -3026,63 +3026,54 @@ if current_hotel != "採購":
         st.divider()
         st.subheader(f"餐廳手動確認區 ({date_str})")
 
-        st.markdown("#### 🌞 早餐數據")
-        b1, b2, b3 = st.columns(3)
-        b1.number_input("【主題】預估來客", min_value=0, step=1,
-                        key="input_bf_theme_est", on_change=on_input_change)
-        b1.number_input("【主題】實際來客", min_value=0, step=1,
-                        key="input_bf_theme_act", on_change=on_input_change)
+        with st.form(f"form_rest_{date_str}"):
+            st.markdown("#### 🌞 早餐數據")
+            b1, b2, b3 = st.columns(3)
+            b1.number_input("【主題】預估來客", min_value=0, step=1, key="input_bf_theme_est")
+            b1.number_input("【主題】實際來客", min_value=0, step=1, key="input_bf_theme_act")
 
-        b2.number_input("【站前】預估來客", min_value=0, step=1,
-                        key="input_bf_zq_est", on_change=on_input_change)
-        b2.number_input("【站前】實際來客", min_value=0, step=1,
-                        key="input_bf_zq_act", on_change=on_input_change)
+            b2.number_input("【站前】預估來客", min_value=0, step=1, key="input_bf_zq_est")
+            b2.number_input("【站前】實際來客", min_value=0, step=1, key="input_bf_zq_act")
 
-        b3.number_input("【兩館總和】預估", min_value=0, step=1,
-                        key="input_bf_total_est", on_change=on_input_change)
-        b3.number_input("【兩館總和】實際", min_value=0, step=1,
-                        key="input_bf_total_act", on_change=on_input_change)
+            b3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_bf_total_est")
+            b3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_bf_total_act")
 
-        st.markdown("#### 🍰 下午茶數據")
-        a1, a2, a3 = st.columns(3)
-        a1.number_input("【主題】預估來客", min_value=0, step=1,
-                        key="input_af_theme_est", on_change=on_input_change)
-        a1.number_input("【主題】實際來客", min_value=0, step=1,
-                        key="input_af_theme_act", on_change=on_input_change)
+            st.markdown("#### 🍰 下午茶數據")
+            a1, a2, a3 = st.columns(3)
+            a1.number_input("【主題】預估來客", min_value=0, step=1, key="input_af_theme_est")
+            a1.number_input("【主題】實際來客", min_value=0, step=1, key="input_af_theme_act")
 
-        a2.number_input("【站前】預估來客", min_value=0, step=1,
-                        key="input_af_zq_est", on_change=on_input_change)
-        a2.number_input("【站前】實際來客", min_value=0, step=1,
-                        key="input_af_zq_act", on_change=on_input_change)
+            a2.number_input("【站前】預估來客", min_value=0, step=1, key="input_af_zq_est")
+            a2.number_input("【站前】實際來客", min_value=0, step=1, key="input_af_zq_act")
 
-        a3.number_input("【兩館總和】預估", min_value=0, step=1,
-                        key="input_af_total_est", on_change=on_input_change)
-        a3.number_input("【兩館總和】實際", min_value=0, step=1,
-                        key="input_af_total_act", on_change=on_input_change)
+            a3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_af_total_est")
+            a3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_af_total_act")
 
-        st.markdown("#### 📊 月報結算總數與雜項")
-        c1, c2, c3 = st.columns(3)
-        c1.number_input("已結算營收 (全月)", min_value=0, step=100,
-                        key="input_rest_mrev", on_change=on_input_change)
-        c2.number_input("平均客單價", min_value=0, step=10,
-                        key="input_rest_aspent", on_change=on_input_change)
-        c3.number_input("THE PEAK 請購費用", min_value=0, step=100,
-                        key="input_rest_exp", on_change=on_input_change)
+            st.markdown("#### 📊 月報結算總數與雜項")
+            c1, c2, c3 = st.columns(3)
+            c1.number_input("已結算營收 (全月)", min_value=0, step=100, key="input_rest_mrev")
+            c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent")
+            c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp")
 
-        col_rest1, col_rest2 = st.columns(2)
-        col_rest1.number_input("The Peak 當日來客數", min_value=0,
-                               step=1, key="input_peak_act", on_change=on_input_change)
-        col_rest2.number_input("Happy Hour 當日來客數", min_value=0,
-                               step=1, key="input_hh_act", on_change=on_input_change)
+            col_rest1, col_rest2 = st.columns(2)
+            col_rest1.number_input("The Peak 當日來客數", min_value=0, step=1, key="input_peak_act")
+            col_rest2.number_input("Happy Hour 當日來客數", min_value=0, step=1, key="input_hh_act")
+
+            if st.form_submit_button("💾 儲存餐廳數據", type="primary", use_container_width=True):
+                sync_st_to_db(date_str)
+                st.success("✅ 餐廳數據已儲存！")
+
 
 if current_hotel != "採購":
     with tab5:
         st.header("🔧 工務數據")
-        st.number_input("今日待修房數", min_value=0, step=1,
-                        key="input_repair", on_change=on_input_change)
-        st.text_area("修繕紀錄", key="input_maint_rec", on_change=on_input_change)
-        st.number_input("工務請購費用", min_value=0, step=100,
-                        key="input_maint_exp", on_change=on_input_change)
+        with st.form(f"form_maint_{date_str}"):
+            st.number_input("今日待修房數", min_value=0, step=1, key="input_repair")
+            st.text_area("修繕紀錄", key="input_maint_rec")
+            st.number_input("工務請購費用", min_value=0, step=100, key="input_maint_exp")
+            if st.form_submit_button("💾 儲存工務數據", type="primary", use_container_width=True):
+                sync_st_to_db(date_str)
+                st.success("✅ 工務數據已儲存！")
 
 if current_hotel != "採購":
     with tab6:
@@ -3210,19 +3201,19 @@ if current_hotel != "採購":
                         st.rerun()
             st.divider()
             st.subheader(f"📋 當日數字手動確認 ({date_str})")
-            rc1, rc2, rc3 = st.columns(3)
-            rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
-                             step=0.1, key="input_occ", on_change=on_input_change)
-            rc2.number_input("ADR (平均房價)", min_value=0, step=10,
-                             key="input_adr", on_change=on_input_change)
-            rc3.number_input("總營收", min_value=0, step=100,
-                             key="input_rev", on_change=on_input_change)
-            rc4, rc5 = st.columns(2)
-            rc4.number_input("總住房數", min_value=0, step=1,
-                             key="input_rooms", on_change=on_input_change)
-            rc5.number_input("櫃台請購費用", min_value=0, step=100,
-                             key="input_counter_exp", on_change=on_input_change)
-            st.text_area("負評客訴", key="input_complaints", on_change=on_input_change)
+            with st.form(f"form_daily_{date_str}"):
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
+                                 step=0.1, key="input_occ")
+                rc2.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr")
+                rc3.number_input("總營收", min_value=0, step=100, key="input_rev")
+                rc4, rc5 = st.columns(2)
+                rc4.number_input("總住房數", min_value=0, step=1, key="input_rooms")
+                rc5.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp")
+                st.text_area("負評客訴", key="input_complaints")
+                if st.form_submit_button("💾 儲存當日數據", type="primary", use_container_width=True):
+                    sync_st_to_db(date_str)
+                    st.success("✅ 當日數據已儲存！")
 
 
         if selected_week != "--- 關閉週預覽 ---":
