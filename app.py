@@ -4647,12 +4647,54 @@ with tab_s:
             col_rename = {'item_name': '品項', 'unit': '單位',
                           'price': f'本期單價 ({latest_period})'}
 
-        show_df = latest_df[display_cols].rename(columns=col_rename)
-
-        # 搜尋過濾
+        # 搜尋過濾與進階選項
         search_kw = st.text_input("🔍 搜尋品項", placeholder="輸入關鍵字，如：高麗菜")
+        
+        sort_col, filter_col = st.columns(2)
+        with sort_col:
+            sort_option = st.selectbox("↕️ 排序方式", [
+                "預設 (不排序)",
+                "💰 本期單價：由高至低",
+                "💰 本期單價：由低至高",
+                "📈 漲幅：由高至低 (漲最多)",
+                "📉 跌幅：由低至高 (跌最多)"
+            ])
+            
+        with filter_col:
+            filter_option = st.selectbox("🏷️ 狀態篩選", [
+                "全部顯示",
+                "🚨 歷史高點",
+                "✅ 歷史低點",
+                "─ 正常區間"
+            ])
+
+        # 1. 套用搜尋
         if search_kw:
-            show_df = show_df[show_df['品項'].str.contains(search_kw, na=False)]
+            latest_df = latest_df[latest_df['item_name'].str.contains(search_kw, na=False)]
+
+        # 2. 套用篩選
+        if filter_option != "全部顯示" and 'ytd_max' in latest_df.columns:
+            is_high = (latest_df['price'] >= latest_df['ytd_max']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
+            is_low = (latest_df['price'] <= latest_df['ytd_min']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
+            
+            if filter_option == "🚨 歷史高點":
+                latest_df = latest_df[is_high]
+            elif filter_option == "✅ 歷史低點":
+                latest_df = latest_df[is_low]
+            elif filter_option == "─ 正常區間":
+                latest_df = latest_df[~(is_high | is_low)]
+
+        # 3. 套用排序
+        if sort_option == "💰 本期單價：由高至低":
+            latest_df = latest_df.sort_values('price', ascending=False)
+        elif sort_option == "💰 本期單價：由低至高":
+            latest_df = latest_df.sort_values('price', ascending=True)
+        elif "漲幅：由高至低" in sort_option and 'change_pct' in latest_df.columns:
+            latest_df = latest_df.sort_values('change_pct', ascending=False)
+        elif "跌幅：由低至高" in sort_option and 'change_pct' in latest_df.columns:
+            latest_df = latest_df.sort_values('change_pct', ascending=True)
+
+        show_df = latest_df[display_cols].rename(columns=col_rename)
 
         if n_periods >= 2:
             st.write(show_df.to_html(escape=False, index=False),
