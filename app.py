@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import datetime
 import pandas as pd
 import time
@@ -135,14 +135,12 @@ def append_thepeak_daily_purchase_report(new_rows_df):
                     target_ws = t
                     break
         except Exception as ce:
-            import streamlit as st
             st.error(f"連線試算表失敗: {ce}")
         
         try:
             df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         except Exception as e:
             if target_ws in str(e) or "WorksheetNotFound" in str(type(e)):
-                import streamlit as st
                 st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。\n目前該試算表有的分頁為: {', '.join(ws_titles)}")
                 return False
             raise e
@@ -156,7 +154,6 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
         return True
     except Exception as e:
-        import streamlit as st
         st.error(f"寫入失敗: {e}")
         return False
 
