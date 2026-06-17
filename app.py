@@ -4901,10 +4901,12 @@ with tab_s:
         df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
         df_order_form['請購數量'] = 0.0
-        df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
+        # 將「請購數量」移到最左邊，避免右上角的搜尋列擋住輸入框
+        df_order_form = df_order_form[['請購數量', '品項名稱', '當期單價', '單位']]
         
         with st.form("daily_order_form"):
             st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫（品項與單價已鎖定防呆）：")
+            st.info("🔍 **快速搜尋提示**：將鼠標移至表格右上角，點擊放大鏡圖示即可快速搜尋品項！")
             edited_df = st.data_editor(
                 df_order_form,
                 disabled=['品項名稱', '當期單價', '單位'],
