@@ -3426,7 +3426,32 @@ with tab_p:
                     hist_bf = past_df['bf_act'].sum()
                     hist_af = past_df['af_act'].sum()
             
-            # 未來客數
+            # 本月歷史早/午比例推算
+            _total_hist_peak = hist_bf + hist_af
+            if _total_hist_peak > 0:
+                _bf_ratio = hist_bf / _total_hist_peak
+                _af_ratio = hist_af / _total_hist_peak
+            else:
+                _bf_ratio = 0.93  # 預設
+                _af_ratio = 0.07
+
+            # 抓取過去 30 天到客率 (轉換率)
+            start_30d = (today_d - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+            end_1d = (today_d - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            fb_30d = compute_fb_mtd(start_30d, end_1d)
+            
+            _bf_30d_est = fb_30d.get('bf_theme_est', 0) + fb_30d.get('bf_zq_est', 0)
+            _bf_30d_act = fb_30d.get('total_act_bf', 0)
+            _default_bf_rate = (_bf_30d_act / _bf_30d_est) if _bf_30d_est > 0 else 1.0
+            
+            _af_30d_est = fb_30d.get('af_theme_est', 0) + fb_30d.get('af_zq_est', 0)
+            _af_30d_act = fb_30d.get('total_act_af', 0)
+            _default_af_rate = (_af_30d_act / _af_30d_est) if _af_30d_est > 0 else 1.0
+            
+            # 未來客數原始數據
+            raw_future_guests = 0
+            raw_future_bf = 0
+            raw_future_af = 0
             if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
                 df_fb_fut = fetch_fb_future_data()
                 if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
@@ -3437,32 +3462,49 @@ with tab_p:
                     calc_start = max(m_start_dt, today_d)
                     fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end_dt)
                     if '數量' in df_fb_fut.columns:
-                        future_guests = df_fb_fut.loc[fut_mask, '數量'].sum()
-            
-            total_est_guests = hist_guests + future_guests
-            # 本月早/午估計比例 (用歷史已知數據推算全月)
-            _total_hist_peak = hist_bf + hist_af
-            if _total_hist_peak > 0:
-                _bf_ratio = hist_bf / _total_hist_peak
-                _af_ratio = hist_af / _total_hist_peak
-            else:
-                _bf_ratio = 0.93  # 預設：早餐佔 93%
-                _af_ratio = 0.07
-            # 本月估計早餐 / 下午茶總人次
-            est_bf_total = int(total_est_guests * _bf_ratio)
-            est_af_total = max(int(total_est_guests * _af_ratio), 1)
+                        _fut_df = df_fb_fut[fut_mask]
+                        raw_future_guests = _fut_df['數量'].sum()
+                        
+                        _meal_col = next((c for c in _fut_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                        if _meal_col:
+                            _bf_kw = ['早', 'breakfast', 'bf']
+                            _af_kw = ['下午', 'afternoon', 'tea', 'af']
+                            _bf_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
+                            _af_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
+                            raw_future_bf = _fut_df.loc[_bf_mask, '數量'].sum()
+                            raw_future_af = _fut_df.loc[_af_mask, '數量'].sum()
+                        else:
+                            raw_future_bf = int(raw_future_guests * _bf_ratio)
+                            raw_future_af = int(raw_future_guests * _af_ratio)
 
-            # 3. UI 呈現
-            col_w1, col_w2 = st.columns([1, 2])
+            # 3. UI 呈現：到客率與 CPG
+            col_w1, col_w2, col_w3 = st.columns([1, 1, 1.5])
             with col_w1:
                 target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
             
+            with col_w2:
+                # 讓用戶可調整折算係數
+                bf_conv_rate = st.slider("⚙️ 早餐到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_bf_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_bf_rate*100:.1f}%\n數值將用於折算未來的早餐人數")
+                af_conv_rate = st.slider("⚙️ 下午茶到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_af_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_af_rate*100:.1f}%\n數值將用於折算未來的下午茶人數")
+            
+            # 套用折算率
+            adj_future_bf = int(raw_future_bf * (bf_conv_rate / 100.0))
+            adj_future_af = int(raw_future_af * (af_conv_rate / 100.0))
+            future_guests = adj_future_bf + adj_future_af
+            
+            total_est_guests = hist_guests + future_guests
+            
+            # 本月估計總人次 (用於 K值系統)
+            est_bf_total = hist_bf + adj_future_bf
+            est_af_total = max(hist_af + adj_future_af, 1)
+
             total_budget = total_est_guests * target_cpg
             remaining_budget = total_budget - peak_spent
             remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
             
-            with col_w2:
-                st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人 (歷史已發生 `{int(hist_guests):,}` + 未來預約 `{int(future_guests):,}`)")
+            with col_w3:
+                st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
+                st.caption(f"└ 歷史發生 `{int(hist_guests):,}` + 未來預約 `{int(raw_future_guests):,}` → 折算 `{int(future_guests):,}`")
                 st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
                 st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
             
@@ -4642,12 +4684,15 @@ with tab_p:
                 has_d = any(d in fw_dual_dates for d in wdates)
                 days_cnt = len(wdates)
                 
+                raw_week_guests = 0
+                raw_week_bf = 0
+                raw_week_af = 0
                 week_guests = 0
                 week_bf = 0
                 week_af = 0
                 if not df_fb_fut.empty and '數量' in df_fb_fut.columns:
                     w_mask = (df_fb_fut['date_obj'] >= ws) & (df_fb_fut['date_obj'] <= we)
-                    week_guests = df_fb_fut.loc[w_mask, '數量'].sum()
+                    raw_week_guests = df_fb_fut.loc[w_mask, '數量'].sum()
                     # 區分早餐 vs 下午茶（依 f&b_data 的「餐別」或「類型」欄位）
                     _meal_col = next((c for c in df_fb_fut.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
                     if _meal_col:
@@ -4655,14 +4700,22 @@ with tab_p:
                         _af_kw = ['下午', 'afternoon', 'tea', 'af']
                         _bf_mask = w_mask & df_fb_fut[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
                         _af_mask = w_mask & df_fb_fut[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
-                        week_bf = df_fb_fut.loc[_bf_mask, '數量'].sum()
-                        week_af = df_fb_fut.loc[_af_mask, '數量'].sum()
+                        raw_week_bf = df_fb_fut.loc[_bf_mask, '數量'].sum()
+                        raw_week_af = df_fb_fut.loc[_af_mask, '數量'].sum()
                     else:
                         # 無餐別欄位：用歷史比例估算
                         _w_bf_r = _bf_ratio if '_bf_ratio' in locals() else 0.93
                         _w_af_r = _af_ratio if '_af_ratio' in locals() else 0.07
-                        week_bf = int(week_guests * _w_bf_r)
-                        week_af = int(week_guests * _w_af_r)
+                        raw_week_bf = int(raw_week_guests * _w_bf_r)
+                        raw_week_af = int(raw_week_guests * _w_af_r)
+                    
+                    # 讀取上方戰情室的折算係數 (如果有)
+                    _w_bf_rate = bf_conv_rate / 100.0 if 'bf_conv_rate' in locals() else 1.0
+                    _w_af_rate = af_conv_rate / 100.0 if 'af_conv_rate' in locals() else 1.0
+                    
+                    week_bf = int(raw_week_bf * _w_bf_rate)
+                    week_af = int(raw_week_af * _w_af_rate)
+                    week_guests = week_bf + week_af
                 
                 total_fut_guests_in_weeks += week_guests
                 
@@ -4671,8 +4724,10 @@ with tab_p:
                 
                 # 2. 計算「戰情室分配限額 (Adjusted Limit)」
                 allocated_limit = 0
-                if overall_future_guests > 0:
-                    guest_ratio = week_guests / overall_future_guests
+                # 使用從 tab_p 傳過來的已折算 future_guests 作為總未來分母
+                _overall_fut = future_guests if 'future_guests' in locals() else overall_future_guests
+                if _overall_fut > 0:
+                    guest_ratio = week_guests / _overall_fut
                     allocated_limit = int(rem_budget_val * guest_ratio)
                 
                 fw_week_plans.append({
@@ -4681,6 +4736,8 @@ with tab_p:
                     'standard_need': standard_need,
                     'allocated_limit': allocated_limit,
                     'week_guests': week_guests,
+                    'raw_week_bf': raw_week_bf,
+                    'raw_week_af': raw_week_af,
                     'week_bf': week_bf,
                     'week_af': week_af,
                     'dual_labels': [d[5:] for d in wdates if d in fw_dual_dates],
@@ -4698,10 +4755,14 @@ with tab_p:
                 std = wp['standard_need']
                 w_bf = wp.get('week_bf', 0)
                 w_af = wp.get('week_af', 0)
+                r_bf = wp.get('raw_week_bf', 0)
+                r_af = wp.get('raw_week_af', 0)
                 
-                # 早/午人次說明文字
-                if w_bf + w_af > 0:
-                    bf_af_label = f"🍳 早餐 <strong>{int(w_bf)}</strong> 人 ／ 🍰 下午茶 <strong>{int(w_af)}</strong> 人"
+                # 早/午人次說明文字 (加入折算資訊)
+                if r_bf + r_af > 0:
+                    bf_label = f"預估 {int(r_bf)} → <span style='color:#3498db;'>{int(w_bf)}</span> 人" if r_bf != w_bf else f"{int(w_bf)} 人"
+                    af_label = f"預估 {int(r_af)} → <span style='color:#3498db;'>{int(w_af)}</span> 人" if r_af != w_af else f"{int(w_af)} 人"
+                    bf_af_label = f"🍳 早餐 {bf_label} ／ 🍰 下午茶 {af_label}"
                 else:
                     bf_af_label = f"合計 <strong>{int(wp['week_guests'])}</strong> 人"
                 
