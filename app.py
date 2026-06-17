@@ -3437,6 +3437,30 @@ with tab_p:
 
             # 過濾 NaT/None
             df_purchase = df_purchase[df_purchase['日期'].notna()]
+            
+            # --- 新增：將 thepeak_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
+            df_daily_report = fetch_thepeak_daily_purchase_report()
+            if not df_daily_report.empty and '總價' in df_daily_report.columns:
+                append_df = pd.DataFrame()
+                if '請購日期' in df_daily_report.columns:
+                    append_df['日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
+                append_df[dept_col] = "The Peak"
+                append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
+                
+                # 嘗試對應品名欄位以顯示在明細中
+                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                if '品項名稱' in df_daily_report.columns:
+                    item_str = df_daily_report['品項名稱'].astype(str)
+                    if '請購數量' in df_daily_report.columns and '單位' in df_daily_report.columns:
+                        item_str += " (" + df_daily_report['請購數量'].astype(str) + " " + df_daily_report['單位'].astype(str) + ")"
+                    
+                    if item_desc_col:
+                        append_df[item_desc_col] = item_str
+                    else:
+                        append_df['備註(系統生成)'] = item_str
+                
+                df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+                df_purchase = df_purchase[df_purchase['日期'].notna()]
 
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
@@ -3459,6 +3483,10 @@ with tab_p:
             # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
             st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
             
+            # --- 新增：Projected CPG 佔位符 ---
+            projected_cpg_container = st.empty()
+            st.markdown("<br>", unsafe_allow_html=True)
+            
             # 1. 計算 The Peak 本月已花費
             peak_spent = 0
             if not df_month.empty:
@@ -3469,21 +3497,6 @@ with tab_p:
                 hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                 peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
                 peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
-            
-            # --- 新增：取得 thepeak_daily_purchase_report 請購花費 ---
-            df_daily_report = fetch_thepeak_daily_purchase_report()
-            daily_report_spent = 0
-            import datetime
-            import calendar
-            if not df_daily_report.empty and '總價' in df_daily_report.columns and '請購日期' in df_daily_report.columns:
-                df_daily_report['請購日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
-                m_start_d = datetime.date(selected_date.year, selected_date.month, 1)
-                _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
-                m_end_d = datetime.date(selected_date.year, selected_date.month, last_d)
-                dr_mask = (df_daily_report['請購日期'] >= m_start_d) & (df_daily_report['請購日期'] <= m_end_d)
-                daily_report_spent = pd.to_numeric(df_daily_report.loc[dr_mask, '總價'], errors='coerce').sum()
-            
-            peak_spent += daily_report_spent
             
             # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
             import datetime
@@ -3583,6 +3596,37 @@ with tab_p:
             total_budget = total_est_guests * target_cpg
             remaining_budget = total_budget - peak_spent
             remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+            
+            # --- 新增：計算 Projected EOM CPG ---
+            expected_future_spend = future_guests * target_cpg
+            projected_eom_cost = peak_spent + expected_future_spend
+            projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
+            cpg_delta = projected_cpg - target_cpg
+            
+            # 根據狀況給予顏色
+            if projected_cpg > target_cpg * 1.05:
+                status_color = "#e74c3c" # Red
+                status_icon = "🚨 嚴重超支預警"
+            elif projected_cpg > target_cpg:
+                status_color = "#f39c12" # Orange
+                status_icon = "⚠️ 輕微超支預警"
+            else:
+                status_color = "#2ecc71" # Green
+                status_icon = "✅ 預算落點安全"
+                
+            projected_cpg_container.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div>
+                    <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
+                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來以目標 CPG 採購做推算</div>
+                </div>
+                <div style="text-align: right;">
+                    <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
+                    <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
             
             with col_w3:
                 st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
