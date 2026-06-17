@@ -97,7 +97,20 @@ def fetch_thepeak_daily_report():
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        df = raw_st.read(worksheet="thepeak_daily_report", spreadsheet=url_st, ttl=0)
+        # 先找正確的分頁名稱 (容許空白或大小寫錯誤)
+        target_ws = "thepeak_daily_report"
+        try:
+            client = raw_st.client
+            sh = client.open_by_url(url_st)
+            ws_titles = [ws.title for ws in sh.worksheets()]
+            for t in ws_titles:
+                if t.strip().lower() == "thepeak_daily_report":
+                    target_ws = t
+                    break
+        except Exception:
+            pass
+            
+        df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         if df is None:
             return pd.DataFrame()
         return df
@@ -111,16 +124,39 @@ def append_thepeak_daily_report(new_rows_df):
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         
-        df_old = raw_st.read(worksheet="thepeak_daily_report", spreadsheet=url_st, ttl=0)
+        target_ws = "thepeak_daily_report"
+        ws_titles = []
+        try:
+            client = raw_st.client
+            sh = client.open_by_url(url_st)
+            ws_titles = [ws.title for ws in sh.worksheets()]
+            for t in ws_titles:
+                if t.strip().lower() == "thepeak_daily_report":
+                    target_ws = t
+                    break
+        except Exception as ce:
+            import streamlit as st
+            st.error(f"連線試算表失敗: {ce}")
+        
+        try:
+            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        except Exception as e:
+            if target_ws in str(e) or "WorksheetNotFound" in str(type(e)):
+                import streamlit as st
+                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。\n目前該試算表有的分頁為: {', '.join(ws_titles)}")
+                return False
+            raise e
+        
         if df_old is None or df_old.empty:
             df_new = new_rows_df
         else:
             # 確保欄位型態一致避免警告，並保留原本所有資料
             df_new = pd.concat([df_old, new_rows_df], ignore_index=True)
             
-        raw_st.update(worksheet="thepeak_daily_report", data=df_new, spreadsheet=url_st)
+        raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
         return True
     except Exception as e:
+        import streamlit as st
         st.error(f"寫入失敗: {e}")
         return False
 
