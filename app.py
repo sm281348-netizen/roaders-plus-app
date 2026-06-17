@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import datetime
 import pandas as pd
 import time
@@ -91,20 +91,20 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
-def fetch_thepeak_daily_report():
-    """讀取 thepeak_daily_report 分頁，不使用快取以確保即時性"""
+def fetch_thepeak_daily_purchase_report():
+    """讀取 thepeak_daily_purchase_report 分頁，不使用快取以確保即時性"""
     try:
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         # 先找正確的分頁名稱 (容許空白或大小寫錯誤)
-        target_ws = "thepeak_daily_report"
+        target_ws = "thepeak_daily_purchase_report"
         try:
             client = raw_st.client
             sh = client.open_by_url(url_st)
             ws_titles = [ws.title for ws in sh.worksheets()]
             for t in ws_titles:
-                if t.strip().lower() == "thepeak_daily_report":
+                if t.strip().lower() == "thepeak_daily_purchase_report":
                     target_ws = t
                     break
         except Exception:
@@ -117,21 +117,21 @@ def fetch_thepeak_daily_report():
     except Exception:
         return pd.DataFrame()
 
-def append_thepeak_daily_report(new_rows_df):
-    """附加新資料到 thepeak_daily_report 分頁"""
+def append_thepeak_daily_purchase_report(new_rows_df):
+    """附加新資料到 thepeak_daily_purchase_report 分頁"""
     try:
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         
-        target_ws = "thepeak_daily_report"
+        target_ws = "thepeak_daily_purchase_report"
         ws_titles = []
         try:
             client = raw_st.client
             sh = client.open_by_url(url_st)
             ws_titles = [ws.title for ws in sh.worksheets()]
             for t in ws_titles:
-                if t.strip().lower() == "thepeak_daily_report":
+                if t.strip().lower() == "thepeak_daily_purchase_report":
                     target_ws = t
                     break
         except Exception as ce:
@@ -3473,8 +3473,8 @@ with tab_p:
                 peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
                 peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
             
-            # --- 新增：取得 thepeak_daily_report 請購花費 ---
-            df_daily_report = fetch_thepeak_daily_report()
+            # --- 新增：取得 thepeak_daily_purchase_report 請購花費 ---
+            df_daily_report = fetch_thepeak_daily_purchase_report()
             daily_report_spent = 0
             import datetime
             import calendar
@@ -5014,7 +5014,7 @@ with tab_s:
                 final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 with st.spinner("正在將請購單寫入資料庫..."):
-                    success = append_thepeak_daily_report(final_order_df)
+                    success = append_thepeak_daily_purchase_report(final_order_df)
                     if success:
                         st.session_state.purchase_cart = {} # 送出後清空購物車
                         st.success(f"✅ 請購單送出成功！本次共採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
