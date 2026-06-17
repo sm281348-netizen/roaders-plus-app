@@ -4900,7 +4900,7 @@ with tab_s:
         # 準備 data_editor 的資料結構
         df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
-        df_order_form['請購數量'] = 0
+        df_order_form['請購數量'] = 0.0
         df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
         
         with st.form("daily_order_form"):
@@ -4913,9 +4913,10 @@ with tab_s:
                 column_config={
                     "請購數量": st.column_config.NumberColumn(
                         "請購數量",
-                        min_value=0,
-                        step=1,
-                        help="請填入大於 0 的整數數量"
+                        min_value=0.0,
+                        step=0.1,
+                        format="%.1f",
+                        help="請填寫大於 0 的數量 (支援小數，例如 0.5 斤)"
                     )
                 }
             )
