@@ -91,6 +91,40 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
+def fetch_thepeak_daily_report():
+    """讀取 thepeak_daily_report 分頁，不使用快取以確保即時性"""
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        df = raw_st.read(worksheet="thepeak_daily_report", spreadsheet=url_st, ttl=0)
+        if df is None:
+            return pd.DataFrame()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def append_thepeak_daily_report(new_rows_df):
+    """附加新資料到 thepeak_daily_report 分頁"""
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        
+        df_old = raw_st.read(worksheet="thepeak_daily_report", spreadsheet=url_st, ttl=0)
+        if df_old is None or df_old.empty:
+            df_new = new_rows_df
+        else:
+            # 確保欄位型態一致避免警告，並保留原本所有資料
+            df_new = pd.concat([df_old, new_rows_df], ignore_index=True)
+            
+        raw_st.update(worksheet="thepeak_daily_report", data=df_new, spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"寫入失敗: {e}")
+        return False
+
+
 def get_market_index_df(sp_df):
     """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame"""
     if sp_df is None or sp_df.empty:
@@ -3403,6 +3437,21 @@ with tab_p:
                 peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
                 peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
             
+            # --- 新增：取得 thepeak_daily_report 請購花費 ---
+            df_daily_report = fetch_thepeak_daily_report()
+            daily_report_spent = 0
+            import datetime
+            import calendar
+            if not df_daily_report.empty and '總價' in df_daily_report.columns and '請購日期' in df_daily_report.columns:
+                df_daily_report['請購日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
+                m_start_d = datetime.date(selected_date.year, selected_date.month, 1)
+                _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
+                m_end_d = datetime.date(selected_date.year, selected_date.month, last_d)
+                dr_mask = (df_daily_report['請購日期'] >= m_start_d) & (df_daily_report['請購日期'] <= m_end_d)
+                daily_report_spent = pd.to_numeric(df_daily_report.loc[dr_mask, '總價'], errors='coerce').sum()
+            
+            peak_spent += daily_report_spent
+            
             # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
             import datetime
             import calendar
@@ -4836,6 +4885,61 @@ with tab_s:
 
         st.caption(
             f"📋 目前共有 **{n_periods}** 期菜價資料（{periods_str[0]} ～ {periods_str[-1]}）｜共 {len(sp_df['item_name'].unique())} 個品項")
+
+        # ── 0. 📝 填寫本日請購單 ─────────────────────────
+        st.markdown("### 📝 填寫本日請購單")
+        st.caption("💡 於此處填寫當日請購數量，總金額將自動匯入戰情室「本月餐廳已花費」中進行預算連動。")
+        
+        latest_period = periods_available[-1]
+        df_latest = sp_df[sp_df['period_dt'] == latest_period].copy()
+        
+        # UI: 日期選擇器
+        import datetime
+        order_date = st.date_input("📅 請購日期 (預設為今日)", value=datetime.date.today())
+        
+        # 準備 data_editor 的資料結構
+        df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
+        df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
+        df_order_form['請購數量'] = 0
+        df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
+        
+        with st.form("daily_order_form"):
+            st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫（品項與單價已鎖定防呆）：")
+            edited_df = st.data_editor(
+                df_order_form,
+                disabled=['品項名稱', '當期單價', '單位'],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "請購數量": st.column_config.NumberColumn(
+                        "請購數量",
+                        min_value=0,
+                        step=1,
+                        help="請填入大於 0 的整數數量"
+                    )
+                }
+            )
+            
+            # 計算目前選取的總金額預覽
+            edited_df['總價'] = edited_df['當期單價'] * edited_df['請購數量']
+            current_total = edited_df['總價'].sum()
+            st.markdown(f"**本次請購預估總金額：** <span style='color:#e74c3c; font-size:1.2rem; font-weight:bold;'>NT$ {int(current_total):,}</span>", unsafe_allow_html=True)
+            
+            submitted = st.form_submit_button("🚀 確認送出請購單", type="primary")
+            if submitted:
+                if current_total <= 0:
+                    st.warning("⚠️ 請至少填寫一項大於 0 的請購數量！")
+                else:
+                    final_order_df = edited_df[edited_df['請購數量'] > 0].copy()
+                    final_order_df.insert(0, '請購日期', order_date.strftime("%Y-%m-%d"))
+                    final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    with st.spinner("正在將請購單寫入資料庫..."):
+                        success = append_thepeak_daily_report(final_order_df)
+                        if success:
+                            st.success(f"✅ 請購單送出成功！本次共採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
+        
+        st.divider()
 
         # ── A. 菜商物價指數 ──────────────────────────────
         if n_periods >= 2:
