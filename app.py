@@ -4900,47 +4900,88 @@ with tab_s:
         # 準備 data_editor 的資料結構
         df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
-        df_order_form['請購數量'] = 0.0
-        # 將「請購數量」移到最左邊，避免右上角的搜尋列擋住輸入框
-        df_order_form = df_order_form[['請購數量', '品項名稱', '當期單價', '單位']]
+        # 初始化購物車
+        if 'purchase_cart' not in st.session_state:
+            st.session_state.purchase_cart = {}
+            
+        # 獨立的搜尋框，避免遮擋
+        search_term = st.text_input("🔍 搜尋品項名稱", "", help="輸入關鍵字即可過濾下方表格")
         
-        with st.form("daily_order_form"):
-            st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫（品項與單價已鎖定防呆）：")
-            st.info("🔍 **快速搜尋提示**：將鼠標移至表格右上角，點擊放大鏡圖示即可快速搜尋品項！")
-            edited_df = st.data_editor(
-                df_order_form,
-                disabled=['品項名稱', '當期單價', '單位'],
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "請購數量": st.column_config.NumberColumn(
-                        "請購數量",
-                        min_value=0.0,
-                        step=0.1,
-                        format="%.1f",
-                        help="請填寫大於 0 的數量 (支援小數，例如 0.5 斤)"
-                    )
-                }
-            )
+        # 準備資料與過濾
+        df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
+        if search_term:
+            df_order_form = df_order_form[df_order_form['item_name'].str.contains(search_term, na=False, case=False)]
             
-            # 計算目前選取的總金額預覽
-            edited_df['總價'] = edited_df['當期單價'] * edited_df['請購數量']
-            current_total = edited_df['總價'].sum()
-            st.markdown(f"**本次請購預估總金額：** <span style='color:#e74c3c; font-size:1.2rem; font-weight:bold;'>NT$ {int(current_total):,}</span>", unsafe_allow_html=True)
+        # 帶入購物車數量
+        df_order_form['請購數量'] = df_order_form['item_name'].apply(lambda x: st.session_state.purchase_cart.get(x, 0.0))
+        df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
+        df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
+        
+        st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫：")
+        edited_df = st.data_editor(
+            df_order_form,
+            disabled=['品項名稱', '當期單價', '單位'],
+            hide_index=True,
+            use_container_width=True,
+            key=f"editor_{search_term}", # 當搜尋改變時強制重新渲染，避免狀態衝突
+            column_config={
+                "請購數量": st.column_config.NumberColumn(
+                    "請購數量",
+                    min_value=0.0,
+                    step=0.1,
+                    format="%.1f",
+                    help="請填寫大於 0 的數量 (支援小數)"
+                )
+            }
+        )
+        
+        # 將編輯結果寫回購物車
+        for _, row in edited_df.iterrows():
+            item = row['品項名稱']
+            qty = row['請購數量']
+            if qty > 0:
+                st.session_state.purchase_cart[item] = qty
+            elif item in st.session_state.purchase_cart:
+                del st.session_state.purchase_cart[item]
+                
+        # 結算與已選清單
+        final_order_list = []
+        current_total = 0
+        for item, qty in st.session_state.purchase_cart.items():
+            price_series = df_latest.loc[df_latest['item_name'] == item, 'price']
+            if not price_series.empty:
+                price = price_series.values[0]
+                unit = df_latest.loc[df_latest['item_name'] == item, 'unit'].values[0]
+                cost = price * qty
+                current_total += cost
+                final_order_list.append({
+                    '品項名稱': item,
+                    '當期單價': price,
+                    '單位': unit,
+                    '請購數量': qty,
+                    '總價': cost
+                })
+        
+        if final_order_list:
+            st.markdown("### 🛒 目前已選購清單")
+            st.dataframe(pd.DataFrame(final_order_list)[['品項名稱', '當期單價', '單位', '請購數量', '總價']], hide_index=True, use_container_width=True)
             
-            submitted = st.form_submit_button("🚀 確認送出請購單", type="primary")
-            if submitted:
-                if current_total <= 0:
-                    st.warning("⚠️ 請至少填寫一項大於 0 的請購數量！")
-                else:
-                    final_order_df = edited_df[edited_df['請購數量'] > 0].copy()
-                    final_order_df.insert(0, '請購日期', order_date.strftime("%Y-%m-%d"))
-                    final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    with st.spinner("正在將請購單寫入資料庫..."):
-                        success = append_thepeak_daily_report(final_order_df)
-                        if success:
-                            st.success(f"✅ 請購單送出成功！本次共採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
+        st.markdown(f"**本次請購預估總金額：** <span style='color:#e74c3c; font-size:1.2rem; font-weight:bold;'>NT$ {int(current_total):,}</span>", unsafe_allow_html=True)
+        
+        submitted = st.button("🚀 確認送出請購單", type="primary")
+        if submitted:
+            if current_total <= 0:
+                st.warning("⚠️ 購物車是空的，請至少填寫一項大於 0 的數量！")
+            else:
+                final_order_df = pd.DataFrame(final_order_list)
+                final_order_df.insert(0, '請購日期', order_date.strftime("%Y-%m-%d"))
+                final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                with st.spinner("正在將請購單寫入資料庫..."):
+                    success = append_thepeak_daily_report(final_order_df)
+                    if success:
+                        st.session_state.purchase_cart = {} # 送出後清空購物車
+                        st.success(f"✅ 請購單送出成功！本次共採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
         
         st.divider()
 
