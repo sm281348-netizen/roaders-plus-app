@@ -4124,7 +4124,7 @@ with tab_p:
 
                     # 合併來客數與週均攤成本
                     analysis_df = df_daily_rest[[
-                        '日期_obj', 'effective_peak_guests', 'rest_hh_guests', 'revenue']].copy()
+                        '日期_obj', 'effective_peak_guests', 'bf_act', 'af_act', 'rest_hh_guests', 'revenue', '日期_str']].copy()
                     analysis_df['peak_cost'] = analysis_df['日期_obj'].map(
                         peak_spread).fillna(0)
                     analysis_df['hh_cost'] = analysis_df['日期_obj'].map(
@@ -4483,15 +4483,31 @@ with tab_p:
 
                         # 計算雙冠日 CPG
                         dual_peak_cost = df_dual['peak_cost'].sum()
-                        dual_peak_guests = df_dual['effective_peak_guests'].sum(
-                        )
+                        dual_peak_guests = df_dual['effective_peak_guests'].sum()
                         dual_cpg = dual_peak_cost / dual_peak_guests if dual_peak_guests > 0 else 0
+                        
+                        dual_bf = df_dual['bf_act'].sum()
+                        dual_af = df_dual['af_act'].sum()
+                        if dual_bf + k_val * dual_af > 0:
+                            dual_cb = (dual_bf + dual_af) * dual_cpg / (dual_bf + k_val * dual_af)
+                            dual_ca = k_val * dual_cb
+                        else:
+                            dual_cb = dual_cpg
+                            dual_ca = dual_cpg
 
                         # 計算一般日 CPG
                         normal_peak_cost = df_normal['peak_cost'].sum()
-                        normal_peak_guests = df_normal['effective_peak_guests'].sum(
-                        )
+                        normal_peak_guests = df_normal['effective_peak_guests'].sum()
                         normal_cpg = normal_peak_cost / normal_peak_guests if normal_peak_guests > 0 else 0
+                        
+                        normal_bf = df_normal['bf_act'].sum()
+                        normal_af = df_normal['af_act'].sum()
+                        if normal_bf + k_val * normal_af > 0:
+                            normal_cb = (normal_bf + normal_af) * normal_cpg / (normal_bf + k_val * normal_af)
+                            normal_ca = k_val * normal_cb
+                        else:
+                            normal_cb = normal_cpg
+                            normal_ca = normal_cpg
 
                         cpg_col1, cpg_col2 = st.columns(2)
 
@@ -4499,7 +4515,11 @@ with tab_p:
                             st.markdown(f"""
                             <div style="background:#fff5e6; border-left:4px solid #e67e22; padding:15px; border-radius:8px;">
                                 <p style="margin:0; font-size:13px; color:#e67e22; font-weight:bold;">🏆 雙冠日 (共 {len(df_dual)} 天)</p>
-                                <h3 style="margin:5px 0;">NT$ {int(dual_cpg):,} / 客</h3>
+                                <h3 style="margin:5px 0;">總平均 NT$ {int(dual_cpg):,} / 客</h3>
+                                <div style="display:flex; gap:10px; margin: 10px 0;">
+                                    <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${dual_cb:.1f}</span></div>
+                                    <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${dual_ca:.1f}</span></div>
+                                </div>
                                 <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(dual_peak_cost):,} | 服務客數: {int(dual_peak_guests):,} 人</p>
                             </div>
                             """, unsafe_allow_html=True)
@@ -4508,7 +4528,11 @@ with tab_p:
                             st.markdown(f"""
                             <div style="background:#f8f9fa; border-left:4px solid #95a5a6; padding:15px; border-radius:8px;">
                                 <p style="margin:0; font-size:13px; color:#7f8c8d; font-weight:bold;">📉 一般日 (共 {len(df_normal)} 天)</p>
-                                <h3 style="margin:5px 0;">NT$ {int(normal_cpg):,} / 客</h3>
+                                <h3 style="margin:5px 0;">總平均 NT$ {int(normal_cpg):,} / 客</h3>
+                                <div style="display:flex; gap:10px; margin: 10px 0;">
+                                    <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${normal_cb:.1f}</span></div>
+                                    <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${normal_ca:.1f}</span></div>
+                                </div>
                                 <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(normal_peak_cost):,} | 服務客數: {int(normal_peak_guests):,} 人</p>
                             </div>
                             """, unsafe_allow_html=True)
