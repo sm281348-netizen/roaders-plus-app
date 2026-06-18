@@ -3961,19 +3961,23 @@ with tab_p:
                     df_daily_rest['日期_dt'] = pd.to_datetime(
                         df_daily_rest['date'])
 
-                    def spread_weekly_cost(df_purchase, df_daily_base):
+                    def spread_weekly_cost(df_purchase_input, df_daily_base):
                         """將採購費用以週為單位，均攤到當週有來客的每一天"""
-                        if df_purchase.empty or df_daily_base.empty:
+                        if df_purchase_input.empty or df_daily_base.empty:
                             return pd.Series(0, index=df_daily_base['日期_obj'])
 
                         # 加上 ISO 週別
-                        df_purchase = df_purchase.copy()
-                        df_purchase['week'] = pd.to_datetime(
-                            df_purchase['日期']).dt.isocalendar().week.astype(int)
-                        df_purchase['year'] = pd.to_datetime(
-                            df_purchase['日期']).dt.isocalendar().year.astype(int)
-                        weekly_cost = df_purchase.groupby(['year', 'week'])[
-                            '小計'].sum().reset_index()
+                        df_purchase_local = df_purchase_input.copy()
+                        df_purchase_local['week'] = pd.to_datetime(
+                            df_purchase_local['日期']).dt.isocalendar().week.astype(int)
+                        df_purchase_local['year'] = pd.to_datetime(
+                            df_purchase_local['日期']).dt.isocalendar().year.astype(int)
+                            
+                        # 確保數值型態
+                        df_purchase_local[total_col] = pd.to_numeric(df_purchase_local[total_col], errors='coerce').fillna(0)
+                        
+                        weekly_cost = df_purchase_local.groupby(['year', 'week'])[
+                            total_col].sum().reset_index()
 
                         df_base = df_daily_base.copy()
                         df_base['week'] = df_base['日期_dt'].dt.isocalendar(
@@ -3994,7 +3998,7 @@ with tab_p:
                                            'year', 'week'], how='left').fillna(0)
                         df_base = pd.merge(df_base, days_per_week, on=[
                                            'year', 'week'], how='left')
-                        df_base['spread_cost'] = df_base['小計'] / \
+                        df_base['spread_cost'] = df_base[total_col] / \
                             df_base['active_days']
 
                         return df_base.set_index('日期_obj')['spread_cost']
