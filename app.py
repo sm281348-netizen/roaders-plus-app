@@ -714,8 +714,9 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
 
     rows = []
     try:
-        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
-        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        conn_name = "gsheets_theme" if _dummy_hotel == "主題館" else "gsheets_station"
+        raw_st = st.connection(conn_name, type=GSheetsConnection)
+        url_st = st.secrets["connections"][conn_name]["spreadsheet"]
         c_st = _ConnWrapper(raw_st, url_st)
         df_report = c_st.read(worksheet="f&b_report", ttl=0)
         if df_report is not None and not df_report.empty:
@@ -744,7 +745,7 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
     return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
 
 @st.cache_data(ttl=300)
-def fetch_fb_future_data():
+def fetch_fb_future_data(hotel_type="站前館"):
     """
     從 f&b_data 讀取包含未來的 F&B 預約客數明細。
     回傳清理後的 DataFrame。
@@ -753,8 +754,9 @@ def fetch_fb_future_data():
     import re
     from streamlit_gsheets import GSheetsConnection
     try:
-        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
-        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        conn_name = "gsheets_theme" if hotel_type == "主題館" else "gsheets_station"
+        raw_st = st.connection(conn_name, type=GSheetsConnection)
+        url_st = st.secrets["connections"][conn_name]["spreadsheet"]
         c_st = _ConnWrapper(raw_st, url_st)
         df = c_st.read(worksheet="f&b_data", ttl=0)
         
@@ -778,7 +780,39 @@ def fetch_fb_future_data():
         pass
     return pd.DataFrame()
 
+def get_combined_fb_daily_df(year, month, current_hotel):
+    import pandas as pd
+    df_st = fetch_fb_daily_df(year, month, _dummy_hotel="站前館")
+    df_th = fetch_fb_daily_df(year, month, _dummy_hotel="主題館")
+    
+    if df_st.empty and df_th.empty:
+        return pd.DataFrame()
+    if df_st.empty:
+        df_st = pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
+    if df_th.empty:
+        df_th = pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
+        
+    df_concat = pd.concat([df_st, df_th], ignore_index=True)
+    if df_concat.empty:
+        return pd.DataFrame()
+        
+    df_combined = df_concat.groupby('date', as_index=False)[['bf_act', 'af_act', 'peak_guests']].sum()
+    
+    df_primary = df_th if current_hotel == "主題館" else df_st
+    if not df_primary.empty and 'date' in df_primary.columns and 'hh_act' in df_primary.columns:
+        df_hh = df_primary[['date', 'hh_act']]
+        df_combined = pd.merge(df_combined, df_hh, on='date', how='left')
+    else:
+        df_combined['hh_act'] = 0
+        
+    df_combined['hh_act'] = df_combined['hh_act'].fillna(0)
+    return df_combined
 
+def get_combined_fb_future_data():
+    import pandas as pd
+    df_st = fetch_fb_future_data(hotel_type="站前館")
+    df_th = fetch_fb_future_data(hotel_type="主題館")
+    return pd.concat([df_st, df_th], ignore_index=True)
 
 
 
@@ -3614,8 +3648,8 @@ with tab_p:
             hist_af = 0
             hist_hh = 0
             
-            # 歷史客數 (拆分早餐/下午茶)
-            df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
+            # 歷史客數 (拆分早餐/下午茶) - 使用兩館加總資料
+            df_fb_hist = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
             if not df_fb_hist.empty:
                 df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
                 if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
@@ -3659,7 +3693,7 @@ with tab_p:
             raw_future_bf = 0
             raw_future_af = 0
             if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
-                df_fb_fut = fetch_fb_future_data()
+                df_fb_fut = get_combined_fb_future_data()
                 if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
                     df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
                     _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
@@ -4002,8 +4036,8 @@ with tab_p:
                 df_daily_rest = m_data['df']
 
                 # 【關鍵修正】occ_data 沒有 F&B 欄位，直接從 f&b_report 注入每日來客數
-                df_fb_daily = fetch_fb_daily_df(
-                    selected_date.year, selected_date.month, _dummy_hotel=current_hotel)
+                df_fb_daily = get_combined_fb_daily_df(
+                    selected_date.year, selected_date.month, current_hotel)
                 if not df_fb_daily.empty and not df_daily_rest.empty:
                     df_daily_rest = df_daily_rest.merge(df_fb_daily, on='date', how='left')
                     df_daily_rest['bf_act']      = df_daily_rest['bf_act'].fillna(0)
@@ -4930,7 +4964,7 @@ with tab_p:
 
     if is_cur_or_fut:
         # 新邏輯：直接讀取未來的預約資料
-        df_fb_fut = fetch_fb_future_data()
+        df_fb_fut = get_combined_fb_future_data()
         if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
             df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
         else:
