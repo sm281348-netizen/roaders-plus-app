@@ -4124,7 +4124,7 @@ with tab_p:
 
                     # 合併來客數與週均攤成本
                     analysis_df = df_daily_rest[[
-                        '日期_obj', 'effective_peak_guests', 'bf_act', 'af_act', 'rest_hh_guests', 'revenue', '日期_str']].copy()
+                        '日期_obj', 'effective_peak_guests', 'bf_act', 'af_act', 'rest_hh_guests', 'revenue']].copy()
                     analysis_df['peak_cost'] = analysis_df['日期_obj'].map(
                         peak_spread).fillna(0)
                     analysis_df['hh_cost'] = analysis_df['日期_obj'].map(
