@@ -3689,7 +3689,6 @@ with tab_p:
                 <div style="flex: 1;">
                     <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
                     <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來以目標 CPG 採購推算</div>
-                    
                     <div style="display:flex; gap: 15px; margin-top: 15px;">
                         <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
                             <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐成本</span><br>
