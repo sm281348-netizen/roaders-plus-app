@@ -5173,9 +5173,6 @@ with tab_s:
         st.markdown("### 📝 填寫本日請購單")
         st.caption("💡 於此處填寫當日請購數量，總金額將自動匯入戰情室「本月餐廳已花費」中進行預算連動。")
         
-        latest_period = periods_available[-1]
-        df_latest = sp_df[sp_df['period_dt'] == latest_period].copy()
-        
         # UI: 日期選擇器與部門選擇器
         import datetime
         col_d1, col_d2 = st.columns(2)
@@ -5184,8 +5181,22 @@ with tab_s:
         with col_d2:
             order_dept = st.selectbox("🏢 請購部門", ["The Peak (餐廳)", "Happy Hour (HH)"])
         
+        # 根據請購日期，尋找對應的菜價期數 (尋找小於等於請購日期的最新一期菜價)
+        order_date_pd = pd.to_datetime(order_date).date()
+        valid_periods = [p for p in periods_available if p <= order_date_pd]
+        
+        if valid_periods:
+            target_period = max(valid_periods)
+        else:
+            # 如果請購日期比所有菜價表都早，就拿最舊的一期
+            target_period = min(periods_available)
+            
+        df_target = sp_df[sp_df['period_dt'] == target_period].copy()
+        
+        st.info(f"ℹ️ 系統已自動判斷並載入 **{target_period}** 的菜價表作為計價基礎。")
+        
         # 準備 data_editor 的資料結構
-        df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
+        df_order_form = df_target[['item_name', 'price', 'unit']].copy()
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
         # 初始化購物車
         if 'purchase_cart' not in st.session_state:
@@ -5195,7 +5206,7 @@ with tab_s:
         search_term = st.text_input("🔍 搜尋品項名稱", "", help="輸入關鍵字即可過濾下方表格")
         
         # 準備資料與過濾
-        df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
+        df_order_form = df_target[['item_name', 'price', 'unit']].copy()
         if search_term:
             df_order_form = df_order_form[df_order_form['item_name'].str.contains(search_term, na=False, case=False)]
             
