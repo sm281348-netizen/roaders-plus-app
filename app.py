@@ -3796,15 +3796,24 @@ with tab_p:
                             <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶成本</span><br>
                             <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
                         </div>
-                        <div style="background: rgba(155, 89, 182, 0.15); border: 1px solid rgba(155, 89, 182, 0.3); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">🥂 預估 HH 成本 (基於 MTD)</span><br>
-                            <span style="font-size:1.2rem; font-weight:bold; color:#9b59b6;">NT$ {hh_projected_cpg:.1f}</span>
-                        </div>
                     </div>
                 </div>
                 <div style="text-align: right; padding-left: 20px;">
                     <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
                     <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # --- 獨立顯示 HH 預估落點 ---
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #2c1a40 0%, #4a2b66 100%); padding: 15px 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin-top: 15px;">
+                <div style="flex: 1;">
+                    <h3 style="margin:0; color:#ecf0f1; font-size:1.1rem;">🥂 Happy Hour 預估落點單客成本</h3>
+                    <div style="font-size:0.85rem; color:#bdc3c7; margin-top:5px;">基於目前累積 HH 花費 <b>NT${int(hh_spent):,}</b> 與 MTD 累積客數推算，與 The Peak 完全獨立計算。</div>
+                </div>
+                <div style="text-align: right; padding-left: 20px;">
+                    <h1 style="margin:0; color:#d2b4de; font-size:2.4rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {hh_projected_cpg:.1f}</h1>
                 </div>
             </div>
             """, unsafe_allow_html=True)
