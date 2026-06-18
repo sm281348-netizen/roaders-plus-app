@@ -3614,20 +3614,7 @@ with tab_p:
                 status_color = "#2ecc71" # Green
                 status_icon = "✅ 預算落點安全"
                 
-            projected_cpg_container.markdown(f"""
-            <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-                <div>
-                    <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
-                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來以目標 CPG 採購做推算</div>
-                </div>
-                <div style="text-align: right;">
-                    <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
-                    <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            
+            # 渲染將延後至 k 值計算完成後
             with col_w3:
                 st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
                 st.caption(f"└ 歷史發生 `{int(hist_guests):,}` + 未來預約 `{int(raw_future_guests):,}` → 折算 `{int(future_guests):,}`")
@@ -3688,6 +3675,38 @@ with tab_p:
                 ca = T
 
             _check = (B * cb + A * ca) / (B + A) if (B + A) > 0 else 0
+            
+            # 延後渲染的 Projected CPG 大面板 (現在加入了基於 k 值的早午預估拆分)
+            if B + k_val * A > 0:
+                proj_cb = (B + A) * projected_cpg / (B + k_val * A)
+                proj_ca = k_val * proj_cb
+            else:
+                proj_cb = projected_cpg
+                proj_ca = projected_cpg
+
+            projected_cpg_container.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div style="flex: 1;">
+                    <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
+                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來以目標 CPG 採購推算</div>
+                    
+                    <div style="display:flex; gap: 15px; margin-top: 15px;">
+                        <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
+                            <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐成本</span><br>
+                            <span style="font-size:1.2rem; font-weight:bold; color:#2ecc71;">NT$ {proj_cb:.1f}</span>
+                        </div>
+                        <div style="background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.3); padding: 8px 15px; border-radius: 8px;">
+                            <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶成本</span><br>
+                            <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="text-align: right; padding-left: 20px;">
+                    <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
+                    <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
             with k_col2:
                 cb_color = "#27ae60" if cb >= 100 else ("#f39c12" if cb >= CB_MIN else "#e74c3c")
