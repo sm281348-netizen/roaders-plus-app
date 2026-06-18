@@ -158,6 +158,71 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         return False
 
 
+def fetch_4fhh_daily_purchase_report():
+    """讀取 4FHH_daily_purchase_report 分頁，不使用快取以確保即時性"""
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        # 先找正確的分頁名稱 (容許空白或大小寫錯誤)
+        target_ws = "4FHH_daily_purchase_report"
+        try:
+            client = raw_st.client
+            sh = client.open_by_url(url_st)
+            ws_titles = [ws.title for ws in sh.worksheets()]
+            for t in ws_titles:
+                if t.strip().lower() == "4fhh_daily_purchase_report":
+                    target_ws = t
+                    break
+        except Exception:
+            pass
+            
+        df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        if df is None:
+            return pd.DataFrame()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def append_4fhh_daily_purchase_report(new_rows_df):
+    """附加新資料到 4FHH_daily_purchase_report 分頁"""
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        
+        target_ws = "4FHH_daily_purchase_report"
+        ws_titles = []
+        try:
+            client = raw_st.client
+            sh = client.open_by_url(url_st)
+            ws_titles = [ws.title for ws in sh.worksheets()]
+            for t in ws_titles:
+                if t.strip().lower() == "4fhh_daily_purchase_report":
+                    target_ws = t
+                    break
+        except Exception as ce:
+            st.error(f"連線試算表失敗: {ce}")
+        
+        try:
+            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        except Exception as e:
+            if target_ws in str(e) or "WorksheetNotFound" in str(type(e)):
+                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。\n目前該試算表有的分頁為: {', '.join(ws_titles)}")
+                return False
+            raise e
+        
+        if df_old is None or df_old.empty:
+            df_new = new_rows_df
+        else:
+            # 確保欄位型態一致避免警告，並保留原本所有資料
+            df_new = pd.concat([df_old, new_rows_df], ignore_index=True)
+            
+        raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"寫入失敗: {e}")
+        return False
 def get_market_index_df(sp_df):
     """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame"""
     if sp_df is None or sp_df.empty:
@@ -3462,6 +3527,30 @@ with tab_p:
                 df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
                 df_purchase = df_purchase[df_purchase['日期'].notna()]
 
+            # --- 新增：將 4FHH_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
+            df_hh_report = fetch_4fhh_daily_purchase_report()
+            if not df_hh_report.empty and '總價' in df_hh_report.columns:
+                append_hh_df = pd.DataFrame()
+                if '請購日期' in df_hh_report.columns:
+                    append_hh_df['日期'] = pd.to_datetime(df_hh_report['請購日期'], errors='coerce').dt.date
+                append_hh_df[dept_col] = "Happy Hour"
+                append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
+                
+                # 嘗試對應品名欄位以顯示在明細中
+                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                if '品項名稱' in df_hh_report.columns:
+                    item_str = df_hh_report['品項名稱'].astype(str)
+                    if '請購數量' in df_hh_report.columns and '單位' in df_hh_report.columns:
+                        item_str += " (" + df_hh_report['請購數量'].astype(str) + " " + df_hh_report['單位'].astype(str) + ")"
+                    
+                    if item_desc_col:
+                        append_hh_df[item_desc_col] = item_str
+                    else:
+                        append_hh_df['備註(系統生成)'] = item_str
+                
+                df_purchase = pd.concat([df_purchase, append_hh_df], ignore_index=True)
+                df_purchase = df_purchase[df_purchase['日期'].notna()]
+
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
             import calendar
@@ -3489,6 +3578,7 @@ with tab_p:
             
             # 1. 計算 The Peak 本月已花費
             peak_spent = 0
+            hh_spent = 0
             if not df_month.empty:
                 _df_m_tmp = df_month.copy()
                 _df_m_tmp['小計'] = pd.to_numeric(_df_m_tmp[total_col], errors='coerce').fillna(0)
@@ -3497,6 +3587,7 @@ with tab_p:
                 hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                 peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
                 peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
+                hh_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(hh_m)]['小計'].sum()
             
             # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
             import datetime
@@ -3506,6 +3597,7 @@ with tab_p:
             future_guests = 0
             hist_bf = 0
             hist_af = 0
+            hist_hh = 0
             
             # 歷史客數 (拆分早餐/下午茶)
             df_fb_hist = fetch_fb_daily_df(selected_date.year, selected_date.month)
@@ -3515,11 +3607,15 @@ with tab_p:
                     hist_guests = df_fb_hist['peak_guests'].sum()
                     hist_bf = df_fb_hist['bf_act'].sum()
                     hist_af = df_fb_hist['af_act'].sum()
+                    if 'hh_act' in df_fb_hist.columns:
+                        hist_hh = df_fb_hist['hh_act'].sum()
                 elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
                     past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
                     hist_guests = past_df['peak_guests'].sum()
                     hist_bf = past_df['bf_act'].sum()
                     hist_af = past_df['af_act'].sum()
+                    if 'hh_act' in past_df.columns:
+                        hist_hh = past_df['hh_act'].sum()
             
             # 本月歷史早/午比例推算
             _total_hist_peak = hist_bf + hist_af
@@ -3684,6 +3780,8 @@ with tab_p:
                 proj_cb = projected_cpg
                 proj_ca = projected_cpg
 
+            hh_projected_cpg = hh_spent / hist_hh if hist_hh > 0 else 0
+
             projected_cpg_container.markdown(f"""
             <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
                 <div style="flex: 1;">
@@ -3697,6 +3795,10 @@ with tab_p:
                         <div style="background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.3); padding: 8px 15px; border-radius: 8px;">
                             <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶成本</span><br>
                             <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
+                        </div>
+                        <div style="background: rgba(155, 89, 182, 0.15); border: 1px solid rgba(155, 89, 182, 0.3); padding: 8px 15px; border-radius: 8px;">
+                            <span style="font-size:0.8rem; color:#ecf0f1;">🥂 預估 HH 成本 (基於 MTD)</span><br>
+                            <span style="font-size:1.2rem; font-weight:bold; color:#9b59b6;">NT$ {hh_projected_cpg:.1f}</span>
                         </div>
                     </div>
                 </div>
@@ -4992,9 +5094,13 @@ with tab_s:
         latest_period = periods_available[-1]
         df_latest = sp_df[sp_df['period_dt'] == latest_period].copy()
         
-        # UI: 日期選擇器
+        # UI: 日期選擇器與部門選擇器
         import datetime
-        order_date = st.date_input("📅 請購日期 (預設為今日)", value=datetime.date.today())
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            order_date = st.date_input("📅 請購日期 (預設為今日)", value=datetime.date.today())
+        with col_d2:
+            order_dept = st.selectbox("🏢 請購部門", ["The Peak (餐廳)", "Happy Hour (HH)"])
         
         # 準備 data_editor 的資料結構
         df_order_form = df_latest[['item_name', 'price', 'unit']].copy()
@@ -5077,10 +5183,14 @@ with tab_s:
                 final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 with st.spinner("正在將請購單寫入資料庫..."):
-                    success = append_thepeak_daily_purchase_report(final_order_df)
+                    if "Happy Hour" in order_dept:
+                        success = append_4fhh_daily_purchase_report(final_order_df)
+                    else:
+                        success = append_thepeak_daily_purchase_report(final_order_df)
+                        
                     if success:
                         st.session_state.purchase_cart = {} # 送出後清空購物車
-                        st.success(f"✅ 請購單送出成功！本次共採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
+                        st.success(f"✅ 請購單送出成功！本次共為 {order_dept} 採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
         
         st.divider()
 
