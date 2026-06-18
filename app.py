@@ -57,7 +57,20 @@ def fetch_supplier_prices():
         if df is None or df.empty:
             return pd.DataFrame()
         # 欄位名稱標準化 (item name → item_name)
-        df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
+        df.columns = [str(c).strip().lower().replace(' ', '_') for c in df.columns]
+        
+        # 支援中文欄位自動對應
+        col_mapping = {
+            '日期': 'period',
+            '品項': 'item_name',
+            '品名': 'item_name',
+            '品項名稱': 'item_name',
+            '單位': 'unit',
+            '單價': 'price',
+            '價格': 'price',
+            '金額': 'price'
+        }
+        df.rename(columns=col_mapping, inplace=True)
         # 必要欄位檢查
         required = {'period', 'item_name', 'unit', 'price'}
         if not required.issubset(set(df.columns)):
