@@ -3980,26 +3980,26 @@ with tab_p:
                             total_col].sum().reset_index()
 
                         df_base = df_daily_base.copy()
-                        df_base['week'] = df_base['日期_dt'].dt.isocalendar(
-                        ).week.astype(int)
-                        df_base['year'] = df_base['日期_dt'].dt.isocalendar(
-                        ).year.astype(int)
+                        df_base['week'] = df_base['日期_dt'].dt.isocalendar().week.astype(int)
+                        df_base['year'] = df_base['日期_dt'].dt.isocalendar().year.astype(int)
                         df_base['has_guest'] = df_base['effective_peak_guests'] > 0
 
                         # 每週有來客的天數
                         days_per_week = df_base.groupby(['year', 'week'])[
                             'has_guest'].sum().reset_index()
-                        days_per_week.columns = ['year', 'week', 'active_days']
-                        days_per_week['active_days'] = days_per_week['active_days'].replace(
-                            0, 1)  # 防零除
+                        days_per_week.columns = ['year', 'week', 'active_days_original']
 
                         # 合併週成本
-                        df_base = pd.merge(df_base, weekly_cost, on=[
-                                           'year', 'week'], how='left').fillna(0)
-                        df_base = pd.merge(df_base, days_per_week, on=[
-                                           'year', 'week'], how='left')
-                        df_base['spread_cost'] = df_base[total_col] / \
-                            df_base['active_days']
+                        df_base = pd.merge(df_base, weekly_cost, on=['year', 'week'], how='left').fillna(0)
+                        df_base = pd.merge(df_base, days_per_week, on=['year', 'week'], how='left')
+                        
+                        def assign_cost(row):
+                            if row['active_days_original'] == 0:
+                                return row[total_col] / 7.0
+                            else:
+                                return (row[total_col] / row['active_days_original']) if row['has_guest'] else 0.0
+
+                        df_base['spread_cost'] = df_base.apply(assign_cost, axis=1)
 
                         return df_base.set_index('日期_obj')['spread_cost']
 
