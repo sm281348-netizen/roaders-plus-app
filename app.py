@@ -91,8 +91,9 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=60)
 def fetch_thepeak_daily_purchase_report():
-    """讀取 thepeak_daily_purchase_report 分頁，不使用快取以確保即時性"""
+    """讀取 thepeak_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
@@ -158,8 +159,9 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         return False
 
 
+@st.cache_data(ttl=60)
 def fetch_4fhh_daily_purchase_report():
-    """讀取 4FHH_daily_purchase_report 分頁，不使用快取以確保即時性"""
+    """讀取 4FHH_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
@@ -5194,8 +5196,12 @@ with tab_s:
                 with st.spinner("正在將請購單寫入資料庫..."):
                     if "Happy Hour" in order_dept:
                         success = append_4fhh_daily_purchase_report(final_order_df)
+                        if success:
+                            fetch_4fhh_daily_purchase_report.clear()
                     else:
                         success = append_thepeak_daily_purchase_report(final_order_df)
+                        if success:
+                            fetch_thepeak_daily_purchase_report.clear()
                         
                     if success:
                         st.session_state.purchase_cart = {} # 送出後清空購物車
