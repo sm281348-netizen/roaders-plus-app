@@ -736,31 +736,10 @@ def fetch_fb_future_data(hotel_type="站前館"):
 
 def get_combined_fb_daily_df(year, month, current_hotel):
     import pandas as pd
-    df_st = fetch_fb_daily_df(year, month, _dummy_hotel="站前館")
-    df_th = fetch_fb_daily_df(year, month, _dummy_hotel="主題館")
-    
-    if df_st.empty and df_th.empty:
-        return pd.DataFrame()
-    if df_st.empty:
-        df_st = pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
-    if df_th.empty:
-        df_th = pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
-        
-    df_concat = pd.concat([df_st, df_th], ignore_index=True)
-    if df_concat.empty:
-        return pd.DataFrame()
-        
-    df_combined = df_concat.groupby('date', as_index=False)[['bf_act', 'af_act', 'peak_guests']].sum()
-    
-    df_primary = df_th if current_hotel == "主題館" else df_st
-    if not df_primary.empty and 'date' in df_primary.columns and 'hh_act' in df_primary.columns:
-        df_hh = df_primary[['date', 'hh_act']]
-        df_combined = pd.merge(df_combined, df_hh, on='date', how='left')
-    else:
-        df_combined['hh_act'] = 0
-        
-    df_combined['hh_act'] = df_combined['hh_act'].fillna(0)
-    return df_combined
+    df = fetch_fb_daily_df(year, month)
+    if df.empty:
+        return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
+    return df
 
 def get_combined_fb_future_data():
     import pandas as pd
