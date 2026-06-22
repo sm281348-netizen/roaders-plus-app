@@ -5246,10 +5246,10 @@ with tab_s:
         final_order_list = []
         current_total = 0
         for item, qty in st.session_state.purchase_cart.items():
-            price_series = df_latest.loc[df_latest['item_name'] == item, 'price']
+            price_series = df_target.loc[df_target['item_name'] == item, 'price']
             if not price_series.empty:
                 price = price_series.values[0]
-                unit = df_latest.loc[df_latest['item_name'] == item, 'unit'].values[0]
+                unit = df_target.loc[df_target['item_name'] == item, 'unit'].values[0]
                 cost = price * qty
                 current_total += cost
                 final_order_list.append({
