@@ -111,19 +111,8 @@ def fetch_thepeak_daily_purchase_report():
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        # 先找正確的分頁名稱 (容許空白或大小寫錯誤)
+        # 直接使用確定的分頁名稱
         target_ws = "thepeak_daily_purchase_report"
-        try:
-            client = raw_st.client
-            sh = client.open_by_url(url_st)
-            ws_titles = [ws.title for ws in sh.worksheets()]
-            for t in ws_titles:
-                if t.strip().lower() == "thepeak_daily_purchase_report":
-                    target_ws = t
-                    break
-        except Exception:
-            pass
-            
         df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         if df is None:
             return pd.DataFrame()
@@ -139,18 +128,6 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         
         target_ws = "thepeak_daily_purchase_report"
-        ws_titles = []
-        try:
-            client = raw_st.client
-            sh = client.open_by_url(url_st)
-            ws_titles = [ws.title for ws in sh.worksheets()]
-            for t in ws_titles:
-                if t.strip().lower() == "thepeak_daily_purchase_report":
-                    target_ws = t
-                    break
-        except Exception as ce:
-            st.error(f"連線試算表失敗: {ce}")
-        
         try:
             df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         except Exception as e:
@@ -179,19 +156,8 @@ def fetch_4fhh_daily_purchase_report():
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        # 先找正確的分頁名稱 (容許空白或大小寫錯誤)
+        # 直接使用確定的分頁名稱
         target_ws = "4FHH_daily_purchase_report"
-        try:
-            client = raw_st.client
-            sh = client.open_by_url(url_st)
-            ws_titles = [ws.title for ws in sh.worksheets()]
-            for t in ws_titles:
-                if t.strip().lower() == "4fhh_daily_purchase_report":
-                    target_ws = t
-                    break
-        except Exception:
-            pass
-            
         df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         if df is None:
             return pd.DataFrame()
@@ -207,18 +173,6 @@ def append_4fhh_daily_purchase_report(new_rows_df):
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         
         target_ws = "4FHH_daily_purchase_report"
-        ws_titles = []
-        try:
-            client = raw_st.client
-            sh = client.open_by_url(url_st)
-            ws_titles = [ws.title for ws in sh.worksheets()]
-            for t in ws_titles:
-                if t.strip().lower() == "4fhh_daily_purchase_report":
-                    target_ws = t
-                    break
-        except Exception as ce:
-            st.error(f"連線試算表失敗: {ce}")
-        
         try:
             df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         except Exception as e:
