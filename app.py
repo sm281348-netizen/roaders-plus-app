@@ -6211,48 +6211,19 @@ def render_nationality_tab():
     with st.spinner("載入飯店客源資料中..."):
         try:
             # 透過系統現有的 read_google_sheet 幫助函式讀取，解決 Spreadsheet URL 權限問題
-            df_hotel_raw = read_google_sheet("nationality_data")
+            df_hotel_raw = read_google_sheet("nationality_report")
             
             if df_hotel_raw is not None and not df_hotel_raw.empty:
-                # 判斷是否為「橫向擴充」的新版寬格式
-                first_row_vals = [str(x).strip().lower() for x in df_hotel_raw.iloc[0].values]
-                if 'person' in first_row_vals and 'rate' in first_row_vals and 'nights' in first_row_vals:
-                    # 執行寬格式轉長格式 (Wide to Long)
-                    long_rows = []
-                    months = []
-                    curr_month = ""
-                    for col in df_hotel_raw.columns[1:]:
-                        col_str = str(col).strip()
-                        # 若欄位名稱不是 Unnamed 開頭，代表這是一個新的月份 (例如 202601)
-                        if not col_str.lower().startswith("unnamed") and col_str != "":
-                            curr_month = col_str
-                        months.append(curr_month)
-                        
-                    metrics = first_row_vals[1:]
-                    
-                    for idx in range(1, len(df_hotel_raw)):
-                        row = df_hotel_raw.iloc[idx]
-                        nation = row.iloc[0]
-                        if pd.isna(nation) or str(nation).strip() == "":
-                            continue
-                            
-                        month_data = {}
-                        for i, val in enumerate(row.values[1:]):
-                            if i < len(months) and i < len(metrics):
-                                m = months[i]
-                                metric = metrics[i]
-                                if metric in ['person', 'rate', 'nights']:
-                                    if m not in month_data:
-                                        month_data[m] = {'month': m, 'nation': nation, 'person': 0, 'rate': 0, 'nights': 0}
-                                    month_data[m][metric] = val
-                        
-                        long_rows.extend(month_data.values())
-                    
-                    df_hotel = pd.DataFrame(long_rows)
-                else:
-                    # 舊版長格式，直接複製
-                    df_hotel = df_hotel_raw.copy()
-                    df_hotel.columns = [str(c).strip().lower() for c in df_hotel.columns]
+                # nationality_report 已是長格式，直接使用
+                df_hotel = df_hotel_raw.copy()
+                df_hotel.columns = [str(c).strip().lower() for c in df_hotel.columns]
+                # 將 date 欄位對應為 month（系統內部統一用 month）
+                if 'date' in df_hotel.columns and 'month' not in df_hotel.columns:
+                    df_hotel['month'] = df_hotel['date'].astype(str).str.strip()
+                
+                # 過濾空白列
+                df_hotel = df_hotel.dropna(subset=['nation'])
+                df_hotel = df_hotel[df_hotel['nation'].astype(str).str.strip() != '']
                 
                 # 確保必要欄位存在
                 if set(['month', 'nation', 'person', 'rate', 'nights']).issubset(set(df_hotel.columns)):
@@ -6299,7 +6270,7 @@ def render_nationality_tab():
                         
                         st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
         except Exception as e:
-            st.error(f"讀取 RTS_backup(nationality_data) 發生錯誤: {e}")
+            st.error(f"讀取 nationality_report 發生錯誤: {e}")
     
     if df_agg is None or df_agg.empty:
         st.warning("⚠️ 尚無資料")
