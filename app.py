@@ -3660,9 +3660,9 @@ with tab_p:
                 bf_conv_rate = st.slider("⚙️ 早餐到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_bf_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_bf_rate*100:.1f}%\n數值將用於折算未來的早餐人數")
                 af_conv_rate = st.slider("⚙️ 下午茶到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_af_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_af_rate*100:.1f}%\n數值將用於折算未來的下午茶人數")
             
-            # 套用折算率
-            adj_future_bf = int(raw_future_bf * (bf_conv_rate / 100.0))
-            adj_future_af = int(raw_future_af * (af_conv_rate / 100.0))
+            # 套用折算率（直覺公式：未來總預約人數 × 到客率）
+            adj_future_bf = int(raw_future_guests * (bf_conv_rate / 100.0))
+            adj_future_af = int(raw_future_guests * (af_conv_rate / 100.0))
             future_guests = adj_future_bf + adj_future_af
             
             total_est_guests = hist_guests + future_guests
@@ -3695,7 +3695,16 @@ with tab_p:
             # 渲染將延後至 k 值計算完成後
             with col_w3:
                 st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
-                st.caption(f"└ 歷史發生 `{int(hist_guests):,}` + 未來預約 `{int(raw_future_guests):,}` → 折算 `{int(future_guests):,}`")
+                st.caption(
+                    f"└ 歷史已發生 `{int(hist_guests):,}` 人 "
+                    f"（早餐 `{int(hist_bf):,}` / 下午茶 `{int(hist_af):,}`）"
+                )
+                st.caption(
+                    f"└ 未來預約 `{int(raw_future_guests):,}` 人 × 到客率 "
+                    f"→ 早餐預估 `{int(adj_future_bf):,}` ({bf_conv_rate}%) "
+                    f"/ 下午茶預估 `{int(adj_future_af):,}` ({af_conv_rate}%) "
+                    f"= 合計 `{int(future_guests):,}` 人"
+                )
                 st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
                 st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
             
