@@ -6265,7 +6265,7 @@ def render_nationality_tab():
                                 df_t[c] = df_t[c].astype(str).str.replace(',', '', regex=False)
                                 df_t[c] = pd.to_numeric(df_t[c], errors='coerce').fillna(0)
                             
-                            df_t = df_t[df_t['nights'] > 0]
+                            df_t = df_t[df_t['person'] > 0]
                             df_t = df_t[~df_t['nation'].astype(str).str.contains('合計|總計|Total', na=False, case=False)]
                             
                             if not df_t.empty:
@@ -6274,8 +6274,8 @@ def render_nationality_tab():
                                     'nights': 'sum', 'person': 'sum', 'rate': 'sum'
                                 })
                                 d_agg['adr'] = d_agg.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
-                                total_n = d_agg['nights'].sum()
-                                d_agg['nights_pct'] = (d_agg['nights'] / total_n * 100).round(3)
+                                total_p = d_agg['person'].sum()
+                                d_agg['nights_pct'] = (d_agg['person'] / total_p * 100).round(3) if total_p > 0 else 0
                                 return d_agg
                             return pd.DataFrame()
                             
@@ -6348,8 +6348,8 @@ def render_nationality_tab():
     with col1:
         st.subheader("🏆 主力客源分佈 (前五名與上月比較)")
         
-        curr_total = int(df_agg['nights'].sum()) if not df_agg.empty else 0
-        prev_total = int(df_prev_agg['nights'].sum()) if not df_prev_agg.empty else 0
+        curr_total = int(df_agg['person'].sum()) if not df_agg.empty else 0
+        prev_total = int(df_prev_agg['person'].sum()) if not df_prev_agg.empty else 0
         
         curr_date = st.session_state.get('sidebar_date')
         curr_m_str = curr_date.month if curr_date else ""
@@ -6362,21 +6362,21 @@ def render_nationality_tab():
             if df_a.empty:
                 return "<p style='text-align:center; padding: 20px;'>無資料</p>"
             
-            top5 = df_a.sort_values('nights', ascending=False).head(5)
+            top5 = df_a.sort_values('person', ascending=False).head(5)
             rows_html = ""
             for i, row in top5.reset_index(drop=True).iterrows():
                 bg_c = bg_row1 if (i % 2 == 0) else bg_row2
                 pct_str = format_pct(row['nights_pct'])
                 rows_html += f"""<tr style="background-color: {bg_c};">
 <td style="padding: 12px; border: 1px solid white;">{row['nation']}</td>
-<td style="padding: 12px; border: 1px solid white;">{int(row['nights'])}</td>
+<td style="padding: 12px; border: 1px solid white;">{int(row['person'])}</td>
 <td style="padding: 12px; border: 1px solid white;">{pct_str}</td>
 </tr>"""
                 
             return f"""<table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 16px;">
 <tr style="background-color: {bg_header}; color: black; font-weight: bold;">
 <th style="padding: 12px; border: 1px solid white; text-align: center;">國籍</th>
-<th style="padding: 12px; border: 1px solid white; text-align: center;">間數</th>
+<th style="padding: 12px; border: 1px solid white; text-align: center;">人數</th>
 <th style="padding: 12px; border: 1px solid white; text-align: center;">百分比</th>
 </tr>
 {rows_html}
@@ -6427,11 +6427,11 @@ def render_nationality_tab():
     # 4. 資料表
     st.subheader("📊 詳細數據表")
     st.dataframe(
-        df_agg[['nation', 'nights', 'nights_pct', 'person', 'rate', 'adr']].sort_values('nights', ascending=False).rename(columns={
+        df_agg[['nation', 'person', 'nights_pct', 'nights', 'rate', 'adr']].sort_values('person', ascending=False).rename(columns={
             'nation': '國籍 (代碼)',
-            'nights': '總房晚數',
-            'nights_pct': '佔比 (%)',
             'person': '總人數',
+            'nights_pct': '人數佔比 (%)',
+            'nights': '總房晚數',
             'rate': '總營收',
             'adr': '平均房價 (ADR)'
         }),
