@@ -6223,22 +6223,38 @@ def render_nationality_tab():
                     if df is not None and not df.empty:
                         df.columns = [str(col).strip().lower() for col in df.columns]
                         if 'date' in df.columns and 'month' not in df.columns:
-                            # 清理 date 欄位：把空白、'nan'、'None' 先轉成 NaN，再向下填充
-                            date_col = df['date'].astype(str).str.strip()
-                            date_col = date_col.replace({'nan': '', 'None': '', 'NaT': ''})
-                            # 只保留純數字（6位 YYYYMM 格式）的日期，其他視為空白
                             import re as _re
-                            date_col = date_col.apply(lambda v: v if _re.match(r'^\d{6}$', v) else '')
-                            # 空白轉 NaN 後做向下填充（ffill），讓同一月份下方的空白列繼承日期
+
+                            def _extract_yyyymm(v):
+                                """從各種格式中解析出 YYYYMM 字串，否則回傳空字串"""
+                                s = str(v).strip().replace('.0', '')
+                                if not s or s in ('nan', 'None', 'NaT', ''):
+                                    return ''
+                                # 已是 YYYYMM (6位數字)
+                                if _re.match(r'^\d{6}$', s):
+                                    return s
+                                # YYYY-MM 或 YYYY/MM
+                                m2 = _re.match(r'^(\d{4})[-/](\d{1,2})', s)
+                                if m2:
+                                    return f"{m2.group(1)}{int(m2.group(2)):02d}"
+                                # YYYYMMDD (8位) → 取前6位
+                                if _re.match(r'^\d{8}$', s):
+                                    return s[:6]
+                                # 其他格式（合併儲存格、文字說明）→ 視為空白
+                                return ''
+
+                            date_col = df['date'].apply(_extract_yyyymm)
+                            # 空白轉 NaN 後向下填充（ffill），讓空白的 nation 列繼承上方的月份
                             date_col = date_col.replace('', pd.NA).ffill().fillna('')
                             df['month'] = date_col.astype(str).str.strip()
-                        # 過濾掉 nation 為空白的列（純月份標題列）
+
+                        # 過濾掉 nation 為空白或純標題列
                         df = df.dropna(subset=['nation'])
                         df = df[df['nation'].astype(str).str.strip() != '']
                         df['hotel'] = hotel_type
                         return df
-                except Exception:
-                    pass
+                except Exception as _e:
+                    st.warning(f"讀取 {hotel_type} nationality_report 時發生問題: {_e}")
                 return pd.DataFrame()
 
             df_st = _read_nationality_report("站前館")
