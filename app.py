@@ -5125,6 +5125,8 @@ with tab_s:
             target_period = min(periods_available)
             
         df_target = sp_df[sp_df['period_dt'] == target_period].copy()
+        # 移除重複的品項名稱，避免 data_editor 迴圈時發生第二筆把第一筆的數量刪除的 Bug
+        df_target = df_target.drop_duplicates(subset=['item_name'], keep='last')
         
         st.info(f"ℹ️ 系統已自動判斷並載入 **{target_period}** 的菜價表作為計價基礎。")
         
