@@ -6205,63 +6205,40 @@ def render_nationality_tab():
     st.header("🌍 國籍客源分析專區")
     st.markdown("分析本飯店各國籍旅客分佈，並可結合交通部觀光署大盤數據進行交叉比對。")
     
-    # 1. 同時讀取兩館的 nationality_report，合併顯示
+    # 1. 讀取目前館別的 nationality_report（依右上角選單）
     df_hotel = None
     df_agg = None
     with st.spinner("載入飯店客源資料中..."):
         try:
-            from streamlit_gsheets import GSheetsConnection
+            import re as _re
 
-            def _read_nationality_report(hotel_type):
-                """讀取指定館別的 nationality_report"""
-                try:
-                    conn_name = "gsheets_theme" if hotel_type == "主題館" else "gsheets_station"
-                    raw_conn = st.connection(conn_name, type=GSheetsConnection)
-                    url = st.secrets["connections"][conn_name]["spreadsheet"]
-                    c = _ConnWrapper(raw_conn, url)
-                    df = c.read(worksheet="nationality_report", ttl=0)
-                    if df is not None and not df.empty:
-                        df.columns = [str(col).strip().lower() for col in df.columns]
-                        if 'date' in df.columns and 'month' not in df.columns:
-                            import re as _re
+            def _extract_yyyymm(v):
+                """從各種格式中解析出 YYYYMM 字串，否則回傳空字串"""
+                s = str(v).strip().replace('.0', '')
+                if not s or s in ('nan', 'None', 'NaT', ''):
+                    return ''
+                if _re.match(r'^\d{6}$', s):
+                    return s
+                m2 = _re.match(r'^(\d{4})[-/](\d{1,2})', s)
+                if m2:
+                    return f"{m2.group(1)}{int(m2.group(2)):02d}"
+                if _re.match(r'^\d{8}$', s):
+                    return s[:6]
+                return ''
 
-                            def _extract_yyyymm(v):
-                                """從各種格式中解析出 YYYYMM 字串，否則回傳空字串"""
-                                s = str(v).strip().replace('.0', '')
-                                if not s or s in ('nan', 'None', 'NaT', ''):
-                                    return ''
-                                # 已是 YYYYMM (6位數字)
-                                if _re.match(r'^\d{6}$', s):
-                                    return s
-                                # YYYY-MM 或 YYYY/MM
-                                m2 = _re.match(r'^(\d{4})[-/](\d{1,2})', s)
-                                if m2:
-                                    return f"{m2.group(1)}{int(m2.group(2)):02d}"
-                                # YYYYMMDD (8位) → 取前6位
-                                if _re.match(r'^\d{8}$', s):
-                                    return s[:6]
-                                # 其他格式（合併儲存格、文字說明）→ 視為空白
-                                return ''
+            df_hotel_raw = read_google_sheet("nationality_report")
 
-                            date_col = df['date'].apply(_extract_yyyymm)
-                            # 空白轉 NaN 後向下填充（ffill），讓空白的 nation 列繼承上方的月份
-                            date_col = date_col.replace('', pd.NA).ffill().fillna('')
-                            df['month'] = date_col.astype(str).str.strip()
+            if df_hotel_raw is not None and not df_hotel_raw.empty:
+                df_hotel_raw = df_hotel_raw.copy()
+                df_hotel_raw.columns = [str(c).strip().lower() for c in df_hotel_raw.columns]
+                if 'date' in df_hotel_raw.columns and 'month' not in df_hotel_raw.columns:
+                    date_col = df_hotel_raw['date'].apply(_extract_yyyymm)
+                    date_col = date_col.replace('', pd.NA).ffill().fillna('')
+                    df_hotel_raw['month'] = date_col.astype(str).str.strip()
+                df_hotel_raw = df_hotel_raw.dropna(subset=['nation'])
+                df_hotel_raw = df_hotel_raw[df_hotel_raw['nation'].astype(str).str.strip() != '']
 
-                        # 過濾掉 nation 為空白或純標題列
-                        df = df.dropna(subset=['nation'])
-                        df = df[df['nation'].astype(str).str.strip() != '']
-                        df['hotel'] = hotel_type
-                        return df
-                except Exception as _e:
-                    st.warning(f"讀取 {hotel_type} nationality_report 時發生問題: {_e}")
-                return pd.DataFrame()
-
-            df_st = _read_nationality_report("站前館")
-            df_th = _read_nationality_report("主題館")
-            df_hotel_raw = pd.concat([df_st, df_th], ignore_index=True)
-
-            if not df_hotel_raw.empty:
+            if df_hotel_raw is not None and not df_hotel_raw.empty:
                 df_hotel = df_hotel_raw.copy()
                 
                 # 確保必要欄位存在
