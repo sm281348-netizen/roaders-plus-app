@@ -6223,7 +6223,16 @@ def render_nationality_tab():
                     if df is not None and not df.empty:
                         df.columns = [str(col).strip().lower() for col in df.columns]
                         if 'date' in df.columns and 'month' not in df.columns:
-                            df['month'] = df['date'].astype(str).str.strip()
+                            # 清理 date 欄位：把空白、'nan'、'None' 先轉成 NaN，再向下填充
+                            date_col = df['date'].astype(str).str.strip()
+                            date_col = date_col.replace({'nan': '', 'None': '', 'NaT': ''})
+                            # 只保留純數字（6位 YYYYMM 格式）的日期，其他視為空白
+                            import re as _re
+                            date_col = date_col.apply(lambda v: v if _re.match(r'^\d{6}$', v) else '')
+                            # 空白轉 NaN 後做向下填充（ffill），讓同一月份下方的空白列繼承日期
+                            date_col = date_col.replace('', pd.NA).ffill().fillna('')
+                            df['month'] = date_col.astype(str).str.strip()
+                        # 過濾掉 nation 為空白的列（純月份標題列）
                         df = df.dropna(subset=['nation'])
                         df = df[df['nation'].astype(str).str.strip() != '']
                         df['hotel'] = hotel_type
