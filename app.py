@@ -6205,25 +6205,39 @@ def render_nationality_tab():
     st.header("🌍 國籍客源分析專區")
     st.markdown("分析本飯店各國籍旅客分佈，並可結合交通部觀光署大盤數據進行交叉比對。")
     
-    # 1. 讀取現有飯店國籍數據
+    # 1. 同時讀取兩館的 nationality_report，合併顯示
     df_hotel = None
     df_agg = None
     with st.spinner("載入飯店客源資料中..."):
         try:
-            # 透過系統現有的 read_google_sheet 幫助函式讀取，解決 Spreadsheet URL 權限問題
-            df_hotel_raw = read_google_sheet("nationality_report")
-            
-            if df_hotel_raw is not None and not df_hotel_raw.empty:
-                # nationality_report 已是長格式，直接使用
+            from streamlit_gsheets import GSheetsConnection
+
+            def _read_nationality_report(hotel_type):
+                """讀取指定館別的 nationality_report"""
+                try:
+                    conn_name = "gsheets_theme" if hotel_type == "主題館" else "gsheets_station"
+                    raw_conn = st.connection(conn_name, type=GSheetsConnection)
+                    url = st.secrets["connections"][conn_name]["spreadsheet"]
+                    c = _ConnWrapper(raw_conn, url)
+                    df = c.read(worksheet="nationality_report", ttl=0)
+                    if df is not None and not df.empty:
+                        df.columns = [str(col).strip().lower() for col in df.columns]
+                        if 'date' in df.columns and 'month' not in df.columns:
+                            df['month'] = df['date'].astype(str).str.strip()
+                        df = df.dropna(subset=['nation'])
+                        df = df[df['nation'].astype(str).str.strip() != '']
+                        df['hotel'] = hotel_type
+                        return df
+                except Exception:
+                    pass
+                return pd.DataFrame()
+
+            df_st = _read_nationality_report("站前館")
+            df_th = _read_nationality_report("主題館")
+            df_hotel_raw = pd.concat([df_st, df_th], ignore_index=True)
+
+            if not df_hotel_raw.empty:
                 df_hotel = df_hotel_raw.copy()
-                df_hotel.columns = [str(c).strip().lower() for c in df_hotel.columns]
-                # 將 date 欄位對應為 month（系統內部統一用 month）
-                if 'date' in df_hotel.columns and 'month' not in df_hotel.columns:
-                    df_hotel['month'] = df_hotel['date'].astype(str).str.strip()
-                
-                # 過濾空白列
-                df_hotel = df_hotel.dropna(subset=['nation'])
-                df_hotel = df_hotel[df_hotel['nation'].astype(str).str.strip() != '']
                 
                 # 確保必要欄位存在
                 if set(['month', 'nation', 'person', 'rate', 'nights']).issubset(set(df_hotel.columns)):
@@ -6270,7 +6284,7 @@ def render_nationality_tab():
                         
                         st.info(f"📅 目前顯示飯店數據區間：**{curr_date.strftime('%Y 年 %m 月')}** (依據左側選單)")
         except Exception as e:
-            st.error(f"讀取 nationality_report 發生錯誤: {e}")
+            st.error(f"讀取 nationality_report（兩館）發生錯誤: {e}")
     
     if df_agg is None or df_agg.empty:
         st.warning("⚠️ 尚無資料")
