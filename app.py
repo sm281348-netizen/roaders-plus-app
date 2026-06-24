@@ -6295,9 +6295,17 @@ def render_nationality_tab():
                             
                             if not df_t.empty:
                                 df_t['nation_clean'] = df_t['nation'].apply(clean_nation_name)
-                                d_agg = df_t.groupby(['nation', 'nation_clean'], as_index=False).agg({
+                                # 先把國籍代碼（3碼英文）也提取出來，作為第二層合併依據
+                                import re as _re2
+                                df_t['nation_code'] = df_t['nation'].apply(
+                                    lambda v: (_re2.match(r'^([A-Z]{2,4})', str(v)) or [None, str(v)])[1][:4].strip()
+                                )
+                                # 以 nation_code（如 HKG）為主鍵分組，避免同一國籍因撇號等格式差異被分成兩列
+                                d_agg = df_t.groupby(['nation_code', 'nation_clean'], as_index=False).agg({
                                     'nights': 'sum', 'person': 'sum', 'rate': 'sum'
                                 })
+                                # 用 nation_code + nation_clean 組合成顯示名稱
+                                d_agg['nation'] = d_agg['nation_code'] + d_agg['nation_clean']
                                 d_agg['adr'] = d_agg.apply(lambda r: round(r['rate'] / r['nights']) if r['nights'] > 0 else 0, axis=1)
                                 total_p = d_agg['person'].sum()
                                 d_agg['nights_pct'] = (d_agg['person'] / total_p * 100).round(3) if total_p > 0 else 0
