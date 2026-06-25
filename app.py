@@ -3460,13 +3460,14 @@ with tab_p:
                 st.stop()
 
             # 展開可查看偵測結果的小將器（方便尋找問題）
-            with st.expander("🔍 資料偵測資訊（點擊展開經確認後可收起）", expanded=False):
+            with st.expander("🔍 資料偵測資訊（診斷中，確認後可收起）", expanded=True):
                 st.write(f"日期欄：`{date_col}` ｜ 部門欄：`{dept_col}` ｜ 金額欄：`{total_col}`")
                 st.write("所有欄位：", list(df_purchase.columns))
                 sample_dates = df_purchase[date_col].dropna().head(5).tolist()
-                st.write("前 5 筆日期原始內容：", sample_dates)
+                st.write("前 5 筆日期**原始內容**（解析前）：", sample_dates)
                 sample_depts = df_purchase[dept_col].dropna().unique()[:10].tolist()
                 st.write("部門欄樣本內容：", sample_depts)
+                st.write(f"purchase_data 總筆數：{len(df_purchase)} 筆")
 
             # 確保日期欄位為日期型態 (支援民國年與一般西元年)
             def robust_date_parse(val):
@@ -3566,6 +3567,19 @@ with tab_p:
 
             df_month = df_purchase[(df_purchase['日期'] >= m_start) & (
                 df_purchase['日期'] <= m_end)].copy()
+
+            # 診斷：日期解析後的狀況
+            with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
+                parsed_sample = df_purchase['日期'].dropna().head(5).tolist()
+                st.write(f"解析後前 5 筆日期：{parsed_sample}")
+                st.write(f"篩選區間：{m_start} ～ {m_end}")
+                st.write(f"purchase_data 解析後剩餘總筆數：{len(df_purchase)} 筆（NaT 已移除）")
+                st.write(f"符合 {selected_date.strftime('%Y-%m')} 的筆數：**{len(df_month)} 筆**")
+                if df_month.empty:
+                    st.error("⚠️ 當月筆數為 0！日期可能為其他年份或格式仍無法解析。")
+                    all_dates = df_purchase['日期'].dropna().sort_values().unique()
+                    if len(all_dates) > 0:
+                        st.write(f"實際資料最早日期：{all_dates[0]}，最晚日期：{all_dates[-1]}")
 
             # --- 新增：取得上個月數據用於 MoM 分析 ---
             prev_m_date = get_month_delta(selected_date, -1)
