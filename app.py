@@ -3459,17 +3459,41 @@ with tab_p:
                 st.write("目前偵測到的欄位有：", list(df_purchase.columns))
                 st.stop()
 
+            # 展開可查看偵測結果的小將器（方便尋找問題）
+            with st.expander("🔍 資料偵測資訊（點擊展開經確認後可收起）", expanded=False):
+                st.write(f"日期欄：`{date_col}` ｜ 部門欄：`{dept_col}` ｜ 金額欄：`{total_col}`")
+                st.write("所有欄位：", list(df_purchase.columns))
+                sample_dates = df_purchase[date_col].dropna().head(5).tolist()
+                st.write("前 5 筆日期原始內容：", sample_dates)
+                sample_depts = df_purchase[dept_col].dropna().unique()[:10].tolist()
+                st.write("部門欄樣本內容：", sample_depts)
+
             # 確保日期欄位為日期型態 (支援民國年與一般西元年)
             def robust_date_parse(val):
                 if pd.isna(val):
                     return None
-                s = str(val).strip()
-                # 判斷是否為民國年格式 (含 / 且部分較小)
+                s = str(val).strip().replace('.0', '')  # 處理 202505.0 浮點格式
+                if not s or s in ('nan', 'None', 'NaT'):
+                    return None
+                # 民國年格式 (含 /)
                 if '/' in s:
                     res = minguo_to_western(s)
                     if res:
                         return res
-                # 嘗試標準解析
+                # YYYYMM 6位數字 (如 202505) → 當月1日
+                import re as _re_dp
+                if _re_dp.match(r'^\d{6}$', s):
+                    try:
+                        return pd.to_datetime(s, format='%Y%m').date()
+                    except:
+                        pass
+                # YYYYMMDD 8位數字 (如 20250525)
+                if _re_dp.match(r'^\d{8}$', s):
+                    try:
+                        return pd.to_datetime(s, format='%Y%m%d').date()
+                    except:
+                        pass
+                # 其他標準格式
                 try:
                     return pd.to_datetime(val).date()
                 except:
