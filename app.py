@@ -747,7 +747,35 @@ def get_combined_fb_future_data():
     df_th = fetch_fb_future_data(hotel_type="主題館")
     return pd.concat([df_st, df_th], ignore_index=True)
 
+def get_prediction_snapshots():
+    import pandas as pd
+    import streamlit as st
+    from streamlit_gsheets import GSheetsConnection
+    try:
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        df = raw_st.read(worksheet="prediction_snapshots", spreadsheet=url_st, ttl="0")
+        if df is None or df.empty or 'snapshot_date' not in df.columns:
+            return pd.DataFrame(columns=['snapshot_date', 'target_date_start', 'target_date_end', 'bf_conv_rate', 'af_conv_rate', 'future_bf', 'future_af', 'future_total'])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=['snapshot_date', 'target_date_start', 'target_date_end', 'bf_conv_rate', 'af_conv_rate', 'future_bf', 'future_af', 'future_total'])
 
+def save_prediction_snapshot(new_row_dict):
+    import pandas as pd
+    import streamlit as st
+    from streamlit_gsheets import GSheetsConnection
+    df = get_prediction_snapshots()
+    new_df = pd.DataFrame([new_row_dict])
+    df = pd.concat([df, new_df], ignore_index=True)
+    try:
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        raw_st.update(worksheet="prediction_snapshots", data=df.fillna(""), spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"儲存快照失敗: {e}")
+        return False
 
 def read_google_sheet(worksheet, ttl="1m"):
     try:
@@ -3918,6 +3946,97 @@ with tab_p:
                 <div><div style="color:#aaa;font-size:0.8rem;">🎯 本月總預算上限</div><div style="color:#3498db;font-size:1.4rem;font-weight:700;">NT$ {int(total_budget):,}</div></div>
             </div>
             """, unsafe_allow_html=True)
+
+            # ==========================================
+            # 🎯 預測準確度回顧與快照系統
+            # ==========================================
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.divider()
+            st.subheader("📊 預測準確度回顧與快照 (Prediction Accuracy)")
+            st.info("💡 此區塊讓您每週手動儲存「未來 7 天」的客數預測快照，並能在下週檢視預測準確度。")
+            
+            # --- 1. 儲存快照區塊 ---
+            snap_col1, snap_col2 = st.columns([1, 1])
+            
+            import datetime
+            today_date = datetime.date.today()
+            target_start = today_date + datetime.timedelta(days=1)
+            target_end = today_date + datetime.timedelta(days=7)
+            
+            # 計算未來 7 天的預估人數 (為了快照)
+            snap_future_bf = 0
+            snap_future_af = 0
+            if not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns and '數量' in df_fb_fut.columns:
+                snap_mask = (df_fb_fut['date_obj'] >= target_start) & (df_fb_fut['date_obj'] <= target_end)
+                snap_raw = df_fb_fut[snap_mask]['數量'].sum()
+                snap_future_bf = int(snap_raw * (bf_conv_rate / 100.0))
+                snap_future_af = int(snap_raw * (af_conv_rate / 100.0))
+            snap_future_total = snap_future_bf + snap_future_af
+            
+            with snap_col1:
+                st.markdown(f"**準備存檔的預測區間：** `{target_start}` 至 `{target_end}` (未來 7 天)")
+                st.markdown(f"**預測人數：** 🍳 早 `{snap_future_bf}` 人 ｜ 🍰 午 `{snap_future_af}` 人 ｜ 總計 `{snap_future_total}` 人")
+                st.markdown(f"**套用折算率：** 早餐 `{bf_conv_rate}%` ｜ 下午茶 `{af_conv_rate}%`")
+                
+                if st.button("💾 儲存本週預測快照", use_container_width=True):
+                    new_snap = {
+                        'snapshot_date': today_date.strftime('%Y-%m-%d'),
+                        'target_date_start': target_start.strftime('%Y-%m-%d'),
+                        'target_date_end': target_end.strftime('%Y-%m-%d'),
+                        'bf_conv_rate': bf_conv_rate,
+                        'af_conv_rate': af_conv_rate,
+                        'future_bf': snap_future_bf,
+                        'future_af': snap_future_af,
+                        'future_total': snap_future_total
+                    }
+                    with st.spinner("正在將預測資料寫入 Google Sheets..."):
+                        if save_prediction_snapshot(new_snap):
+                            st.success(f"✅ 快照儲存成功！下週即可回頭檢視此區間的準確率。")
+                            st.rerun()
+
+            # --- 2. 回顧過往準確度 ---
+            with snap_col2:
+                df_snapshots = get_prediction_snapshots()
+                if df_snapshots.empty:
+                    st.warning("目前尚無任何預測快照記錄。請先儲存快照，一週後即可在此檢視準確率。")
+                else:
+                    st.markdown("**🔍 歷史預測準確度覆盤**")
+                    # 篩選出已經過期的快照 (target_date_end < today)
+                    df_snapshots['target_date_end'] = pd.to_datetime(df_snapshots['target_date_end']).dt.date
+                    df_past_snaps = df_snapshots[df_snapshots['target_date_end'] < today_date].copy()
+                    
+                    if df_past_snaps.empty:
+                        st.info("快照區間尚未結束，等設定的「未來 7 天」過完後，即可進行對比。")
+                        st.dataframe(df_snapshots[['snapshot_date', 'target_date_start', 'target_date_end', 'future_total']].tail(3), hide_index=True)
+                    else:
+                        # 取最新一筆已過期的快照來分析
+                        latest_snap = df_past_snaps.sort_values('target_date_end', ascending=False).iloc[0]
+                        p_start = latest_snap['target_date_start']
+                        p_end = latest_snap['target_date_end']
+                        p_total = int(latest_snap['future_total'])
+                        
+                        # 從歷史 FB 報表抓取實際到客數
+                        actual_fb = compute_fb_mtd(str(p_start), str(p_end))
+                        a_bf = actual_fb.get('total_act_bf', 0)
+                        a_af = actual_fb.get('total_act_af', 0)
+                        a_total = a_bf + a_af
+                        
+                        diff = a_total - p_total
+                        accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
+                        
+                        st.markdown(f"📅 **覆盤區間：** `{p_start}` 至 `{p_end}`")
+                        st.markdown(f"🎯 **當時預測：** `{p_total}` 人次")
+                        st.markdown(f"🏆 **最終實際：** `{a_total}` 人次")
+                        
+                        acc_color = "green" if accuracy >= 90 else ("orange" if accuracy >= 75 else "red")
+                        diff_text = f"+{diff}" if diff > 0 else str(diff)
+                        st.markdown(f"📊 **準確率：** <span style='color:{acc_color}; font-size:1.2rem; font-weight:bold;'>{accuracy:.1f}%</span> (誤差: {diff_text} 人)", unsafe_allow_html=True)
+                        
+                        if diff > 0:
+                            st.caption("提示：實際人數大於預測，若誤差過大可能導致食材備料不足，建議微調到客率滑桿。")
+                        elif diff < 0:
+                            st.caption("提示：實際人數少於預測，若誤差過大可能導致食材報廢浪費，建議下調到客率。")
+
 
             st.divider()
 
