@@ -3646,18 +3646,30 @@ with tab_p:
                 _bf_ratio = 0.93  # 預設
                 _af_ratio = 0.07
 
-            # 抓取過去 30 天到客率 (轉換率)
-            start_30d = (today_d - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
-            end_1d = (today_d - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-            fb_30d = compute_fb_mtd(start_30d, end_1d)
-            
-            _bf_30d_est = fb_30d.get('bf_theme_est', 0) + fb_30d.get('bf_zq_est', 0)
-            _bf_30d_act = fb_30d.get('total_act_bf', 0)
-            _default_bf_rate = (_bf_30d_act / _bf_30d_est) if _bf_30d_est > 0 else 1.0
-            
-            _af_30d_est = fb_30d.get('af_theme_est', 0) + fb_30d.get('af_zq_est', 0)
-            _af_30d_act = fb_30d.get('total_act_af', 0)
-            _default_af_rate = (_af_30d_act / _af_30d_est) if _af_30d_est > 0 else 1.0
+            # 到客率計算：依選擇月份自動切換邏輯
+            is_past_month = (selected_date.year, selected_date.month) < (today_d.year, today_d.month)
+
+            if is_past_month:
+                # 過去已結束的月份 → 用那個月的實際資料計算真實到客率
+                import calendar as _cal
+                _, _last_d = _cal.monthrange(selected_date.year, selected_date.month)
+                m_start_str = f"{selected_date.year}-{selected_date.month:02d}-01"
+                m_end_str   = f"{selected_date.year}-{selected_date.month:02d}-{_last_d:02d}"
+                fb_ref = compute_fb_mtd(m_start_str, m_end_str)
+            else:
+                # 當月或未來月份 → 用過去 30 天當預測基準
+                start_30d = (today_d - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+                end_1d    = (today_d - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                fb_ref = compute_fb_mtd(start_30d, end_1d)
+
+            _bf_ref_est = fb_ref.get('bf_theme_est', 0) + fb_ref.get('bf_zq_est', 0)
+            _bf_ref_act = fb_ref.get('total_act_bf', 0)
+            _default_bf_rate = (_bf_ref_act / _bf_ref_est) if _bf_ref_est > 0 else 1.0
+
+            _af_ref_est = fb_ref.get('af_theme_est', 0) + fb_ref.get('af_zq_est', 0)
+            _af_ref_act = fb_ref.get('total_act_af', 0)
+            _default_af_rate = (_af_ref_act / _af_ref_est) if _af_ref_est > 0 else 1.0
+
             
             # 未來客數原始數據
             raw_future_guests = 0
@@ -3694,9 +3706,26 @@ with tab_p:
                 target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
             
             with col_w2:
-                # 讓用戶可調整折算係數
-                bf_conv_rate = st.slider("⚙️ 早餐到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_bf_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_bf_rate*100:.1f}%\n數值將用於折算未來的早餐人數")
-                af_conv_rate = st.slider("⚙️ 下午茶到客率折算 (%)", min_value=10, max_value=120, value=int(min(120, max(10, _default_af_rate * 100))), step=1, help=f"過去 30 天實際/預估到客率為 {_default_af_rate*100:.1f}%\n數值將用於折算未來的下午茶人數")
+                _rate_source_label = (
+                    f"{selected_date.year}/{selected_date.month:02d} 整月實際到客率"
+                    if is_past_month else "過去 30 天實際/預估到客率（預測基準）"
+                )
+                bf_conv_rate = st.slider(
+                    "⚙️ 早餐到客率折算 (%)",
+                    min_value=10, max_value=120,
+                    value=int(min(120, max(10, _default_bf_rate * 100))),
+                    step=1,
+                    help=f"{_rate_source_label}：早餐 {_default_bf_rate*100:.1f}%"
+                )
+                af_conv_rate = st.slider(
+                    "⚙️ 下午茶到客率折算 (%)",
+                    min_value=10, max_value=120,
+                    value=int(min(120, max(10, _default_af_rate * 100))),
+                    step=1,
+                    help=f"{_rate_source_label}：下午茶 {_default_af_rate*100:.1f}%"
+                )
+                if is_past_month:
+                    st.caption(f"📊 數值來自 {selected_date.year}/{selected_date.month:02d} 整月實際資料")
             
             # 套用折算率（直覺公式：未來總預約人數 × 到客率）
             adj_future_bf = int(raw_future_guests * (bf_conv_rate / 100.0))
