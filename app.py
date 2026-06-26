@@ -576,6 +576,7 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
             return 0
 
     def parse_date(raw):
+        import pandas as pd
         if pd.isna(raw) or str(raw).strip() == '':
             return None
         s = str(raw).replace('.0', '').strip()
@@ -586,7 +587,6 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
         if m2 and s.isdigit():
             return f"{s[:4]}-{s[4:6]}-{s[6:]}"
         try:
-            import pandas as pd
             if s.isdigit() and len(s) == 5:
                 d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
                 return d.strftime('%Y-%m-%d')
@@ -662,6 +662,7 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
             return 0
 
     def parse_date(raw):
+        import pandas as pd
         if pd.isna(raw) or str(raw).strip() == '':
             return None
         s = str(raw).replace('.0', '').strip()
@@ -676,7 +677,6 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
             return f"{s[:4]}-{s[4:6]}-{s[6:]}"
             
         try:
-            import pandas as pd
             # 3) Excel serial date (e.g. 45413 for 2024-05-01 approx)
             if s.isdigit() and len(s) == 5:
                 d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
@@ -746,6 +746,7 @@ def fetch_fb_future_data(hotel_type="站前館"):
             if '服務日期' in df.columns:
                 df['服務日期'] = df['服務日期'].astype(str).str.replace('.0', '', regex=False).str.strip()
                 def format_dt(s):
+                    import pandas as pd
                     if pd.isna(s) or s == '' or s.lower() == 'nan':
                         return s
                     if len(s) == 8 and s.isdigit():
@@ -754,7 +755,6 @@ def fetch_fb_future_data(hotel_type="站前館"):
                     if m:
                         return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
                     try:
-                        import pandas as pd
                         if s.isdigit() and len(s) == 5:
                             d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
                             return d.strftime('%Y-%m-%d')
