@@ -4316,7 +4316,7 @@ with tab_p:
                         df_daily_rest['date'])
 
                     def spread_monthly_cost(df_purchase_input, df_daily_base):
-                        """將全月總費用依每日來客比例分攤"""
+                        """將全月總費用平分到當月有來客的每一天 (保存規模經濟差異)"""
                         if df_purchase_input.empty or df_daily_base.empty:
                             return pd.Series(0, index=df_daily_base['日期_obj'])
                         
@@ -4325,16 +4325,15 @@ with tab_p:
                         total_month_cost = df_purchase_local[total_col].sum()
                         
                         df_base = df_daily_base.copy()
-                        # 對於 Peak 抓 effective_peak_guests，如果是 HH 就是抓 rest_hh_guests 還是什麼？
-                        # 原本的寫法中，不論哪一種，都用 `effective_peak_guests > 0` 判斷 has_guest。
-                        # 這裡為了精準，如果是在處理 hh，可以用全部總客數，不過為了簡單且不變動過多原邏輯，
-                        # 統一使用 effective_peak_guests 當作權重，因為 HH 客數跟 Peak 客數高度正相關。
-                        total_month_guests = df_base['effective_peak_guests'].sum()
                         
-                        if total_month_guests > 0:
-                            df_base['spread_cost'] = (df_base['effective_peak_guests'] / total_month_guests) * total_month_cost
+                        has_guests = df_base['effective_peak_guests'] > 0
+                        days_with_guests = has_guests.sum()
+                        
+                        df_base['spread_cost'] = 0.0
+                        if days_with_guests > 0:
+                            df_base.loc[has_guests, 'spread_cost'] = total_month_cost / days_with_guests
                         else:
-                            # 沒客人則平分
+                            # 沒客人則平分給所有天數
                             df_base['spread_cost'] = total_month_cost / len(df_base)
                             
                         return df_base.set_index('日期_obj')['spread_cost']
