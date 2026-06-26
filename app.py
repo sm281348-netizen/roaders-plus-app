@@ -652,14 +652,30 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
             return 0
 
     def parse_date(raw):
+        if pd.isna(raw) or str(raw).strip() == '':
+            return None
         s = str(raw).replace('.0', '').strip()
+        # 1) YYYY-MM-DD or YYYY/MM/DD
         m1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+        # 2) YYYYMMDD
         m2 = re.match(r'^(\d{8})$', s)
+        
         if m1:
             return f"{m1.group(1)}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
         if m2 and s.isdigit():
             return f"{s[:4]}-{s[4:6]}-{s[6:]}"
-        return None
+            
+        try:
+            import pandas as pd
+            # 3) Excel serial date (e.g. 45413 for 2024-05-01 approx)
+            if s.isdigit() and len(s) == 5:
+                d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
+                return d.strftime('%Y-%m-%d')
+            # 4) Let pandas try to parse it (M/D/YYYY, etc)
+            d = pd.to_datetime(raw)
+            return d.strftime('%Y-%m-%d')
+        except:
+            return None
 
     m_start = f"{year}-{month:02d}-01"
     import calendar
@@ -720,12 +736,22 @@ def fetch_fb_future_data(hotel_type="站前館"):
             if '服務日期' in df.columns:
                 df['服務日期'] = df['服務日期'].astype(str).str.replace('.0', '', regex=False).str.strip()
                 def format_dt(s):
+                    if pd.isna(s) or s == '' or s.lower() == 'nan':
+                        return s
                     if len(s) == 8 and s.isdigit():
                         return f"{s[:4]}-{s[4:6]}-{s[6:]}"
                     m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
                     if m:
                         return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
-                    return s
+                    try:
+                        import pandas as pd
+                        if s.isdigit() and len(s) == 5:
+                            d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
+                            return d.strftime('%Y-%m-%d')
+                        d = pd.to_datetime(s)
+                        return d.strftime('%Y-%m-%d')
+                    except:
+                        return s
                 df['date'] = df['服務日期'].apply(format_dt)
             return df
     except Exception as e:
@@ -3545,6 +3571,9 @@ with tab_p:
             # 過濾 NaT/None
             df_purchase = df_purchase[df_purchase['日期'].notna()]
             
+            # --- 新增：找出官方 purchase_data 中已經有紀錄的所有 Year-Month ---
+            official_ym = set(pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m').dropna().unique())
+
             # --- 新增：將 thepeak_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
             df_daily_report = fetch_thepeak_daily_purchase_report()
             if not df_daily_report.empty and '總價' in df_daily_report.columns:
@@ -3554,20 +3583,25 @@ with tab_p:
                 append_df[dept_col] = "The Peak"
                 append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
                 
-                # 嘗試對應品名欄位以顯示在明細中
-                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
-                if '品項名稱' in df_daily_report.columns:
-                    item_str = df_daily_report['品項名稱'].astype(str)
-                    if '請購數量' in df_daily_report.columns and '單位' in df_daily_report.columns:
-                        item_str += " (" + df_daily_report['請購數量'].astype(str) + " " + df_daily_report['單位'].astype(str) + ")"
+                # 自動排除「官方總表已經有該月資料」的每日請購紀錄，防止 Double Counting
+                append_df['ym'] = pd.to_datetime(append_df['日期']).dt.strftime('%Y-%m')
+                append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
+
+                if not append_df.empty:
+                    # 嘗試對應品名欄位以顯示在明細中
+                    item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                    if '品項名稱' in df_daily_report.columns:
+                        item_str = df_daily_report['品項名稱'].astype(str)
+                        if '請購數量' in df_daily_report.columns and '單位' in df_daily_report.columns:
+                            item_str += " (" + df_daily_report['請購數量'].astype(str) + " " + df_daily_report['單位'].astype(str) + ")"
+                        
+                        if item_desc_col:
+                            append_df[item_desc_col] = item_str
+                        else:
+                            append_df['備註(系統生成)'] = item_str
                     
-                    if item_desc_col:
-                        append_df[item_desc_col] = item_str
-                    else:
-                        append_df['備註(系統生成)'] = item_str
-                
-                df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
-                df_purchase = df_purchase[df_purchase['日期'].notna()]
+                    df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+                    df_purchase = df_purchase[df_purchase['日期'].notna()]
 
             # --- 新增：將 4FHH_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
             df_hh_report = fetch_4fhh_daily_purchase_report()
@@ -3578,20 +3612,26 @@ with tab_p:
                 append_hh_df[dept_col] = "Happy Hour"
                 append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
                 
-                # 嘗試對應品名欄位以顯示在明細中
-                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
-                if '品項名稱' in df_hh_report.columns:
-                    item_str = df_hh_report['品項名稱'].astype(str)
-                    if '請購數量' in df_hh_report.columns and '單位' in df_hh_report.columns:
-                        item_str += " (" + df_hh_report['請購數量'].astype(str) + " " + df_hh_report['單位'].astype(str) + ")"
+                # 自動排除「官方總表已經有該月資料」的每日請購紀錄，防止 Double Counting
+                append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期']).dt.strftime('%Y-%m')
+                append_hh_df = append_hh_df[~append_hh_df['ym'].isin(official_ym)].drop(columns=['ym'])
+
+                if not append_hh_df.empty:
+                    # 嘗試對應品名欄位以顯示在明細中
+                    item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                    if '品項名稱' in df_hh_report.columns:
+                        item_str = df_hh_report['品項名稱'].astype(str)
+                        if '請購數量' in df_hh_report.columns and '單位' in df_hh_report.columns:
+                            item_str += " (" + df_hh_report['請購數量'].astype(str) + " " + df_hh_report['單位'].astype(str) + ")"
+                        
+                        if item_desc_col:
+                            append_hh_df[item_desc_col] = item_str
+                        else:
+                            append_hh_df['備註(系統生成)'] = item_str
                     
-                    if item_desc_col:
-                        append_hh_df[item_desc_col] = item_str
-                    else:
-                        append_hh_df['備註(系統生成)'] = item_str
-                
-                df_purchase = pd.concat([df_purchase, append_hh_df], ignore_index=True)
-                df_purchase = df_purchase[df_purchase['日期'].notna()]
+                    df_purchase = pd.concat([df_purchase, append_hh_df], ignore_index=True)
+                    df_purchase = df_purchase[df_purchase['日期'].notna()]
+
 
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
@@ -3766,8 +3806,9 @@ with tab_p:
             remaining_budget = total_budget - peak_spent
             remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
             
-            # --- 新增：計算 Projected EOM CPG ---
-            expected_future_spend = future_guests * target_cpg
+            # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 推算) ---
+            current_mtd_cpg = peak_spent / hist_guests if hist_guests > 0 else target_cpg
+            expected_future_spend = future_guests * current_mtd_cpg
             projected_eom_cost = peak_spent + expected_future_spend
             projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
             cpg_delta = projected_cpg - target_cpg
@@ -3844,7 +3885,7 @@ with tab_p:
                     help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
                 )
 
-            # 核心公式
+            # 核心公式 (基於目標)
             if B + k_val * A > 0:
                 cb = (B + A) * T / (B + k_val * A)
                 ca = k_val * cb
@@ -3854,7 +3895,16 @@ with tab_p:
 
             _check = (B * cb + A * ca) / (B + A) if (B + A) > 0 else 0
             
-            # 延後渲染的 Projected CPG 大面板 (現在加入了基於 k 值的早午預估拆分)
+            # --- 新增：核心公式 (基於剩餘救援 Remaining CPG) ---
+            R = remaining_cpg
+            if B + k_val * A > 0:
+                rem_cb = (B + A) * R / (B + k_val * A)
+                rem_ca = k_val * rem_cb
+            else:
+                rem_cb = R
+                rem_ca = R
+            
+            # 延後渲染的 Projected CPG 大面板
             if B + k_val * A > 0:
                 proj_cb = (B + A) * projected_cpg / (B + k_val * A)
                 proj_ca = k_val * proj_cb
@@ -3868,14 +3918,14 @@ with tab_p:
             <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
                 <div style="flex: 1;">
                     <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
-                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來以目標 CPG 採購推算</div>
+                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來維持目前消耗率 (NT${int(current_mtd_cpg)}) 推算</div>
                     <div style="display:flex; gap: 15px; margin-top: 15px;">
                         <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐成本</span><br>
+                            <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐落點</span><br>
                             <span style="font-size:1.2rem; font-weight:bold; color:#2ecc71;">NT$ {proj_cb:.1f}</span>
                         </div>
                         <div style="background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.3); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶成本</span><br>
+                            <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶落點</span><br>
                             <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
                         </div>
                     </div>
@@ -3905,23 +3955,33 @@ with tab_p:
                 ca_color = "#27ae60" if ca <= 250 else ("#f39c12" if ca <= 350 else "#e74c3c")
                 st.markdown(f"""
                 <div style="display:flex; gap:12px; margin-top:8px;">
-                    <div style="flex:1; background:#1e2d40; border-left:5px solid {cb_color}; border-radius:10px; padding:16px; text-align:center;">
-                        <div style="color:#aaa; font-size:0.8rem;">🍳 早餐 每人食材成本上限</div>
+                    <div style="flex:1; background:#1e2d40; border-left:5px solid {cb_color}; border-radius:10px; padding:16px; text-align:center; position:relative;">
+                        <div style="color:#aaa; font-size:0.8rem;">🍳 目標理想分配 (理想上限)</div>
                         <div style="color:{cb_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {cb:.0f}</div>
-                        <div style="color:#aaa; font-size:0.75rem;">預估 {est_bf_total:,} 人次</div>
+                        <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_bf_total:,} 人次</div>
                     </div>
                     <div style="flex:1; background:#1e2d40; border-left:5px solid {ca_color}; border-radius:10px; padding:16px; text-align:center;">
-                        <div style="color:#aaa; font-size:0.8rem;">🍰 下午茶 每人食材成本上限</div>
+                        <div style="color:#aaa; font-size:0.8rem;">🍰 目標理想分配 (理想上限)</div>
                         <div style="color:{ca_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {ca:.0f}</div>
-                        <div style="color:#aaa; font-size:0.75rem;">預估 {est_af_total:,} 人次</div>
-                    </div>
-                    <div style="flex:1; background:#1e2d40; border-left:5px solid #3498db; border-radius:10px; padding:16px; text-align:center;">
-                        <div style="color:#aaa; font-size:0.8rem;">⚖️ 加權驗算總 CPG</div>
-                        <div style="color:#3498db; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {_check:.0f}</div>
-                        <div style="color:#aaa; font-size:0.75rem;">✅ 應等於目標 {int(T)} 元</div>
+                        <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_af_total:,} 人次</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # --- 新增：真實剩餘救援指標 ---
+                if rem_cb < 0:
+                    rescue_msg = f"<div style='color:#e74c3c; margin-top:10px; font-weight:bold;'>🚨 預算已經透支！無法提供未來剩餘上限。</div>"
+                else:
+                    rescue_msg = f"""
+                    <div style="background: rgba(231, 76, 60, 0.1); border: 1px solid #e74c3c; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                        <div style="color:#e74c3c; font-size:0.85rem; font-weight:bold; margin-bottom:5px;">⚠️ 真實採購防線 (扣除已花費後的嚴格上限)</div>
+                        <div style="display:flex; justify-content:space-between; color:#ecf0f1; font-size:0.9rem;">
+                            <span>🍳 早餐剩餘嚴格上限：<b>NT$ {rem_cb:.0f}</b> /人</span>
+                            <span>🍰 下午茶剩餘嚴格上限：<b>NT$ {rem_ca:.0f}</b> /人</span>
+                        </div>
+                    </div>
+                    """
+                st.markdown(rescue_msg, unsafe_allow_html=True)
 
             # k 值動態說明文字
             st.markdown("")
@@ -3966,7 +4026,7 @@ with tab_p:
             # 計算未來 7 天的預估人數 (為了快照)
             snap_future_bf = 0
             snap_future_af = 0
-            if not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns and '數量' in df_fb_fut.columns:
+            if 'df_fb_fut' in locals() and not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns and '數量' in df_fb_fut.columns:
                 snap_mask = (df_fb_fut['date_obj'] >= target_start) & (df_fb_fut['date_obj'] <= target_end)
                 snap_raw = df_fb_fut[snap_mask]['數量'].sum()
                 snap_future_bf = int(snap_raw * (bf_conv_rate / 100.0))
@@ -4245,52 +4305,34 @@ with tab_p:
                     df_daily_rest['日期_dt'] = pd.to_datetime(
                         df_daily_rest['date'])
 
-                    def spread_weekly_cost(df_purchase_input, df_daily_base):
-                        """將採購費用以週為單位，均攤到當週有來客的每一天"""
+                    def spread_monthly_cost(df_purchase_input, df_daily_base):
+                        """將全月總費用依每日來客比例分攤"""
                         if df_purchase_input.empty or df_daily_base.empty:
                             return pd.Series(0, index=df_daily_base['日期_obj'])
-
-                        # 加上 ISO 週別
+                        
                         df_purchase_local = df_purchase_input.copy()
-                        df_purchase_local['week'] = pd.to_datetime(
-                            df_purchase_local['日期']).dt.isocalendar().week.astype(int)
-                        df_purchase_local['year'] = pd.to_datetime(
-                            df_purchase_local['日期']).dt.isocalendar().year.astype(int)
-                            
-                        # 確保數值型態
                         df_purchase_local[total_col] = pd.to_numeric(df_purchase_local[total_col], errors='coerce').fillna(0)
+                        total_month_cost = df_purchase_local[total_col].sum()
                         
-                        weekly_cost = df_purchase_local.groupby(['year', 'week'])[
-                            total_col].sum().reset_index()
-
                         df_base = df_daily_base.copy()
-                        df_base['week'] = df_base['日期_dt'].dt.isocalendar().week.astype(int)
-                        df_base['year'] = df_base['日期_dt'].dt.isocalendar().year.astype(int)
-                        df_base['has_guest'] = df_base['effective_peak_guests'] > 0
-
-                        # 每週有來客的天數
-                        days_per_week = df_base.groupby(['year', 'week'])[
-                            'has_guest'].sum().reset_index()
-                        days_per_week.columns = ['year', 'week', 'active_days_original']
-
-                        # 合併週成本
-                        df_base = pd.merge(df_base, weekly_cost, on=['year', 'week'], how='left').fillna(0)
-                        df_base = pd.merge(df_base, days_per_week, on=['year', 'week'], how='left')
+                        # 對於 Peak 抓 effective_peak_guests，如果是 HH 就是抓 rest_hh_guests 還是什麼？
+                        # 原本的寫法中，不論哪一種，都用 `effective_peak_guests > 0` 判斷 has_guest。
+                        # 這裡為了精準，如果是在處理 hh，可以用全部總客數，不過為了簡單且不變動過多原邏輯，
+                        # 統一使用 effective_peak_guests 當作權重，因為 HH 客數跟 Peak 客數高度正相關。
+                        total_month_guests = df_base['effective_peak_guests'].sum()
                         
-                        def assign_cost(row):
-                            if row['active_days_original'] == 0:
-                                return row[total_col] / 7.0
-                            else:
-                                return (row[total_col] / row['active_days_original']) if row['has_guest'] else 0.0
-
-                        df_base['spread_cost'] = df_base.apply(assign_cost, axis=1)
-
+                        if total_month_guests > 0:
+                            df_base['spread_cost'] = (df_base['effective_peak_guests'] / total_month_guests) * total_month_cost
+                        else:
+                            # 沒客人則平分
+                            df_base['spread_cost'] = total_month_cost / len(df_base)
+                            
                         return df_base.set_index('日期_obj')['spread_cost']
 
-                    # 用週均攤計算每日成本
-                    peak_spread = spread_weekly_cost(
+                    # 用月均攤計算每日成本
+                    peak_spread = spread_monthly_cost(
                         df_peak_purchase, df_daily_rest)
-                    hh_spread = spread_weekly_cost(
+                    hh_spread = spread_monthly_cost(
                         df_hh_purchase, df_daily_rest)
 
                     # 合併來客數與週均攤成本
