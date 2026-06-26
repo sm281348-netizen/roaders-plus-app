@@ -576,6 +576,8 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
             return 0
 
     def parse_date(raw):
+        if pd.isna(raw) or str(raw).strip() == '':
+            return None
         s = str(raw).replace('.0', '').strip()
         m1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
         m2 = re.match(r'^(\d{8})$', s)
@@ -583,7 +585,15 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
             return f"{m1.group(1)}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
         if m2 and s.isdigit():
             return f"{s[:4]}-{s[4:6]}-{s[6:]}"
-        return None
+        try:
+            import pandas as pd
+            if s.isdigit() and len(s) == 5:
+                d = pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')
+                return d.strftime('%Y-%m-%d')
+            d = pd.to_datetime(raw)
+            return d.strftime('%Y-%m-%d')
+        except:
+            return None
 
     # --- 讀取 f&b_report (RTS / 站前館，此分頁只放在 RTS) ---
     df_report = None
