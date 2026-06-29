@@ -468,7 +468,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
     注意：F&B 資料解析不在此函數內，請使用 compute_fb_mtd() 獨立讀取。"""
-    actual_sheet = "occ_data" if worksheet == "daily_data" else worksheet
+    actual_sheet = "occ_data" if worksheet == "occ_data" else worksheet
     try:
         df = conn.read(worksheet=actual_sheet, ttl=0)
     except Exception as e:
@@ -478,7 +478,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
         else:
             raise e
 
-    if worksheet == "daily_data" and df is not None and not df.empty:
+    if worksheet == "occ_data" and df is not None and not df.empty:
         # Strip and lowercase string columns to avoid whitespace and case issues
         df.columns = [str(c).strip().lower() for c in df.columns]
         
@@ -889,7 +889,7 @@ def standardize_df_dates(df):
 def get_daily_data(d_str):
     try:
         # 走集中快取層 (60s TTL)，避免大量 rerun 打爆 API
-        df = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+        df = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
         if df is not None and not df.empty:
             # 確保日期欄位為字串格式 (YYYY-MM-DD) 以供比對
             df = standardize_df_dates(df)
@@ -922,7 +922,7 @@ def get_daily_data(d_str):
 
 def save_daily_data(d_str, data_dict):
     try:
-        df = conn.read(worksheet="daily_data", ttl="0")
+        df = conn.read(worksheet="occ_data", ttl="0")
         if df is None:
             df = pd.DataFrame()
 
@@ -937,7 +937,7 @@ def save_daily_data(d_str, data_dict):
         df = pd.concat([df, new_row], ignore_index=True)
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
-        conn.update(worksheet="daily_data", data=df.fillna(""))
+        conn.update(worksheet="occ_data", data=df.fillna(""))
         _get_cached_sheet_v3.clear()
         return True
     except Exception as e:
@@ -1001,7 +1001,7 @@ def get_daily_log(d_str):
     # Fallback to daily_data if not found in daily_logs (backward compatibility)
     # 直接走快取，不額外打 API
     try:
-        df_old = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+        df_old = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
         if df_old is not None and not df_old.empty:
             df_old = standardize_df_dates(df_old)
             res = df_old[df_old['date'] == d_str]
@@ -1063,7 +1063,7 @@ def get_month_delta(d, delta):
 
 def prepare_monthly_report(year, month):
     try:
-        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
         month_str = f"{year}-{month:02d}"
         df = df_all[df_all['date'].str.startswith(
             month_str, na=False)].sort_values('date')
@@ -1106,7 +1106,7 @@ def fetch_month_summary(year, month):
     m_end = f"{year}-{month:02d}-{last_day:02d}"
 
     try:
-        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
         if df_all is not None and not df_all.empty:
             df_all = standardize_df_dates(df_all)
             # 確保日期唯一，避免重複加總
@@ -1210,7 +1210,7 @@ def get_other_revenue(year_month_str):
 @st.cache_data(ttl=3600)
 def fetch_yearly_metrics(year):
     try:
-        df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+        df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
         if df_all is None or df_all.empty:
             return 0.0, 0.0
         df_all = standardize_df_dates(df_all)
@@ -1513,7 +1513,7 @@ if current_hotel != "採購":
     if f"monthly_report_{month_str}" not in st.session_state:
         if st.sidebar.button(f"📅 當月 {month_str} 營運紀錄匯出", use_container_width=True):
             # 匯出按鈕走快取即可，不需要強制最新
-            df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+            df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
             df_month = df_all[df_all['date'].str.startswith(
                 month_str, na=False)].sort_values('date')
 
@@ -1740,7 +1740,7 @@ def parse_and_save_jinxu(file):
                            'adr': adr, 'revenue': rev, 'total_rooms': rooms})
 
         if updates:
-            df_existing = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel).copy()
+            df_existing = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel).copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
             df_existing = standardize_df_dates(df_existing)
@@ -1757,7 +1757,7 @@ def parse_and_save_jinxu(file):
             if 'date' in df_final.columns:
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
-            conn.update(worksheet="daily_data", data=df_final.fillna(""))
+            conn.update(worksheet="occ_data", data=df_final.fillna(""))
             _get_cached_sheet_v3.clear()
             return len(updates)
 
@@ -1863,7 +1863,7 @@ def parse_and_save_restaurant(file, current_year):
 
         if parsed_days:
             # 讀取現有庫內資料
-            df_existing = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel).copy()
+            df_existing = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel).copy()
             if df_existing is None:
                 df_existing = pd.DataFrame()
 
@@ -1898,7 +1898,7 @@ def parse_and_save_restaurant(file, current_year):
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
             # 寫回資料庫
-            conn.update(worksheet="daily_data", data=df_final.fillna(""))
+            conn.update(worksheet="occ_data", data=df_final.fillna(""))
             _get_cached_sheet_v3.clear()
 
         # 清除快取以確保重整後能看到新數據
@@ -2039,7 +2039,7 @@ if current_hotel != "採購":
         start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
         try:
-            df_all = _get_cached_sheet_v3("daily_data", hotel_type=current_hotel)
+            df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
             if df_all is not None and not df_all.empty:
                 df_all = standardize_df_dates(df_all)
                 df_all = df_all.drop_duplicates(subset='date', keep='last')
