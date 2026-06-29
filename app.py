@@ -5372,23 +5372,25 @@ with tab_s:
         
         st.info(f"ℹ️ 系統已自動判斷並載入 **{target_period}** 的菜價表作為計價基礎。")
         
-        # 準備 data_editor 的資料結構
-        df_order_form = df_target[['item_name', 'price', 'unit']].copy()
-        df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
-        # 初始化購物車
-        if 'purchase_cart' not in st.session_state:
-            st.session_state.purchase_cart = {}
-            
+        # 初始化購物車 (優化 A：分部門儲存，切換部門時自動隔離購物車)
+        cart_key = f"purchase_cart_{order_dept}"
+        if cart_key not in st.session_state:
+            st.session_state[cart_key] = {}
+        # 相容舊的 purchase_cart 格式，若存在則遷移
+        if 'purchase_cart' in st.session_state and st.session_state.purchase_cart:
+            st.session_state[cart_key] = st.session_state.purchase_cart
+            del st.session_state['purchase_cart']
+
         # 獨立的搜尋框，避免遮擋
         search_term = st.text_input("🔍 搜尋品項名稱", "", help="輸入關鍵字即可過濾下方表格")
         
-        # 準備資料與過濾
+        # 漏洞1修復：只建立一次 df_order_form，搜尋過濾後帶入購物車數量
         df_order_form = df_target[['item_name', 'price', 'unit']].copy()
         if search_term:
             df_order_form = df_order_form[df_order_form['item_name'].str.contains(search_term, na=False, case=False)]
             
         # 帶入購物車數量
-        df_order_form['請購數量'] = df_order_form['item_name'].apply(lambda x: st.session_state.purchase_cart.get(x, 0.0))
+        df_order_form['請購數量'] = df_order_form['item_name'].apply(lambda x: st.session_state[cart_key].get(x, 0.0))
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
         df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
         
@@ -5410,19 +5412,19 @@ with tab_s:
             }
         )
         
-        # 將編輯結果寫回購物車
+        # 將編輯結果寫回購物車（依部門分開儲存）
         for _, row in edited_df.iterrows():
             item = row['品項名稱']
             qty = row['請購數量']
             if qty > 0:
-                st.session_state.purchase_cart[item] = qty
-            elif item in st.session_state.purchase_cart:
-                del st.session_state.purchase_cart[item]
+                st.session_state[cart_key][item] = qty
+            elif item in st.session_state[cart_key]:
+                del st.session_state[cart_key][item]
                 
-        # 結算與已選清單
+        # 結算與已選清單（從分部門購物車讀取）
         final_order_list = []
         current_total = 0
-        for item, qty in st.session_state.purchase_cart.items():
+        for item, qty in st.session_state[cart_key].items():
             price_series = df_target.loc[df_target['item_name'] == item, 'price']
             if not price_series.empty:
                 price = price_series.values[0]
@@ -5452,19 +5454,28 @@ with tab_s:
                 final_order_df.insert(0, '請購日期', order_date.strftime("%Y-%m-%d"))
                 final_order_df['建檔時間'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
+                # 漏洞2修復：用 try/except 包裹，防止 success 未定義導致 NameError
+                success = False
                 with st.spinner("正在將請購單寫入資料庫..."):
-                    if "Happy Hour" in order_dept:
-                        success = append_4fhh_daily_purchase_report(final_order_df)
-                        if success:
-                            fetch_4fhh_daily_purchase_report.clear()
-                    else:
-                        success = append_thepeak_daily_purchase_report(final_order_df)
-                        if success:
-                            fetch_thepeak_daily_purchase_report.clear()
+                    try:
+                        if "Happy Hour" in order_dept:
+                            success = append_4fhh_daily_purchase_report(final_order_df)
+                            if success:
+                                fetch_4fhh_daily_purchase_report.clear()
+                        else:
+                            success = append_thepeak_daily_purchase_report(final_order_df)
+                            if success:
+                                fetch_thepeak_daily_purchase_report.clear()
+                    except Exception as e:
+                        success = False
+                        st.error(f"❌ 寫入資料庫時發生錯誤，請稍後再試。錯誤訊息：{e}")
                         
                     if success:
-                        st.session_state.purchase_cart = {} # 送出後清空購物車
-                        st.success(f"✅ 請購單送出成功！本次共為 {order_dept} 採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。請點擊右下角 Manage app → Reboot 重啟以更新預算！")
+                        # 漏洞3修復：送出後清空對應部門購物車，並自動重整頁面 (無需手動 Reboot)
+                        st.session_state[cart_key] = {}
+                        st.success(f"✅ 請購單送出成功！本次共為 {order_dept} 採購 {len(final_order_df)} 項，總計 NT$ {int(current_total):,}。頁面將自動重整以更新預算...")
+                        import time; time.sleep(1.5)
+                        st.rerun()
         
         st.divider()
 
@@ -5472,7 +5483,7 @@ with tab_s:
         if n_periods >= 2:
             st.markdown("#### 📈 A. 菜商物價指數")
             st.info(
-                "💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**")
+                "💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**\n\n⚠️ **注意**：本指數採用**等權重平均計算**，每個品項貢獻相同的權重，高波動但採購量小的品項（如香草、松露）可能略微放大指數，請搭配品項趨勢圖一併判斷。")
 
             index_df = get_market_index_df(sp_df)
             base_period = periods_available[0]
@@ -5514,6 +5525,7 @@ with tab_s:
 
         # ── B. 本月食材安全預算範圍 ──────────────────────────────
         st.markdown("#### 💰 B. 本月食材安全預算範圍")
+        st.caption("ℹ️ 此預算為本月餐廳**整體**食材預算，涵蓋 The Peak 與 Happy Hour 所有部門的合計總額度。")
 
         # 抓取本月總預算與客數 (直接沿用採購分析 tab_p 戰情室的計算結果)
         total_guests_for_budget = total_est_guests if 'total_est_guests' in locals() else 0
@@ -5584,14 +5596,19 @@ with tab_s:
             latest_df = latest_df.merge(
                 prev_df, on=['item_name', 'unit'], how='left')
             latest_df['change'] = latest_df['price'] - latest_df['prev_price']
-            latest_df['change_pct'] = (
-                latest_df['change'] / latest_df['prev_price'] * 100).round(1)
+            # 漏洞4修復：防止 prev_price 為 0 時產生除以零錯誤
+            latest_df['change_pct'] = latest_df.apply(
+                lambda r: round(r['change'] / r['prev_price'] * 100, 1)
+                if pd.notna(r.get('prev_price')) and r.get('prev_price', 0) > 0
+                else float('nan'),
+                axis=1
+            )
 
-            # --- 新增：計算今年至今(全歷史)的純平基準與極值 ---
+            # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
             ytd_stats = sp_df.groupby(['item_name', 'unit'])['price'].agg(
-                ['mean', 'max', 'min']).reset_index()
+                ['mean', 'max', 'min', 'count']).reset_index()
             ytd_stats.rename(
-                columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min'}, inplace=True)
+                columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min', 'count': 'ytd_periods'}, inplace=True)
             latest_df = latest_df.merge(
                 ytd_stats, on=['item_name', 'unit'], how='left')
 
@@ -5776,12 +5793,19 @@ with tab_s:
             alert_down = ranked_all[ranked_all['change_pct']
                                     < -5].sort_values('change_pct')
 
-            # 歷史天價警報 (目前價格等於全歷史最高價，且歷史有波動)
-            alert_all_time_high = ranked_all[(ranked_all['price'] >= ranked_all['ytd_max']) & (
-                ranked_all['ytd_max'] > ranked_all['ytd_min'])]
-            # 歷史低點警報
-            alert_all_time_low = ranked_all[(ranked_all['price'] <= ranked_all['ytd_min']) & (
-                ranked_all['ytd_max'] > ranked_all['ytd_min'])]
+            # 漏洞5修復：歷史天價/低點警報需至少 3 期資料，避免剛上線時的假警報
+            MIN_PERIODS_FOR_ATH = 3
+            alert_all_time_high = ranked_all[
+                (ranked_all['price'] >= ranked_all['ytd_max']) &
+                (ranked_all['ytd_max'] > ranked_all['ytd_min']) &
+                (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
+            ]
+            # 歷史低點警報 (同樣需至少 3 期)
+            alert_all_time_low = ranked_all[
+                (ranked_all['price'] <= ranked_all['ytd_min']) &
+                (ranked_all['ytd_max'] > ranked_all['ytd_min']) &
+                (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
+            ]
 
             if not alert_all_time_high.empty:
                 high_items = '、'.join(
@@ -5812,9 +5836,9 @@ with tab_s:
                 summary_rows = []
                 for _, r in ranked_all.iterrows():
                     is_ath = (r['price'] >= r['ytd_max']) and (
-                        r['ytd_max'] > r['ytd_min'])
+                        r['ytd_max'] > r['ytd_min']) and (r.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
                     is_atl = (r['price'] <= r['ytd_min']) and (
-                        r['ytd_max'] > r['ytd_min'])
+                        r['ytd_max'] > r['ytd_min']) and (r.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
 
                     if is_ath:
                         strategy = "🚨 歷史高點！強烈建議停用"
@@ -5931,10 +5955,13 @@ with tab_s:
                             if not row.empty and 'bf_act' in row.columns:
                                 bf_count = pd.to_numeric(row['bf_act'], errors='coerce').fillna(0).iloc[0]
                     else:
+                        # 優化 C：未來日期使用預估欄位 bf_est，若不存在才退回 bf_act
                         if not df_fut.empty and 'date' in df_fut.columns:
                             row = df_fut[df_fut['date'] == next_day]
-                            if not row.empty and 'bf_act' in row.columns:
-                                bf_count = pd.to_numeric(row['bf_act'], errors='coerce').sum() # 可能有多列，全部加總
+                            if not row.empty:
+                                est_col = 'bf_est' if 'bf_est' in row.columns else ('bf_act' if 'bf_act' in row.columns else None)
+                                if est_col:
+                                    bf_count = pd.to_numeric(row[est_col], errors='coerce').sum() # 可能有多列，全部加總
 
                     c = s_radar_cols[i % 5]
                     c.markdown(f"""
