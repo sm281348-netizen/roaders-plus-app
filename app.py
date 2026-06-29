@@ -1522,7 +1522,7 @@ if current_hotel != "採購":
             else:
                 with st.sidebar.status("正在產生報表...", expanded=False):
                     full_month_text = f"【路徒行旅 Plus {current_hotel} {month_str} 全月營運紀錄匯總】\n\n"
-                    for d in df_all['date']:
+                    for d in df_month['date']:
                         full_month_text += generate_report_text(d) + "\n\n"
                     st.session_state[f"monthly_report_{month_str}"] = full_month_text
                 st.rerun()
