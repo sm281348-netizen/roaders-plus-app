@@ -6835,9 +6835,16 @@ def render_report_tab():
         y_adr, y_pure_adr = fetch_yearly_metrics(year)
         
         # 2. Budget / CPG
-        total_est_guests = st.session_state.get('_budget_est_guests', 0)
-        total_budget = st.session_state.get('_budget_total', 0)
-        cpg_target = st.session_state.get('tab_p_target_cpg', 240)
+        import calendar
+        last_day = calendar.monthrange(year, month)[1]
+        start_of_month = f"{year}-{month:02d}-01"
+        end_of_month = f"{year}-{month:02d}-{last_day:02d}"
+        fb_data = compute_fb_mtd(start_of_month, end_of_month, _dummy_hotel=current_hotel)
+        
+        hist_guests = fb_data.get('total_act_bf', 0) + fb_data.get('total_act_af', 0)
+        peak_spent = fb_data.get('peak_spent', 0)
+        cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
+        cpg_target = st.session_state.get('tab_p_target_cpg', 150)
         
         # 3. Trends for the year
         year_summaries = []
@@ -6931,7 +6938,7 @@ def render_report_tab():
     revpar_diff = revpar_val - revpar_ly
     revpar_status = "🟢 優" if revpar_diff > 0 else "🔴 差"
     
-    cpg_actual = total_budget / total_est_guests if total_est_guests > 0 else 0
+    # removed cpg_actual
     cpg_status = "🟢 佳 (未超標)" if cpg_actual <= cpg_target else "🔴 警告 (超標)"
     
     fh_days = curr_summary['occ90_days']
