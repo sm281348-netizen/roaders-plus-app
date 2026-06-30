@@ -14,7 +14,14 @@ if not hasattr(gspread.client.Client, '_original_request_patched'):
                 return original_request(self, method, endpoint, params=params, data=data, json=json, files=files, headers=headers)
             except APIError as e:
                 err_msg = str(e).lower()
-                if "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg:
+                is_retryable = False
+                
+                if hasattr(e, 'response') and getattr(e.response, 'status_code', 0) == 429:
+                    is_retryable = True
+                elif "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg or "redacted" in err_msg:
+                    is_retryable = True
+                    
+                if is_retryable:
                     if attempt < 4:
                         time.sleep(15)  # Sleep 15s to wait out the 60s quota window
                         continue
