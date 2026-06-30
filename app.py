@@ -5610,7 +5610,7 @@ with tab_s:
 
             # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
             current_year = selected_date.year
-            ytd_sp_df = sp_df[sp_df['period_dt'].dt.year == current_year] if not sp_df.empty else sp_df
+            ytd_sp_df = sp_df[sp_df['period_dt'].apply(lambda x: getattr(x, 'year', None)) == current_year] if not sp_df.empty else sp_df
             ytd_stats = ytd_sp_df.groupby(['item_name', 'unit'])['price'].agg(
                 ['mean', 'max', 'min', 'count']).reset_index()
             ytd_stats.rename(
