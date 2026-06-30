@@ -6840,70 +6840,55 @@ def render_report_tab():
         start_of_month = f"{year}-{month:02d}-01"
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
         
+        # Calculate actual peak_spent and hist_guests EXACTLY as 採購分析 does
+        import calendar
+        last_day = calendar.monthrange(year, month)[1]
+        start_of_month = f"{year}-{month:02d}-01"
+        end_of_month = f"{year}-{month:02d}-{last_day:02d}"
+        
+        # 1. Get hist_guests (from occ_data natively)
         hist_guests = 0
-        df_occ = curr_summary.get('df')
-        df_fb_daily = get_combined_fb_daily_df(year, month, current_hotel)
-        
-        if df_occ is not None and not df_occ.empty:
-            df_merged = df_occ.copy()
-            if not df_fb_daily.empty:
-                # Merge F&B report data on 'date'
-                df_merged = df_merged.merge(df_fb_daily, on='date', how='left')
-        elif not df_fb_daily.empty:
-            df_merged = df_fb_daily.copy()
-        else:
-            df_merged = pd.DataFrame()
-            
-        if not df_merged.empty:
-            for c in ['peak_guests', 'bf_act', 'af_act']:
-                if c in df_merged.columns:
-                    df_merged[c] = pd.to_numeric(df_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                else:
-                    df_merged[c] = 0
-            
-            for _, row in df_merged.iterrows():
-                p_guests = row['peak_guests']
-                if p_guests > 0:
-                    hist_guests += p_guests
-                else:
-                    hist_guests += (row['bf_act'] + row['af_act'])
-        
-        # Calculate actual peak_spent from purchase_data
+        t_df = curr_summary.get('df', pd.DataFrame()).copy()
+        if not t_df.empty:
+            for _c in ['rest_day_guests', 'bf_total_act', 'af_total_act']:
+                if _c in t_df.columns:
+                    t_df[_c] = pd.to_numeric(t_df[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+            if 'rest_day_guests' in t_df.columns and t_df['rest_day_guests'].sum() > 0:
+                hist_guests = t_df['rest_day_guests'].sum()
+            elif 'bf_total_act' in t_df.columns:
+                hist_guests = (t_df['bf_total_act'] + t_df.get('af_total_act', 0)).sum()
+
+        # 2. Get peak_spent (from purchase_data + daily report)
         df_purchase = get_purchase_data_cached()
         peak_spent = 0
-        df_daily_report = fetch_thepeak_daily_purchase_report()
-        
-        # 1. Base monthly procurement cost
-        if not df_purchase.empty:
-            df_p = df_purchase.copy()
-            df_p.columns = df_p.columns.astype(str).str.strip()
-            date_col = next((c for c in df_p.columns if '日期' in c or 'Date' in c or 'date' in c), None)
-            if date_col:
-                df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
-                df_month_p = df_p[df_p[date_col].dt.strftime('%Y-%m') == month_str].copy()
-                if not df_month_p.empty:
-                    dept_col = next((c for c in df_month_p.columns if '部門' in c or 'Dept' in c or '單位' in c or '部\n門' in c), None)
-                    if dept_col:
-                        all_d_list = df_month_p[dept_col].dropna().astype(str).unique().tolist()
-                        hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                        peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '早下', 'THEPEAK', '餐飲']) and d not in hh_m]
-                        subtotal_col = next((c for c in df_month_p.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
-                        if subtotal_col:
-                            df_month_p[subtotal_col] = pd.to_numeric(df_month_p[subtotal_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                            peak_spent += df_month_p[df_month_p[dept_col].isin(peak_m)][subtotal_col].sum()
-                            
-        # 2. Add daily procurement cost (un-monthly-closed data)
-        if not df_daily_report.empty and '總計' in df_daily_report.columns and '採購日' in df_daily_report.columns:
-            df_d = df_daily_report.copy()
-            df_d['採購日'] = pd.to_datetime(df_d['採購日'], errors='coerce')
-            df_month_d = df_d[df_d['採購日'].dt.strftime('%Y-%m') == month_str].copy()
-            if not df_month_d.empty:
-                df_month_d['總計'] = pd.to_numeric(df_month_d['總計'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                # Ensure we don't double count if the month is already in purchase_data (official_ym logic)
-                # Simplest way: if peak_spent from purchase_data is 0, we rely fully on daily report.
-                # If peak_spent > 0, it means procurement has already closed this month's books.
-                if peak_spent == 0:
-                    peak_spent += df_month_d['總計'].sum()
+        if df_purchase is not None and not df_purchase.empty:
+            df_purchase = df_purchase.copy()
+            df_purchase.columns = df_purchase.columns.astype(str).str.strip()
+            date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '單位' in c), None)
+            total_col = next((c for c in df_purchase.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
+            
+            # Combine daily report if applicable
+            df_daily_report = fetch_thepeak_daily_purchase_report()
+            if not df_daily_report.empty and '總計' in df_daily_report.columns and '採購日' in df_daily_report.columns and date_col and dept_col and total_col:
+                append_df = df_daily_report.copy()
+                official_ym = pd.to_datetime(df_purchase[date_col], errors='coerce').dt.strftime('%Y-%m').dropna().unique().tolist()
+                append_df['ym'] = pd.to_datetime(append_df['採購日'], errors='coerce').dt.strftime('%Y-%m')
+                append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
+                if not append_df.empty:
+                    append_df['部門'] = 'THE PEAK'
+                    append_df = append_df.rename(columns={'採購日': date_col, '部門': dept_col, '總計': total_col})
+                    df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+            
+            if date_col and dept_col and total_col:
+                df_purchase[date_col] = pd.to_datetime(df_purchase[date_col], errors='coerce')
+                df_t = df_purchase[(df_purchase[date_col] >= start_of_month) & (df_purchase[date_col] <= end_of_month)].copy()
+                if not df_t.empty:
+                    df_t['小計'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    t_all_depts = df_t[dept_col].astype(str).unique().tolist()
+                    t_hh = [d for d in t_all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    t_peak_depts = [d for d in t_all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                    peak_spent = df_t[df_t[dept_col].isin(t_peak_depts)]['小計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
