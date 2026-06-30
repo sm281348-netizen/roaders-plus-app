@@ -6840,23 +6840,43 @@ def render_report_tab():
         start_of_month = f"{year}-{month:02d}-01"
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
         
-        # Calculate actual peak_spent and hist_guests EXACTLY as 採購分析 does
+        # Calculate actual peak_spent and hist_guests with robust merging
         import calendar
         last_day = calendar.monthrange(year, month)[1]
         start_of_month = f"{year}-{month:02d}-01"
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
         
-        # 1. Get hist_guests (from occ_data natively)
+        # 1. Get hist_guests (dynamically merge with f&b_report for safety)
         hist_guests = 0
-        t_df = curr_summary.get('df', pd.DataFrame()).copy()
-        if not t_df.empty:
-            for _c in ['rest_day_guests', 'bf_total_act', 'af_total_act']:
-                if _c in t_df.columns:
-                    t_df[_c] = pd.to_numeric(t_df[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-            if 'rest_day_guests' in t_df.columns and t_df['rest_day_guests'].sum() > 0:
-                hist_guests = t_df['rest_day_guests'].sum()
-            elif 'bf_total_act' in t_df.columns:
-                hist_guests = (t_df['bf_total_act'] + t_df.get('af_total_act', 0)).sum()
+        df_occ = curr_summary.get('df')
+        df_fb_daily = get_combined_fb_daily_df(year, month, current_hotel)
+        
+        if df_occ is not None and not df_occ.empty:
+            df_merged = df_occ.copy()
+            if not df_fb_daily.empty:
+                df_merged = df_merged.merge(df_fb_daily, on='date', how='left')
+        elif not df_fb_daily.empty:
+            df_merged = df_fb_daily.copy()
+        else:
+            df_merged = pd.DataFrame()
+            
+        if not df_merged.empty:
+            for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests']:
+                if c in df_merged.columns:
+                    df_merged[c] = pd.to_numeric(df_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                else:
+                    df_merged[c] = 0
+            
+            for _, row in df_merged.iterrows():
+                # Prefer peak_guests or rest_day_guests, otherwise bf + af
+                if row['peak_guests'] > 0:
+                    hist_guests += row['peak_guests']
+                elif row['rest_day_guests'] > 0:
+                    hist_guests += row['rest_day_guests']
+                else:
+                    bf = row['bf_total_act'] if row['bf_total_act'] > 0 else row['bf_act']
+                    af = row['af_total_act'] if row['af_total_act'] > 0 else row['af_act']
+                    hist_guests += (bf + af)
 
         # 2. Get peak_spent (from purchase_data + daily report)
         df_purchase = get_purchase_data_cached()
