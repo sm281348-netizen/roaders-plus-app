@@ -6842,18 +6842,31 @@ def render_report_tab():
         
         hist_guests = 0
         df_occ = curr_summary.get('df')
+        df_fb_daily = get_combined_fb_daily_df(year, month, current_hotel)
+        
         if df_occ is not None and not df_occ.empty:
-            for _, row in df_occ.iterrows():
-                p_guests = pd.to_numeric(row.get('peak_guests', 0), errors='coerce')
-                if pd.isna(p_guests): p_guests = 0
+            df_merged = df_occ.copy()
+            if not df_fb_daily.empty:
+                # Merge F&B report data on 'date'
+                df_merged = df_merged.merge(df_fb_daily, on='date', how='left')
+        elif not df_fb_daily.empty:
+            df_merged = df_fb_daily.copy()
+        else:
+            df_merged = pd.DataFrame()
+            
+        if not df_merged.empty:
+            for c in ['peak_guests', 'bf_act', 'af_act']:
+                if c in df_merged.columns:
+                    df_merged[c] = pd.to_numeric(df_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                else:
+                    df_merged[c] = 0
+            
+            for _, row in df_merged.iterrows():
+                p_guests = row['peak_guests']
                 if p_guests > 0:
                     hist_guests += p_guests
                 else:
-                    bf = pd.to_numeric(row.get('bf_act', 0), errors='coerce')
-                    af = pd.to_numeric(row.get('af_act', 0), errors='coerce')
-                    if pd.isna(bf): bf = 0
-                    if pd.isna(af): af = 0
-                    hist_guests += (bf + af)
+                    hist_guests += (row['bf_act'] + row['af_act'])
         
         # Calculate actual peak_spent from purchase_data
         df_purchase = get_purchase_data_cached()
