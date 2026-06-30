@@ -6881,12 +6881,25 @@ def render_report_tab():
         # 2. Get peak_spent (from purchase_data + daily report)
         df_purchase = get_purchase_data_cached()
         peak_spent = 0
+        
+        # Debug diagnostics vars
+        diag_date_col = None
+        diag_dept_col = None
+        diag_total_col = None
+        diag_purchase_empty = True
+        diag_df_t_empty = True
+        
         if df_purchase is not None and not df_purchase.empty:
+            diag_purchase_empty = False
             df_purchase = df_purchase.copy()
             df_purchase.columns = df_purchase.columns.astype(str).str.strip()
             date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
-            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '單位' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '單位' in c or '工地' in c), None)
             total_col = next((c for c in df_purchase.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
+            
+            diag_date_col = date_col
+            diag_dept_col = dept_col
+            diag_total_col = total_col
             
             # Combine daily report if applicable
             df_daily_report = fetch_thepeak_daily_purchase_report()
@@ -6904,6 +6917,7 @@ def render_report_tab():
                 df_purchase[date_col] = pd.to_datetime(df_purchase[date_col], errors='coerce')
                 df_t = df_purchase[(df_purchase[date_col] >= start_of_month) & (df_purchase[date_col] <= end_of_month)].copy()
                 if not df_t.empty:
+                    diag_df_t_empty = False
                     df_t['小計'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     t_all_depts = df_t[dept_col].astype(str).unique().tolist()
                     t_hh = [d for d in t_all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
@@ -6911,6 +6925,17 @@ def render_report_tab():
                     peak_spent = df_t[df_t[dept_col].isin(t_peak_depts)]['小計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
+        
+        # Only show debug info if calculated CPG is 0
+        if cpg_actual == 0:
+            with st.expander("🔍 CPG 計算除錯診斷資訊 (CPG為0時自動顯示)", expanded=True):
+                st.write(f"**計算年月**: {year}-{month:02d}")
+                st.write(f"**來客數 (Denominator)**: {hist_guests} (df_occ 空: {df_occ is None or df_occ.empty}, df_fb_daily 空: {df_fb_daily.empty})")
+                st.write(f"**採購花費 (Numerator)**: {peak_spent} (df_purchase 空: {diag_purchase_empty})")
+                st.write(f"**偵測欄位**: 日期欄={diag_date_col} | 工地/部門欄={diag_dept_col} | 金額欄={diag_total_col}")
+                if df_purchase is not None and not df_purchase.empty:
+                    st.write(f"**總表欄位清單**: {list(df_purchase.columns)}")
+                    st.write(f"**當月採購列數**: {0 if diag_df_t_empty else len(df_t)}")
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
         
         # 3. Trends for the year
