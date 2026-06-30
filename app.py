@@ -511,7 +511,7 @@ except Exception as e:
 
 
 @st.cache_data(ttl=3600)
-def _get_occ_data_cached(hotel_type=""):
+def _get_occ_data_cached_v2(hotel_type=""):
     try:
         df = conn.read(worksheet="occ_data", ttl=0)
     except Exception as e:
@@ -569,7 +569,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
     注意：F&B 資料解析不在此函數內，請使用 compute_fb_mtd() 獨立讀取。"""
     if worksheet == "occ_data":
-        return _get_occ_data_cached(hotel_type)
+        return _get_occ_data_cached_v2(hotel_type)
     
     try:
         df = conn.read(worksheet=worksheet, ttl=0)
@@ -1018,7 +1018,7 @@ def save_daily_data(d_str, data_dict):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="occ_data", data=df.fillna(""))
-        _get_occ_data_cached.clear()
+        _get_occ_data_cached_v2.clear()
         fetch_yearly_metrics.clear()
         return True
     except Exception as e:
@@ -1837,7 +1837,7 @@ def parse_and_save_jinxu(file):
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
-            _get_occ_data_cached.clear()
+            _get_occ_data_cached_v2.clear()
             fetch_yearly_metrics.clear()
             return len(updates)
 
@@ -1979,7 +1979,7 @@ def parse_and_save_restaurant(file, current_year):
 
             # 寫回資料庫
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
-            _get_occ_data_cached.clear()
+            _get_occ_data_cached_v2.clear()
             fetch_yearly_metrics.clear()
 
         # 清除快取以確保重整後能看到新數據
