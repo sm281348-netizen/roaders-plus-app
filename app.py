@@ -6842,7 +6842,24 @@ def render_report_tab():
         fb_data = compute_fb_mtd(start_of_month, end_of_month, _dummy_hotel=current_hotel)
         
         hist_guests = fb_data.get('total_act_bf', 0) + fb_data.get('total_act_af', 0)
-        peak_spent = fb_data.get('peak_spent', 0)
+        
+        # Calculate actual peak_spent from purchase_data
+        df_purchase = get_purchase_data_cached()
+        peak_spent = 0
+        if not df_purchase.empty:
+            df_purchase['date_str'] = df_purchase['date'].astype(str)
+            df_month_p = df_purchase[df_purchase['date_str'].str.startswith(month_str, na=False)]
+            if not df_month_p.empty:
+                dept_col = '部\n門' if '部\n門' in df_month_p.columns else '部門' if '部門' in df_month_p.columns else 'department'
+                if dept_col in df_month_p.columns:
+                    all_d_list = df_month_p[dept_col].dropna().astype(str).unique().tolist()
+                    hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '早下', 'THEPEAK', '餐飲']) and d not in hh_m]
+                    curr_depts_tmp = df_month_p.copy()
+                    if '小計' in curr_depts_tmp.columns:
+                        curr_depts_tmp['小計'] = pd.to_numeric(curr_depts_tmp['小計'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
+        
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
         
