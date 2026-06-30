@@ -519,6 +519,8 @@ def _get_occ_data_cached(hotel_type=""):
 
     if df is not None and not df.empty:
         df.columns = [str(c).strip().lower() for c in df.columns]
+        # 移除可能重複的欄位名稱 (例如使用者不小心在 Google Sheets 建了兩個 date 欄位)，避免 pandas 引發 KeyError: 0
+        df = df.loc[:, ~df.columns.duplicated()]
         if 'date' not in df.columns and 'net occupancy' not in df.columns:
             for idx, r in df.head(10).iterrows():
                 row_vals = [str(v).strip().lower() for v in r.values]
