@@ -6839,9 +6839,21 @@ def render_report_tab():
         last_day = calendar.monthrange(year, month)[1]
         start_of_month = f"{year}-{month:02d}-01"
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
-        fb_data = compute_fb_mtd(start_of_month, end_of_month, _dummy_hotel=current_hotel)
         
-        hist_guests = fb_data.get('total_act_bf', 0) + fb_data.get('total_act_af', 0)
+        hist_guests = 0
+        df_occ = curr_summary.get('df')
+        if df_occ is not None and not df_occ.empty:
+            for _, row in df_occ.iterrows():
+                p_guests = pd.to_numeric(row.get('peak_guests', 0), errors='coerce')
+                if pd.isna(p_guests): p_guests = 0
+                if p_guests > 0:
+                    hist_guests += p_guests
+                else:
+                    bf = pd.to_numeric(row.get('bf_act', 0), errors='coerce')
+                    af = pd.to_numeric(row.get('af_act', 0), errors='coerce')
+                    if pd.isna(bf): bf = 0
+                    if pd.isna(af): af = 0
+                    hist_guests += (bf + af)
         
         # Calculate actual peak_spent from purchase_data
         df_purchase = get_purchase_data_cached()
