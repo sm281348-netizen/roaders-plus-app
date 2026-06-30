@@ -193,34 +193,48 @@ def append_4fhh_daily_purchase_report(new_rows_df):
         st.error(f"寫入失敗: {e}")
         return False
 def get_market_index_df(sp_df):
-    """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame"""
+    """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame
+    使用連鎖指數法 (Chain-linking) 以支援中途新增或移除的食材。"""
     if sp_df is None or sp_df.empty:
         return pd.DataFrame()
 
     periods_available = sorted(sp_df['period_dt'].unique())
-    if len(periods_available) < 2:
+    if len(periods_available) < 1:
         return pd.DataFrame()
 
-    base_period = periods_available[0]
-    base_df = sp_df[sp_df['period_dt'] == base_period]
-    base_dict = base_df.set_index(['item_name', 'unit'])['price'].to_dict()
-
     index_data = []
-    for p in periods_available:
-        curr_df = sp_df[sp_df['period_dt'] == p]
-        ratios = []
-        for _, r in curr_df.iterrows():
-            key = (r['item_name'], r['unit'])
-            if key in base_dict and base_dict[key] > 0 and pd.notna(r['price']):
-                ratios.append(r['price'] / base_dict[key])
+    prev_dict = sp_df[sp_df['period_dt'] == periods_available[0]].set_index(['item_name', 'unit'])['price'].to_dict()
+    current_index = 100.0
+    
+    index_data.append({
+        'period_dt': periods_available[0],
+        'period_str': str(periods_available[0]),
+        'month_label': periods_available[0].strftime('%Y-%m'),
+        'index': round(current_index, 1)
+    })
 
-        idx_val = (sum(ratios) / len(ratios) * 100) if ratios else 100
+    for i in range(1, len(periods_available)):
+        p = periods_available[i]
+        curr_df = sp_df[sp_df['period_dt'] == p]
+        curr_dict = curr_df.set_index(['item_name', 'unit'])['price'].to_dict()
+        
+        ratios = []
+        for key, price in curr_dict.items():
+            if key in prev_dict and prev_dict[key] > 0 and pd.notna(price):
+                ratios.append(price / prev_dict[key])
+                
+        if ratios:
+            period_ratio = sum(ratios) / len(ratios)
+            current_index = current_index * period_ratio
+            
         index_data.append({
             'period_dt': p,
             'period_str': str(p),
             'month_label': p.strftime('%Y-%m'),
-            'index': round(idx_val, 1)
+            'index': round(current_index, 1)
         })
+        
+        prev_dict = curr_dict
 
     return pd.DataFrame(index_data)
 
@@ -464,25 +478,14 @@ except Exception as e:
 
 
 @st.cache_data(ttl=60)
-def _get_cached_sheet_v3(worksheet, hotel_type=""):
-    """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
-    hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
-    注意：F&B 資料解析不在此函數內，請使用 compute_fb_mtd() 獨立讀取。"""
-    actual_sheet = "occ_data" if worksheet == "occ_data" else worksheet
+def _get_occ_data_cached(hotel_type=""):
     try:
-        df = conn.read(worksheet=actual_sheet, ttl=0)
+        df = conn.read(worksheet="occ_data", ttl=0)
     except Exception as e:
-        # Fallback to original worksheet if occ_data doesn't exist yet
-        if actual_sheet == "occ_data":
-            df = conn.read(worksheet=worksheet, ttl=0)
-        else:
-            raise e
+        raise e
 
-    if worksheet == "occ_data" and df is not None and not df.empty:
-        # Strip and lowercase string columns to avoid whitespace and case issues
+    if df is not None and not df.empty:
         df.columns = [str(c).strip().lower() for c in df.columns]
-        
-        # Check if the header is pushed down (e.g. Row 2)
         if 'date' not in df.columns and 'net occupancy' not in df.columns:
             for idx, r in df.head(10).iterrows():
                 row_vals = [str(v).strip().lower() for v in r.values]
@@ -490,10 +493,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
                     df.columns = row_vals
                     df = df.iloc[idx+1:].reset_index(drop=True)
                     break
-                    
-        # Check if it's the raw Golden System export by looking for 'date' column
         if 'date' in df.columns or 'net occupancy' in df.columns:
-            # Column mapping (case-insensitive keys)
             rename_map = {
                 'date': 'date',
                 'net occupancy': 'occ_rate',
@@ -503,11 +503,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
                 'total rooms sold': 'sold_rooms'
             }
             df = df.rename(columns=rename_map)
-            
-            # Remove any empty column names
             df = df.loc[:, df.columns.notna() & (df.columns != 'nan') & (df.columns != '')]
-            
-            # Format date to handle variations
             if 'date' in df.columns:
                 def format_golden_date(d):
                     ds = str(d).strip()
@@ -521,20 +517,28 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
                         return dt.strftime('%Y-%m-%d')
                     return ds
                 df['date'] = df['date'].apply(format_golden_date)
-
-            # Filter out sum rows safely
             if 'date' in df.columns:
                 df = df[df['date'].astype(str).str.strip() != '']
                 df = df[~df['date'].astype(str).str.contains("合計|總計|total", case=False, na=False)]
-
         else:
-            # Fallback: if it completely fails to find PMS headers, ensure 'date' exists to prevent crashes
             if 'date' not in df.columns:
                 df['date'] = pd.Series(dtype='str')
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
+    return df
 
-
+@st.cache_data(ttl=60)
+def _get_cached_sheet_v3(worksheet, hotel_type=""):
+    """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
+    hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
+    注意：F&B 資料解析不在此函數內，請使用 compute_fb_mtd() 獨立讀取。"""
+    if worksheet == "occ_data":
+        return _get_occ_data_cached(hotel_type)
+    
+    try:
+        df = conn.read(worksheet=worksheet, ttl=0)
+    except Exception as e:
+        raise e
     return df
 
 
@@ -871,7 +875,9 @@ def standardize_df_dates(df):
         m_md = re.match(r'^(\d{1,2})[/-](\d{1,2})$', v_str)
         if m_md:
             import datetime
-            curr_y = datetime.datetime.now().year
+            # 使用 sidebar_date 的年份，若無則 fallback 到當前年份
+            selected_d = st.session_state.get('sidebar_date', datetime.datetime.now())
+            curr_y = selected_d.year
             m, d = int(m_md.group(1)), int(m_md.group(2))
             return f"{curr_y:04d}-{m:02d}-{d:02d}"
 
@@ -938,7 +944,8 @@ def save_daily_data(d_str, data_dict):
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="occ_data", data=df.fillna(""))
-        _get_cached_sheet_v3.clear()
+        _get_occ_data_cached.clear()
+        fetch_yearly_metrics.clear()
         return True
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
@@ -1172,7 +1179,7 @@ def get_other_revenue(year_month_str):
     if '年/月' not in df.columns or '項目' not in df.columns or '本月實際' not in df.columns:
         col_ym = next((c for c in df.columns if '年' in c and '月' in c), None)
         col_item = next((c for c in df.columns if '項目' in c), None)
-        col_actual = next((c for c in df.columns if '本月實際' in c), None)
+        col_actual = next((c for c in df.columns if '本月' in c and '實際' in c), None)
         if not col_ym or not col_item or not col_actual:
             return 0.0
     else:
@@ -1202,7 +1209,7 @@ def get_other_revenue(year_month_str):
         return 0.0
         
     # 將本月實際轉為數值
-    df_filtered[col_actual] = df_filtered[col_actual].astype(str).str.replace(',', '').str.replace('%', '')
+    df_filtered[col_actual] = df_filtered[col_actual].astype(str).str.strip().str.replace(',', '').str.replace('%', '')
     df_filtered[col_actual] = pd.to_numeric(df_filtered[col_actual], errors='coerce').fillna(0.0)
     
     return float(df_filtered[col_actual].sum())
@@ -1319,14 +1326,8 @@ def sync_st_to_db(target_d_str):
                 import math
                 if not math.isclose(curr_val, norm_db, abs_tol=1e-5):
                     has_changes = True
-                    with open("debug_save.log", "a") as f:
-                        f.write(
-                            f"[{target_d_str}] DIFF: {db_col} ({type(curr_val)})={curr_val} vs DB {norm_db} ({type(norm_db)})\n")
             elif curr_val != norm_db:
                 has_changes = True
-                with open("debug_save.log", "a") as f:
-                    f.write(
-                        f"[{target_d_str}] DIFF: {db_col} ({type(curr_val)})={repr(curr_val)} vs DB {repr(norm_db)} ({type(norm_db)})\n")
 
     if has_changes:
         save_daily_data(target_d_str, update_dict)
@@ -1336,9 +1337,6 @@ def sync_st_to_db(target_d_str):
         curr_log = st.session_state['input_daily_log'].strip()
         db_log = str(get_daily_log(target_d_str) or "").strip()
         if curr_log != db_log:
-            with open("debug_save.log", "a") as f:
-                f.write(
-                    f"[{target_d_str}] LOG DIFF: curr={repr(curr_log)} vs db={repr(db_log)}\n")
             save_daily_log(target_d_str, curr_log)
 
 
@@ -1758,7 +1756,8 @@ def parse_and_save_jinxu(file):
                 df_final = df_final.sort_values('date').reset_index(drop=True)
 
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
-            _get_cached_sheet_v3.clear()
+            _get_occ_data_cached.clear()
+            fetch_yearly_metrics.clear()
             return len(updates)
 
         return 0
@@ -1899,7 +1898,8 @@ def parse_and_save_restaurant(file, current_year):
 
             # 寫回資料庫
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
-            _get_cached_sheet_v3.clear()
+            _get_occ_data_cached.clear()
+            fetch_yearly_metrics.clear()
 
         # 清除快取以確保重整後能看到新數據
         st.session_state['_last_loaded_date'] = None
@@ -2368,8 +2368,7 @@ if current_hotel != "採購":
                 adr_max = 8000
 
             avg_adr = month_data.get('avg_adr', 0)
-            y_adr, y_pure_adr = fetch_yearly_metrics(
-                int(month_data['month_label'].split('-')[0]))
+
 
             if avg_adr > 0:
                 adr_min = min(adr_min, int(avg_adr * 0.9))
@@ -3815,6 +3814,9 @@ with tab_p:
             total_budget = total_est_guests * target_cpg
             remaining_budget = total_budget - peak_spent
             remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+            
+            st.session_state['_budget_est_guests'] = total_est_guests
+            st.session_state['_budget_total'] = total_budget
             
             # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 推算) ---
             current_mtd_cpg = peak_spent / hist_guests if hist_guests > 0 else target_cpg
@@ -5528,11 +5530,13 @@ with tab_s:
         st.caption("ℹ️ 此預算為本月餐廳**整體**食材預算，涵蓋 The Peak 與 Happy Hour 所有部門的合計總額度。")
 
         # 抓取本月總預算與客數 (直接沿用採購分析 tab_p 戰情室的計算結果)
-        total_guests_for_budget = total_est_guests if 'total_est_guests' in locals() else 0
-        cur_budget = total_budget if 'total_budget' in locals() else 0
+        total_guests_for_budget = st.session_state.get('_budget_est_guests', 0)
+        cur_budget = st.session_state.get('_budget_total', 0)
         current_month_str = f"{selected_date.year}-{selected_date.month:02d}"
 
-        if total_guests_for_budget > 0 and cur_budget > 0:
+        if total_guests_for_budget == 0 or cur_budget == 0:
+            st.info("💡 預算與客數資料未載入。請先點擊上方「📊 採購分析」頁籤以完成資料讀取。")
+        elif total_guests_for_budget > 0 and cur_budget > 0:
             bc1, bc2 = st.columns([1, 2])
             with bc1:
                 st.metric(f"本月總備餐人次 ({current_month_str})", f"{int(total_guests_for_budget):,} 人", help="包含早餐與下午茶的總預估客數 (與戰情室連動)")
@@ -5605,7 +5609,9 @@ with tab_s:
             )
 
             # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
-            ytd_stats = sp_df.groupby(['item_name', 'unit'])['price'].agg(
+            current_year = selected_date.year
+            ytd_sp_df = sp_df[sp_df['period_dt'].dt.year == current_year] if not sp_df.empty else sp_df
+            ytd_stats = ytd_sp_df.groupby(['item_name', 'unit'])['price'].agg(
                 ['mean', 'max', 'min', 'count']).reset_index()
             ytd_stats.rename(
                 columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min', 'count': 'ytd_periods'}, inplace=True)
