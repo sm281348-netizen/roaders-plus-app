@@ -989,7 +989,7 @@ def get_daily_data(d_str):
                 return data_dict
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
-        msg = f"讀取 occ_data 失敗: {e}"
+        msg = f"讀取 occ_data 失敗: {repr(e)}\n{traceback.format_exc()}"
         if hint:
             msg += f"\n{hint}"
         st.error(msg)
@@ -1086,7 +1086,7 @@ def get_daily_log(d_str):
                 return str(res.iloc[0]['daily_work_log']).strip()
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
-        msg = f"讀取 occ_data (fallback) 失敗: {e}"
+        msg = f"讀取 occ_data (fallback) 失敗: {repr(e)}\n{traceback.format_exc()}"
         if hint:
             msg += f"\n{hint}"
         st.error(msg)
