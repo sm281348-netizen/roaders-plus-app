@@ -6887,7 +6887,7 @@ def render_report_tab():
                         all_d_list = df_month_p[dept_col].dropna().astype(str).unique().tolist()
                         hh_m = [d for d in all_d_list if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                         peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '早下', 'THEPEAK', '餐飲']) and d not in hh_m]
-                        subtotal_col = next((c for c in df_month_p.columns if '小計' in c), None)
+                        subtotal_col = next((c for c in df_month_p.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
                         if subtotal_col:
                             df_month_p[subtotal_col] = pd.to_numeric(df_month_p[subtotal_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             peak_spent += df_month_p[df_month_p[dept_col].isin(peak_m)][subtotal_col].sum()
