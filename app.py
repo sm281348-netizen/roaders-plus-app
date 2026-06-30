@@ -1997,18 +1997,22 @@ current_hotel = st.session_state.get("hotel_type", "站前館")
 st.title(f"Hotel Master - {current_hotel}")
 
 # 主畫面：依角色決定顯示哪些分頁
+st.sidebar.divider()
+st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    # 採購模式：只顯示採購分析與菜價分析
-    tab_p, tab_s = st.tabs(["💰 採購分析", "🛒 菜價分析"])
-    # 其餘 tab 用空容器佔位，確保後面的 with tab_x 語法不出錯
-    tab1 = tab_m = tab6 = tab_p_dummy = tab_s_dummy = tab3 = tab4 = tab5 = tab7 = tab_n = tab_channel = tab_report = st.container()
+    menu_options = ["💰 採購分析", "🛒 菜價分析"]
 else:
-    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7, tab_n, tab_channel, tab_report = st.tabs(
-        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告"])
+    menu_options = [
+        "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
+        "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", 
+        "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", 
+        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告"
+    ]
+selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
 
 
 if current_hotel != "採購":
-    with tab1:
+    if selected_page == "📊 營運總覽":
         st.header("📊 營運總覽")
 
         # 注入專屬 CSS 與 Card 產生器
@@ -2257,7 +2261,7 @@ if current_hotel != "採購":
 
 
 if current_hotel != "採購":
-    with tab_m:
+    if selected_page == "📈 月分析專區":
         st.header("📈 月分析專區")
 
         # 1. 取得四個月數據 (M-2, M-1, M, M+1)
@@ -3248,7 +3252,7 @@ if current_hotel != "採購":
             st.info("💡 請在上方輸入本月目標業績，系統將自動為您計算達標差距。")
 
 if current_hotel != "採購":
-    with tab3:
+    if selected_page == "🧹 房務數據":
         st.header("🧹 房務數據")
         with st.form(f"form_hk_{date_str}"):
             st.number_input("今日總清消房數", min_value=0, step=1, key="input_cleaned")
@@ -3260,7 +3264,7 @@ if current_hotel != "採購":
                 st.success("✅ 房務數據已儲存！")
 
 if current_hotel != "採購":
-    with tab4:
+    if selected_page == "🍽️ 餐廳數據":
         st.header("🍽️ 餐廳數據")
         st.subheader("📁 數據報表上傳")
         rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=[
@@ -3361,7 +3365,7 @@ if current_hotel != "採購":
 
 
 if current_hotel != "採購":
-    with tab5:
+    if selected_page == "🔧 工務數據":
         st.header("🔧 工務數據")
         with st.form(f"form_maint_{date_str}"):
             st.number_input("今日待修房數", min_value=0, step=1, key="input_repair")
@@ -3372,7 +3376,7 @@ if current_hotel != "採購":
                 st.success("✅ 工務數據已儲存！")
 
 if current_hotel != "採購":
-    with tab6:
+    if selected_page == "📝 每日營運紀錄":
         st.header("📝 每日營運紀錄")
 
         # --- 金旭報表上傳 + 手動輸入 (從原「櫃台數據」移入) ---
@@ -3558,7 +3562,7 @@ if current_hotel != "採購":
             st.text_area("✍️ 今日工作與營運細節報告：", height=500, key="input_daily_log",
                          placeholder="可以在這裡記錄交班重點、客訴特殊處理、VIP 接待細節、設備大修紀錄...等", on_change=on_input_change)
 
-with tab_p:
+if selected_page == "💰 採購分析":
     st.header("💰 採購花費分析統計")
 
     current_month_str = selected_date.strftime('%Y-%m')
@@ -5188,7 +5192,7 @@ with tab_p:
         st.expander("錯誤詳細資訊").code(traceback.format_exc())
 
 # --- 📅 本月接下來各週採購金額建議（獨立區塊，不依賴採購數據）---
-with tab_p:
+if selected_page == "💰 採購分析":
     st.divider()
     st.markdown("#### 📅 本月接下來各週採購金額建議")
 
@@ -5395,7 +5399,7 @@ with tab_p:
 # =====================================================
 # 🛒 菜價分析 tab_s
 # =====================================================
-with tab_s:
+if selected_page == "🛒 菜價分析":
     st.header("🛒 菜價分析")
     sp_df = fetch_supplier_prices()
 
@@ -6046,7 +6050,7 @@ with tab_s:
                     """, unsafe_allow_html=True)
 
 if current_hotel != "採購":
-    with tab7:
+    if selected_page == "👥 人事概況":
         st.header("👥 人事概況")
 
         # -- 人事管理函數 (Google Sheets 版) --
@@ -6792,10 +6796,10 @@ def render_nationality_tab():
 
 
 if current_hotel != "採購":
-    with tab_n:
+    if selected_page == "🌍 國籍分析":
         render_nationality_tab()
     
-    with tab_channel:
+    if selected_page == "📉 渠道分析":
         render_channel_tab()
 
 
@@ -7031,5 +7035,5 @@ def render_report_tab():
     st.code(summary_text, language='markdown')
 
 if current_hotel != "採購":
-    with tab_report:
+    if selected_page == "📋 營運檢討報告":
         render_report_tab()
