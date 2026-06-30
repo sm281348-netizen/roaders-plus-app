@@ -1,4 +1,5 @@
-import traceback\nimport streamlit as st
+import traceback
+import streamlit as st
 
 # --- Gspread Retry Patch ---
 import gspread.client
