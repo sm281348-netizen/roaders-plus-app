@@ -538,6 +538,7 @@ def _get_occ_data_cached(hotel_type=""):
                 'total rooms sold': 'sold_rooms'
             }
             df = df.rename(columns=rename_map)
+            df = df.loc[:, ~df.columns.duplicated()]
             df = df.loc[:, df.columns.notna() & (df.columns != 'nan') & (df.columns != '')]
             if 'date' in df.columns:
                 def format_golden_date(d):
