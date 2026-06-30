@@ -787,6 +787,44 @@ def get_combined_fb_future_data():
     df_th = fetch_fb_future_data(hotel_type="主題館")
     return pd.concat([df_st, df_th], ignore_index=True)
 
+@st.cache_data(ttl=600)
+
+
+@st.cache_data(ttl=600)
+def get_all_employees_cached():
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        import streamlit as st
+        import pandas as pd
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        df = raw_st.read(worksheet="employees", spreadsheet=url_st, ttl=0)
+        return df if df is not None else pd.DataFrame()
+    except:
+        import pandas as pd
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def get_purchase_data_cached():
+    import pandas as pd
+    import streamlit as st
+    from streamlit_gsheets import GSheetsConnection
+    possible_names = ["purchase data", "Purchase Data", "purchase_data", "Purchase_Data"]
+    try:
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        for name in possible_names:
+            try:
+                df = raw_st.read(worksheet=name, spreadsheet=url_st, ttl=0)
+                if df is not None and not df.empty:
+                    return df
+            except:
+                continue
+    except:
+        pass
+    return pd.DataFrame()
+
+
 def get_prediction_snapshots():
     import pandas as pd
     import streamlit as st
@@ -3488,23 +3526,7 @@ with tab_p:
 
     try:
         # 讀取採購數據 (降低 TTL 以確保更新及時)
-        possible_names = ["purchase data", "Purchase Data",
-                          "purchase_data", "Purchase_Data"]
-        df_purchase = None
-        used_name = ""
-
-        from streamlit_gsheets import GSheetsConnection
-        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
-        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        
-        for name in possible_names:
-            try:
-                df_purchase = raw_st.read(worksheet=name, spreadsheet=url_st, ttl="10m")
-                if df_purchase is not None and not df_purchase.empty:
-                    used_name = name
-                    break
-            except:
-                continue
+        df_purchase = get_purchase_data_cached()
 
         if df_purchase is not None and not df_purchase.empty:
             # 清理欄位名稱 (移除空格)
@@ -5991,7 +6013,7 @@ if current_hotel != "採購":
         # -- 人事管理函數 (Google Sheets 版) --
         def get_all_employees():
             try:
-                df = conn.read(worksheet="employees", ttl="10m")
+                df = get_all_employees_cached()
                 return df if df is not None else pd.DataFrame()
             except:
                 return pd.DataFrame()
@@ -6017,6 +6039,7 @@ if current_hotel != "採購":
                     e_id), "name": name, "dept": dept, "position": pos, "salary": salary}])
                 df = pd.concat([df, new_emp], ignore_index=True)
                 conn.update(worksheet="employees", data=df.fillna(""))
+                get_all_employees_cached.clear()
                 return True
             except Exception as e:
                 return str(e)
@@ -6028,6 +6051,7 @@ if current_hotel != "採購":
                     df['employee_id'] = df['employee_id'].astype(str)
                     df = df[df['employee_id'] != str(e_id)]
                     conn.update(worksheet="employees", data=df.fillna(""))
+                get_all_employees_cached.clear()
             except:
                 pass
 
