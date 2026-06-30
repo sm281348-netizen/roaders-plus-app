@@ -32,12 +32,12 @@ EVENT_TYPE_LABELS = {
 }
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_taipei_events():
     """讀取試算表中的台北重大活動分頁"""
     try:
         # 讀取試算表中的 taipei_events 分頁
-        df = read_google_sheet("taipei_events", ttl="10m")
+        df = read_google_sheet("taipei_events", ttl="1h")
         if df is not None and not df.empty:
             df = standardize_df_dates(df)
             return df
@@ -46,14 +46,14 @@ def fetch_taipei_events():
     return pd.DataFrame(columns=['date', 'event_name', 'event_type', 'venue'])
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_supplier_prices():
     """讀取菜價表 supplier_prices 分頁，回傳標準化 DataFrame"""
     try:
         from streamlit_gsheets import GSheetsConnection
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
-        df = raw_st.read(worksheet="supplier_prices", spreadsheet=url_st, ttl="10m")
+        df = raw_st.read(worksheet="supplier_prices", spreadsheet=url_st, ttl="1h")
         if df is None or df.empty:
             return pd.DataFrame()
         # 欄位名稱標準化 (item name → item_name)
@@ -104,7 +104,7 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_thepeak_daily_purchase_report():
     """讀取 thepeak_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
@@ -149,7 +149,7 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         return False
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_4fhh_daily_purchase_report():
     """讀取 4FHH_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
@@ -477,7 +477,7 @@ except Exception as e:
     st.stop()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def _get_occ_data_cached(hotel_type=""):
     try:
         df = conn.read(worksheet="occ_data", ttl=0)
@@ -527,7 +527,7 @@ def _get_occ_data_cached(hotel_type=""):
                 df['revenue'] = 0
     return df
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def _get_cached_sheet_v3(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
@@ -542,7 +542,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
     return df
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
     """
     獨立讀取 f&b_report 並計算指定日期區間的 MTD F&B 統計。
@@ -650,7 +650,7 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
     return result
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def fetch_fb_daily_df(year, month, _dummy_hotel=""):
     """
     從 f&b_report 讀取指定年月的每日 F&B 來客數。
@@ -728,7 +728,7 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
         return pd.DataFrame(rows)
     return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def fetch_fb_future_data(hotel_type="站前館"):
     """
     從 f&b_data 讀取包含未來的 F&B 預約客數明細。
@@ -787,10 +787,10 @@ def get_combined_fb_future_data():
     df_th = fetch_fb_future_data(hotel_type="主題館")
     return pd.concat([df_st, df_th], ignore_index=True)
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def get_all_employees_cached():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -804,7 +804,7 @@ def get_all_employees_cached():
         import pandas as pd
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def get_purchase_data_cached():
     import pandas as pd
     import streamlit as st
@@ -855,7 +855,7 @@ def save_prediction_snapshot(new_row_dict):
         st.error(f"儲存快照失敗: {e}")
         return False
 
-def read_google_sheet(worksheet, ttl="10m"):
+def read_google_sheet(worksheet, ttl="1h"):
     try:
         return _get_cached_sheet_v3(worksheet, hotel_type=current_hotel)
     except Exception as e:
@@ -996,7 +996,7 @@ def save_daily_data(d_str, data_dict):
 
 def get_monthly_target(month_str):
     try:
-        df = read_google_sheet("targets", ttl="10m")
+        df = read_google_sheet("targets", ttl="1h")
         if df is not None and not df.empty:
             res = df[df['month'] == month_str]
             if not res.empty:
@@ -1032,7 +1032,7 @@ def save_monthly_target(month_str, target):
 
 def get_daily_log(d_str):
     try:
-        df = read_google_sheet("daily_logs", ttl="10m")
+        df = read_google_sheet("daily_logs", ttl="1h")
         if df is not None and not df.empty:
             res = df[df['date'] == d_str]
             if not res.empty:
@@ -1447,6 +1447,13 @@ if current_hotel != "採購":
         "快速查閱區間：", weekly_options, index=0, key="weekly_view_select")
 else:
     selected_week = "--- 關閉週預覽 ---"
+
+st.sidebar.divider()
+st.sidebar.subheader("🔄 系統快取管理")
+if st.sidebar.button("強制重新同步資料", help="從 Google Sheets 重新拉取最新資料 (若資料沒有更新時可使用)"):
+    st.cache_data.clear()
+    st.rerun()
+
 # --------------------------------------------------
 
 
