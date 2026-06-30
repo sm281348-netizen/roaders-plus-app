@@ -3118,8 +3118,11 @@ if current_hotel != "採購":
             st.progress(progress, text=f"目標達成率: {progress*100:.1f}%")
 
             # 營收進度外推預估 (Run-Rate Forecast)
-            active_days = m_curr['df'][m_curr['df']['revenue'] > 0]
-            elapsed_days = len(active_days)
+            if not m_curr['df'].empty and 'revenue' in m_curr['df'].columns:
+                active_days = m_curr['df'][pd.to_numeric(m_curr['df']['revenue'], errors='coerce').fillna(0) > 0]
+                elapsed_days = len(active_days)
+            else:
+                elapsed_days = 0
 
             if elapsed_days > 0:
                 import calendar
