@@ -1924,10 +1924,10 @@ if current_hotel == "採購":
     # 採購模式：只顯示採購分析與菜價分析
     tab_p, tab_s = st.tabs(["💰 採購分析", "🛒 菜價分析"])
     # 其餘 tab 用空容器佔位，確保後面的 with tab_x 語法不出錯
-    tab1 = tab_m = tab6 = tab_p_dummy = tab_s_dummy = tab3 = tab4 = tab5 = tab7 = tab_n = tab_channel = st.container()
+    tab1 = tab_m = tab6 = tab_p_dummy = tab_s_dummy = tab3 = tab4 = tab5 = tab7 = tab_n = tab_channel = tab_report = st.container()
 else:
-    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7, tab_n, tab_channel = st.tabs(
-        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", "🌍 國籍分析", "📉 渠道分析"])
+    tab1, tab_m, tab6, tab_p, tab_s, tab3, tab4, tab5, tab7, tab_n, tab_channel, tab_report = st.tabs(
+        ["📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告"])
 
 
 if current_hotel != "採購":
@@ -6731,3 +6731,239 @@ if current_hotel != "採購":
     
     with tab_channel:
         render_channel_tab()
+
+
+
+def render_report_tab():
+    import datetime
+    from dateutil.relativedelta import relativedelta
+    import altair as alt
+    
+    st.header("📋 營運檢討總結報告")
+    st.markdown("本頁面整合本月份全館核心數據，提供您快速匯報與重點回顧使用。")
+    
+    curr_date = st.session_state.get('sidebar_date')
+    if not curr_date:
+        st.warning("請先在側邊欄選擇日期！")
+        return
+        
+    year, month = curr_date.year, curr_date.month
+    month_str = f"{year}-{month:02d}"
+    last_month_date = curr_date - relativedelta(months=1)
+    last_year_date = curr_date - relativedelta(years=1)
+    
+    with st.spinner("🚀 正在為您彙整本月全館運營數據..."):
+        # Fetching Data
+        # 1. Summary KPIs
+        curr_summary = fetch_month_summary(year, month)
+        ly_summary = fetch_month_summary(last_year_date.year, last_year_date.month)
+        lm_summary = fetch_month_summary(last_month_date.year, last_month_date.month)
+        y_adr, y_pure_adr = fetch_yearly_metrics(year)
+        
+        # 2. Budget / CPG
+        total_est_guests = st.session_state.get('_budget_est_guests', 0)
+        total_budget = st.session_state.get('_budget_total', 0)
+        cpg_target = st.session_state.get('tab_p_target_cpg', 240)
+        
+        # 3. Trends for the year
+        year_summaries = []
+        for m in range(1, month + 1):
+            s = fetch_month_summary(year, m)
+            if s['df'].empty and m < month:
+                continue
+            year_summaries.append({
+                'month': f"{year}-{m:02d}",
+                'month_dt': datetime.date(year, m, 1),
+                'occ': s['avg_occ'],
+                'adr': s['avg_adr'],
+                'revpar': s['revpar']
+            })
+            
+        df_trends = pd.DataFrame(year_summaries)
+        
+        # 4. Supplier Prices (Market Index)
+        sp_df = fetch_supplier_prices()
+        idx_df = get_market_index_df(sp_df)
+        market_idx_curr = 100
+        market_idx_prev = 100
+        if not idx_df.empty:
+            curr_row = idx_df[idx_df['month_label'] == f"{year}-{month:02d}"]
+            if not curr_row.empty:
+                market_idx_curr = curr_row.iloc[0]['index']
+            prev_row = idx_df[idx_df['month_label'] == f"{last_month_date.year}-{last_month_date.month:02d}"]
+            if not prev_row.empty:
+                market_idx_prev = prev_row.iloc[0]['index']
+
+        # 5. Channel and Nationality
+        top_channels = []
+        df_channel = read_google_sheet("marketing_channel_data")
+        if df_channel is not None and not df_channel.empty:
+            df_channel.columns = [str(c).strip().lower() for c in df_channel.columns]
+            if 'date' in df_channel.columns:
+                df_channel['date'] = df_channel['date'].replace('', pd.NA).ffill()
+                if set(['date', 'company name', 'rooms']).issubset(set(df_channel.columns)):
+                    df_channel = standardize_df_dates(df_channel)
+                    df_c = df_channel[df_channel['date'].str.startswith(f"{year}-{month:02d}")]
+                    if not df_c.empty:
+                        df_c['rooms'] = pd.to_numeric(df_c['rooms'].astype(str).str.strip().str.replace(',', ''), errors='coerce').fillna(0)
+                        top_channels = df_c.groupby('company name')['rooms'].sum().nlargest(3).index.tolist()
+
+        top_nations = []
+        df_nation = _get_cached_sheet_v3("nationality_report", hotel_type=current_hotel)
+        if df_nation is not None and not df_nation.empty:
+            df_nation.columns = [str(c).strip().lower().replace('\n', '') for c in df_nation.columns]
+            date_col = next((c for c in df_nation.columns if '年/月' in c or 'date' in c), None)
+            if date_col:
+                df_nation[date_col] = df_nation[date_col].replace('', pd.NA).ffill().fillna('')
+                mask = df_nation[date_col].astype(str).str.contains(f"{year}.*{month:02d}")
+                df_n = df_nation[mask]
+                if not df_n.empty:
+                    exclude_cols = [date_col, 'total', 'grand total', 'subtotal', '總計', '小計']
+                    nation_cols = [c for c in df_n.columns if c not in exclude_cols]
+                    sums = {}
+                    for c in nation_cols:
+                        val = pd.to_numeric(df_n[c].astype(str).str.strip().str.replace(',', ''), errors='coerce').sum()
+                        if val > 0: sums[c] = val
+                    if sums:
+                        top_nations = sorted(sums, key=sums.get, reverse=True)[:3]
+                        top_nations = [n.title() for n in top_nations]
+
+        # 6. Daily Logs
+        df_logs = _get_cached_sheet_v3("daily_logs", hotel_type=current_hotel)
+        log_events = []
+        if df_logs is not None and not df_logs.empty and 'date' in df_logs.columns and 'events' in df_logs.columns:
+            df_logs = standardize_df_dates(df_logs)
+            df_m_logs = df_logs[df_logs['date'].str.startswith(f"{year}-{month:02d}")]
+            for _, r in df_m_logs.iterrows():
+                ev = str(r['events']).strip()
+                if ev and ev.lower() not in ['nan', 'none', '']:
+                    log_events.append(f"{str(r['date'])[8:10]}日: {ev}")
+
+    # UI Rendering
+    st.markdown("---")
+    st.subheader(f"📊 1. 執行摘要 (Executive Summary) - {year}年{month}月")
+    
+    occ_val = curr_summary['avg_occ']
+    occ_ly = ly_summary['avg_occ']
+    occ_diff = occ_val - occ_ly
+    occ_status = "🟢 優" if occ_val >= 85 else ("🟡 平" if occ_val >= 70 else "🔴 差")
+    
+    adr_val = curr_summary['avg_adr']
+    adr_diff = adr_val - y_adr
+    adr_status = "🟢 優" if adr_val >= y_adr else ("🟡 平" if adr_val >= y_adr*0.9 else "🔴 差")
+    
+    revpar_val = curr_summary['revpar']
+    revpar_ly = ly_summary['revpar']
+    revpar_diff = revpar_val - revpar_ly
+    revpar_status = "🟢 優" if revpar_diff > 0 else "🔴 差"
+    
+    cpg_actual = total_budget / total_est_guests if total_est_guests > 0 else 0
+    cpg_status = "🟢 佳 (未超標)" if cpg_actual <= cpg_target else "🔴 警告 (超標)"
+    
+    fh_days = curr_summary['occ90_days']
+    fh_status = "🟢 優" if fh_days >= 4 else ("🟡 平" if fh_days >= 1 else "🔴 差")
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("本月 OCC", f"{occ_val:.1f}%", f"{occ_diff:+.1f}% vs 去年", help=f"狀態: {occ_status}")
+    with col2:
+        st.metric("本月 ADR", f"NT$ {int(adr_val):,}", f"{int(adr_diff):+} vs 年度均價", help=f"狀態: {adr_status}")
+    with col3:
+        st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", f"{int(revpar_diff):+} vs 去年", help=f"狀態: {revpar_status}")
+    with col4:
+        st.metric("食材 CPG", f"NT$ {int(cpg_actual):,}", f"{int(cpg_actual - cpg_target):+} vs 目標", help=f"狀態: {cpg_status}")
+    with col5:
+        st.metric("滿房天數 (≥90%)", f"{fh_days} 天", f"狀態: {fh_status}")
+
+    st.markdown("---")
+    st.subheader("📈 2. 趨勢分析 (Trend Analysis)")
+    
+    if not df_trends.empty:
+        base = alt.Chart(df_trends).encode(x=alt.X('month_dt:T', title='月份', axis=alt.Axis(format='%m月')))
+        line_occ = base.mark_line(color='#3498db', point=True).encode(y=alt.Y('occ:Q', title='OCC (%)', scale=alt.Scale(domain=[0, 100])))
+        line_adr = base.mark_line(color='#e74c3c', point=True).encode(y=alt.Y('adr:Q', title='ADR (NT$)'))
+        
+        st.altair_chart(alt.layer(line_occ, line_adr).resolve_scale(y='independent'), use_container_width=True)
+        
+        current_quarter = (month - 1) // 3 + 1
+        q_months = [current_quarter * 3 - 2, current_quarter * 3 - 1, current_quarter * 3]
+        q_df = df_trends[df_trends['month_dt'].apply(lambda x: getattr(x, 'month', -1)).isin(q_months)]
+        if not q_df.empty:
+            q_df = q_df.sort_values('revpar', ascending=False).reset_index(drop=True)
+            rank = q_df[q_df['month'] == month_str].index[0] + 1 if month_str in q_df['month'].values else "?"
+            st.info(f"🏆 **季度排名：** 本月 RevPAR 在 Q{current_quarter} 中排名第 **{rank}** / {len(q_df)}。")
+            
+    st.markdown("---")
+    st.subheader("🛒 3. 採購 & 食材成本分析")
+    st.write(f"- **食材 CPG：** 實際 `NT$ {int(cpg_actual)}` / 目標 `NT$ {int(cpg_target)}`")
+    idx_diff = market_idx_curr - market_idx_prev
+    idx_arrow = "📈 增加" if idx_diff > 0 else ("📉 減少" if idx_diff < 0 else "持平")
+    st.write(f"- **大盤物價指數：** 本月指數 `{market_idx_curr:.1f}`，較上月 {idx_arrow} `{abs(idx_diff):.1f}`")
+
+    st.markdown("---")
+    st.subheader("🌍 4. 來客結構分析")
+    colA, colB = st.columns(2)
+    with colA:
+        st.markdown("**前三大國籍客源**")
+        if top_nations:
+            for i, n in enumerate(top_nations): st.write(f"{i+1}. {n}")
+        else:
+            st.write("無資料或尚未載入")
+    with colB:
+        st.markdown("**前三大訂房渠道**")
+        if top_channels:
+            for i, c in enumerate(top_channels): st.write(f"{i+1}. {c}")
+        else:
+            st.write("無資料或尚未載入")
+            
+    st.markdown("---")
+    st.subheader("📝 5. 本月重點營運日誌")
+    if log_events:
+        with st.expander("展開查看每日日誌重點", expanded=True):
+            for e in log_events:
+                st.write(f"- {e}")
+    else:
+        st.write("本月暫無營運日誌紀錄。")
+
+    st.markdown("---")
+    st.subheader("🤖 6. 自動檢討評語 (Auto-Generated Summary)")
+    
+    good_pts = []
+    bad_pts = []
+    
+    if occ_diff > 0: good_pts.append(f"住房率 (OCC) 達 {occ_val:.1f}%，超越去年同期 (+{occ_diff:.1f}%)。")
+    else: bad_pts.append(f"住房率 (OCC) 為 {occ_val:.1f}%，較去年同期衰退 ({occ_diff:.1f}%)，需留意集客力。")
+    
+    if adr_diff >= 0: good_pts.append(f"平均房價 (ADR) 表現亮眼 (NT$ {int(adr_val):,})，高於年度平均基準。")
+    else: bad_pts.append(f"平均房價 (ADR) (NT$ {int(adr_val):,}) 低於年度平均基準，可能受到淡季或促銷影響。")
+    
+    if cpg_actual > cpg_target: bad_pts.append(f"食材成本 (CPG) 超標，實際 NT$ {int(cpg_actual)} 高於目標 NT$ {int(cpg_target)}。")
+    else: good_pts.append(f"食材成本 (CPG) 控制得宜，維持在目標 NT$ {int(cpg_target)} 內。")
+    
+    if idx_diff > 0: bad_pts.append(f"大盤物價指數較上月上漲 {idx_diff:.1f}，推升採購成本壓力。")
+    
+    summary_text = f"""**【{year}年{month}月 營運總結報告】**
+
+本月營運結果整體呈現 {'成長' if revpar_diff >= 0 else '衰退'} 趨勢，RevPAR 較去年同期 {'增加' if revpar_diff >= 0 else '減少'} NT$ {abs(int(revpar_diff)):,}。
+
+**✅ 本月亮點 (Strengths)**
+{chr(10).join(['- ' + p for p in good_pts]) if good_pts else '- 無明顯亮點'}
+
+**⚠️ 待改善與隱患 (Weaknesses & Threats)**
+{chr(10).join(['- ' + p for p in bad_pts]) if bad_pts else '- 營運狀況平穩，無明顯隱患'}
+
+**📌 下月建議方向 (Action Plans)**
+- **營收策略**：{'加強平日促銷以提升 OCC' if occ_val < 70 else '在維持 OCC 的前提下，逐步拉升 ADR'}。
+- **成本控制**：{'物價上漲壓力大，建議檢視前十大高單價食材並尋找替代供應商' if idx_diff > 0 or cpg_actual > cpg_target else '維持現有採購節奏'}。
+- **客源開發**：本月主要客群為 {', '.join(top_nations) if top_nations else '未知'}，可針對這些市場推出專屬包裝。
+"""
+    
+    st.markdown(summary_text)
+    
+    st.markdown("---")
+    st.subheader("📑 7. 匯出報告 (Copy / Paste)")
+    st.code(summary_text, language='markdown')
+
+if current_hotel != "採購":
+    with tab_report:
+        render_report_tab()
