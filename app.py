@@ -6903,26 +6903,52 @@ def render_report_tab():
             diag_dept_col = dept_col
             diag_total_col = total_col
             
-            if date_col and date_col in df_purchase.columns:
-                diag_raw_dates_preview = list(df_purchase[date_col].head(5))
-                diag_parsed_dates_preview = list(pd.to_datetime(df_purchase[date_col], errors='coerce').head(5).astype(str))
-            
-            # Combine daily report if applicable
-            df_daily_report = fetch_thepeak_daily_purchase_report()
-            if not df_daily_report.empty and '總計' in df_daily_report.columns and '採購日' in df_daily_report.columns and date_col and dept_col and total_col:
-                append_df = df_daily_report.copy()
-                official_ym = pd.to_datetime(df_purchase[date_col], errors='coerce').dt.strftime('%Y-%m').dropna().unique().tolist()
-                append_df['ym'] = pd.to_datetime(append_df['採購日'], errors='coerce').dt.strftime('%Y-%m')
-                append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
-                if not append_df.empty:
-                    append_df['部門'] = 'THE PEAK'
-                    append_df = append_df.rename(columns={'採購日': date_col, '部門': dept_col, '總計': total_col})
-                    df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
-            
             if date_col and dept_col and total_col:
-                df_purchase[date_col] = pd.to_datetime(df_purchase[date_col], errors='coerce')
-                # Fixed: Compare string representation to avoid Pandas type matching bugs
-                df_t = df_purchase[df_purchase[date_col].dt.strftime('%Y-%m') == month_str].copy()
+                def robust_date_parse(val):
+                    if pd.isna(val):
+                        return None
+                    s = str(val).strip().replace('.0', '')
+                    if not s or s in ('nan', 'None', 'NaT'):
+                        return None
+                    if '/' in s:
+                        res = minguo_to_western(s)
+                        if res: return res
+                    import re as _re_dp
+                    if _re_dp.match(r'^\d{6}$', s):
+                        try: return pd.to_datetime(s, format='%Y%m').date()
+                        except: pass
+                    if _re_dp.match(r'^\d{8}$', s):
+                        try: return pd.to_datetime(s, format='%Y%m%d').date()
+                        except: pass
+                    try: return pd.to_datetime(val).date()
+                    except: return None
+                
+                df_purchase['日期'] = df_purchase[date_col].apply(robust_date_parse)
+                
+                diag_raw_dates_preview = list(df_purchase[date_col].head(5))
+                diag_parsed_dates_preview = list(df_purchase['日期'].head(5).astype(str))
+                
+                # Retrieve all year-month pairs in the official data to prevent double counting
+                official_ym = set(pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m').dropna().unique())
+                
+                # Combine daily report if applicable
+                df_daily_report = fetch_thepeak_daily_purchase_report()
+                if not df_daily_report.empty and '總價' in df_daily_report.columns:
+                    append_df = pd.DataFrame()
+                    if '請購日期' in df_daily_report.columns:
+                        append_df['日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
+                    append_df[dept_col] = "The Peak"
+                    append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
+                    
+                    # Prevent Double Counting
+                    append_df['ym'] = pd.to_datetime(append_df['日期']).dt.strftime('%Y-%m')
+                    append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
+                    
+                    if not append_df.empty:
+                        df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+                
+                # Filter for current month using robustly parsed date
+                df_t = df_purchase[pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m') == month_str].copy()
                 if not df_t.empty:
                     diag_df_t_empty = False
                     df_t['小計'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
