@@ -6915,7 +6915,8 @@ def render_report_tab():
             
             if date_col and dept_col and total_col:
                 df_purchase[date_col] = pd.to_datetime(df_purchase[date_col], errors='coerce')
-                df_t = df_purchase[(df_purchase[date_col] >= start_of_month) & (df_purchase[date_col] <= end_of_month)].copy()
+                # Fixed: Compare string representation to avoid Pandas type matching bugs
+                df_t = df_purchase[df_purchase[date_col].dt.strftime('%Y-%m') == month_str].copy()
                 if not df_t.empty:
                     diag_df_t_empty = False
                     df_t['小計'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
@@ -6925,6 +6926,17 @@ def render_report_tab():
                     peak_spent = df_t[df_t[dept_col].isin(t_peak_depts)]['小計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
+        
+        # Only show debug info if calculated CPG is 0
+        if cpg_actual == 0:
+            with st.expander("🔍 CPG 計算除錯診斷資訊 (CPG為0時自動顯示)", expanded=True):
+                st.write(f"**計算年月**: {year}-{month:02d}")
+                st.write(f"**來客數 (Denominator)**: {hist_guests} (df_occ 空: {df_occ is None or df_occ.empty}, df_fb_daily 空: {df_fb_daily.empty})")
+                st.write(f"**採購花費 (Numerator)**: {peak_spent} (df_purchase 空: {diag_purchase_empty})")
+                st.write(f"**偵測欄位**: 日期欄={diag_date_col} | 工地/部門欄={diag_dept_col} | 金額欄={diag_total_col}")
+                if df_purchase is not None and not df_purchase.empty:
+                    st.write(f"**總表欄位清單**: {list(df_purchase.columns)}")
+                    st.write(f"**當月採購列數**: {0 if diag_df_t_empty else len(df_t)}")
         
         # Only show debug info if calculated CPG is 0
         if cpg_actual == 0:
