@@ -104,7 +104,7 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def fetch_thepeak_daily_purchase_report():
     """讀取 thepeak_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
@@ -149,7 +149,7 @@ def append_thepeak_daily_purchase_report(new_rows_df):
         return False
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def fetch_4fhh_daily_purchase_report():
     """讀取 4FHH_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
     try:
@@ -477,7 +477,7 @@ except Exception as e:
     st.stop()
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def _get_occ_data_cached(hotel_type=""):
     try:
         df = conn.read(worksheet="occ_data", ttl=0)
@@ -527,7 +527,7 @@ def _get_occ_data_cached(hotel_type=""):
                 df['revenue'] = 0
     return df
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def _get_cached_sheet_v3(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
@@ -817,7 +817,7 @@ def save_prediction_snapshot(new_row_dict):
         st.error(f"儲存快照失敗: {e}")
         return False
 
-def read_google_sheet(worksheet, ttl="1m"):
+def read_google_sheet(worksheet, ttl="10m"):
     try:
         return _get_cached_sheet_v3(worksheet, hotel_type=current_hotel)
     except Exception as e:
@@ -919,7 +919,7 @@ def get_daily_data(d_str):
                 return data_dict
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
-        msg = f"讀取 daily_data 失敗: {e}"
+        msg = f"讀取 occ_data 失敗: {e}"
         if hint:
             msg += f"\n{hint}"
         st.error(msg)
@@ -958,7 +958,7 @@ def save_daily_data(d_str, data_dict):
 
 def get_monthly_target(month_str):
     try:
-        df = read_google_sheet("targets", ttl="1m")
+        df = read_google_sheet("targets", ttl="10m")
         if df is not None and not df.empty:
             res = df[df['month'] == month_str]
             if not res.empty:
@@ -994,7 +994,7 @@ def save_monthly_target(month_str, target):
 
 def get_daily_log(d_str):
     try:
-        df = read_google_sheet("daily_logs", ttl="1m")
+        df = read_google_sheet("daily_logs", ttl="10m")
         if df is not None and not df.empty:
             res = df[df['date'] == d_str]
             if not res.empty:
@@ -1016,7 +1016,7 @@ def get_daily_log(d_str):
                 return str(res.iloc[0]['daily_work_log']).strip()
     except Exception as e:
         hint = get_google_sheet_error_hint(e)
-        msg = f"讀取 daily_data (fallback) 失敗: {e}"
+        msg = f"讀取 occ_data (fallback) 失敗: {e}"
         if hint:
             msg += f"\n{hint}"
         st.error(msg)
@@ -3499,7 +3499,7 @@ with tab_p:
         
         for name in possible_names:
             try:
-                df_purchase = raw_st.read(worksheet=name, spreadsheet=url_st, ttl="1m")
+                df_purchase = raw_st.read(worksheet=name, spreadsheet=url_st, ttl="10m")
                 if df_purchase is not None and not df_purchase.empty:
                     used_name = name
                     break
@@ -5991,7 +5991,7 @@ if current_hotel != "採購":
         # -- 人事管理函數 (Google Sheets 版) --
         def get_all_employees():
             try:
-                df = conn.read(worksheet="employees", ttl="1m")
+                df = conn.read(worksheet="employees", ttl="10m")
                 return df if df is not None else pd.DataFrame()
             except:
                 return pd.DataFrame()
