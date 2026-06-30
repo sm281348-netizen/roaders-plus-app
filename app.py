@@ -1,4 +1,29 @@
 import streamlit as st
+
+# --- Gspread Retry Patch ---
+import gspread.client
+import time
+from gspread.exceptions import APIError
+
+if not hasattr(gspread.client.Client, '_original_request_patched'):
+    original_request = gspread.client.Client.request
+
+    def patched_request(self, method, endpoint, params=None, data=None, json=None, files=None, headers=None):
+        for attempt in range(5):
+            try:
+                return original_request(self, method, endpoint, params=params, data=data, json=json, files=files, headers=headers)
+            except APIError as e:
+                err_msg = str(e).lower()
+                if "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg:
+                    if attempt < 4:
+                        time.sleep(15)  # Sleep 15s to wait out the 60s quota window
+                        continue
+                raise e
+
+    gspread.client.Client.request = patched_request
+    gspread.client.Client._original_request_patched = True
+# ---------------------------
+
 import datetime
 import pandas as pd
 import time
