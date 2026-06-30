@@ -6846,12 +6846,14 @@ def render_report_tab():
         # Calculate actual peak_spent from purchase_data
         df_purchase = get_purchase_data_cached()
         peak_spent = 0
+        df_daily_report = fetch_thepeak_daily_purchase_report()
+        
+        # 1. Base monthly procurement cost
         if not df_purchase.empty:
             df_p = df_purchase.copy()
             df_p.columns = df_p.columns.astype(str).str.strip()
             date_col = next((c for c in df_p.columns if '日期' in c or 'Date' in c or 'date' in c), None)
             if date_col:
-                # ensure proper datetimes
                 df_p[date_col] = pd.to_datetime(df_p[date_col], errors='coerce')
                 df_month_p = df_p[df_p[date_col].dt.strftime('%Y-%m') == month_str].copy()
                 if not df_month_p.empty:
@@ -6863,7 +6865,20 @@ def render_report_tab():
                         subtotal_col = next((c for c in df_month_p.columns if '小計' in c), None)
                         if subtotal_col:
                             df_month_p[subtotal_col] = pd.to_numeric(df_month_p[subtotal_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                            peak_spent = df_month_p[df_month_p[dept_col].isin(peak_m)][subtotal_col].sum()
+                            peak_spent += df_month_p[df_month_p[dept_col].isin(peak_m)][subtotal_col].sum()
+                            
+        # 2. Add daily procurement cost (un-monthly-closed data)
+        if not df_daily_report.empty and '總計' in df_daily_report.columns and '採購日' in df_daily_report.columns:
+            df_d = df_daily_report.copy()
+            df_d['採購日'] = pd.to_datetime(df_d['採購日'], errors='coerce')
+            df_month_d = df_d[df_d['採購日'].dt.strftime('%Y-%m') == month_str].copy()
+            if not df_month_d.empty:
+                df_month_d['總計'] = pd.to_numeric(df_month_d['總計'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                # Ensure we don't double count if the month is already in purchase_data (official_ym logic)
+                # Simplest way: if peak_spent from purchase_data is 0, we rely fully on daily report.
+                # If peak_spent > 0, it means procurement has already closed this month's books.
+                if peak_spent == 0:
+                    peak_spent += df_month_d['總計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
