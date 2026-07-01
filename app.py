@@ -3916,6 +3916,8 @@ if selected_page == "💰 採購分析":
                 prev_d = selected_date - dateutil.relativedelta.relativedelta(months=1)
                 df_fb_hist_prev = get_combined_fb_daily_df(prev_d.year, prev_d.month, current_hotel)
                 prev_hist_guests = df_fb_hist_prev['peak_guests'].sum() if not df_fb_hist_prev.empty and 'peak_guests' in df_fb_hist_prev.columns else 0
+                prev_hist_bf = df_fb_hist_prev['bf_act'].sum() if not df_fb_hist_prev.empty and 'bf_act' in df_fb_hist_prev.columns else 0
+                prev_hist_af = df_fb_hist_prev['af_act'].sum() if not df_fb_hist_prev.empty and 'af_act' in df_fb_hist_prev.columns else 0
                 
                 prev_peak_spent = 0
                 if 'df_prev_month' in locals() and not df_prev_month.empty:
@@ -3933,28 +3935,7 @@ if selected_page == "💰 採購分析":
             except Exception:
                 pass
 
-            if hist_guests > 0:
-                current_mtd_cpg = peak_spent / hist_guests
-                used_rate_source = f"目前消耗率 (NT${int(current_mtd_cpg)})"
-            else:
-                current_mtd_cpg = fallback_cpg
-                used_rate_source = fallback_source
-                
-            expected_future_spend = future_guests * current_mtd_cpg
-            projected_eom_cost = peak_spent + expected_future_spend
-            projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
-            cpg_delta = projected_cpg - target_cpg
-            
-            # 根據狀況給予顏色
-            if projected_cpg > target_cpg * 1.05:
-                status_color = "#e74c3c" # Red
-                status_icon = "🚨 嚴重超支預警"
-            elif projected_cpg > target_cpg:
-                status_color = "#f39c12" # Orange
-                status_icon = "⚠️ 輕微超支預警"
-            else:
-                status_color = "#2ecc71" # Green
-                status_icon = "✅ 預算落點安全"
+            # (Projected CPG 計算已移至下方 k 值決定之後，以支援動態價量推算)
                 
             # 渲染將延後至 k 值計算完成後
             with col_w3:
@@ -4016,6 +3997,36 @@ if selected_page == "💰 採購分析":
                     step=0.1,
                     help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
                 )
+
+            # --- 新增: 動態未來成本預估 (Dynamic Projected CPG) ---
+            if hist_guests > 0 and (hist_bf + k_val * hist_af) > 0:
+                current_cb = peak_spent / (hist_bf + k_val * hist_af)
+                current_ca = k_val * current_cb
+                used_rate_source = f"本月歷史拆分 (早 NT${current_cb:.0f} / 午 NT${current_ca:.0f})"
+            else:
+                if 'prev_peak_spent' in locals() and prev_peak_spent > 0 and 'prev_hist_bf' in locals() and (prev_hist_bf + k_val * prev_hist_af) > 0:
+                    current_cb = prev_peak_spent / (prev_hist_bf + k_val * prev_hist_af)
+                    current_ca = k_val * current_cb
+                    used_rate_source = f"前月歷史拆分 (早 NT${current_cb:.0f} / 午 NT${current_ca:.0f})"
+                else:
+                    current_cb = target_cpg
+                    current_ca = target_cpg
+                    used_rate_source = f"目標單客成本基準 (NT${int(target_cpg)})"
+            
+            expected_future_spend = (adj_future_bf * current_cb) + (adj_future_af * current_ca)
+            projected_eom_cost = peak_spent + expected_future_spend
+            projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
+            cpg_delta = projected_cpg - target_cpg
+            
+            if projected_cpg > target_cpg * 1.05:
+                status_color = "#e74c3c" # Red
+                status_icon = "🚨 嚴重超支預警"
+            elif projected_cpg > target_cpg:
+                status_color = "#f39c12" # Orange
+                status_icon = "⚠️ 輕微超支預警"
+            else:
+                status_color = "#2ecc71" # Green
+                status_icon = "✅ 預算落點安全"
 
             # 核心公式 (基於目標)
             if B + k_val * A > 0:
