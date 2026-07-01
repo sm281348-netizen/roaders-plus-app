@@ -2021,7 +2021,7 @@ st.title(f"Hotel Master - {current_hotel}")
 st.sidebar.divider()
 st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    menu_options = ["💰 採購分析", "🛒 菜價分析"]
+    menu_options = ["💰 採購分析", "🛒 菜價分析", "📋 營運檢討報告"]
 else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
@@ -7416,5 +7416,7 @@ def render_report_tab():
     st.code(summary_text, language='markdown')
 
 if current_hotel != "採購":
-    if selected_page == "📋 營運檢討報告":
-        render_report_tab()
+    pass
+
+if selected_page == "📋 營運檢討報告":
+    render_report_tab()
