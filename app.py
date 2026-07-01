@@ -7145,15 +7145,27 @@ def render_report_tab():
                 mask = df_nation[date_col].astype(str).str.contains(f"{year}.*{month:02d}")
                 df_n = df_nation[mask]
                 if not df_n.empty:
-                    exclude_cols = [date_col, 'total', 'grand total', 'subtotal', '總計', '小計']
-                    nation_cols = [c for c in df_n.columns if c not in exclude_cols]
-                    sums = {}
-                    for c in nation_cols:
-                        val = pd.to_numeric(df_n[c].astype(str).str.strip().str.replace(',', ''), errors='coerce').sum()
-                        if val > 0: sums[c] = val
-                    if sums:
-                        top_nations = sorted(sums, key=sums.get, reverse=True)[:3]
-                        top_nations = [n.title() for n in top_nations]
+                    # Handle both long-format and wide-format data
+                    if 'nation' in df_n.columns and ('person' in df_n.columns or 'nights' in df_n.columns):
+                        val_col = 'person' if 'person' in df_n.columns else 'nights'
+                        temp_val = pd.to_numeric(df_n[val_col].astype(str).str.strip().str.replace(',', ''), errors='coerce').fillna(0)
+                        temp_df = pd.DataFrame({'nation': df_n['nation'].astype(str), 'val': temp_val})
+                        sums = temp_df.groupby('nation')['val'].sum().to_dict()
+                        # Remove empty nation strings or 'NC ENTRY'
+                        sums = {k: v for k, v in sums.items() if k.strip() != '' and 'NC ENTRY' not in k.upper()}
+                        if sums:
+                            top_nations = sorted(sums, key=sums.get, reverse=True)[:3]
+                            top_nations = [n.title() for n in top_nations]
+                    else:
+                        exclude_cols = [date_col, 'total', 'grand total', 'subtotal', '總計', '小計']
+                        nation_cols = [c for c in df_n.columns if c not in exclude_cols]
+                        sums = {}
+                        for c in nation_cols:
+                            val = pd.to_numeric(df_n[c].astype(str).str.strip().str.replace(',', ''), errors='coerce').sum()
+                            if val > 0: sums[c] = val
+                        if sums:
+                            top_nations = sorted(sums, key=sums.get, reverse=True)[:3]
+                            top_nations = [n.title() for n in top_nations]
 
         # 6. Daily Logs
         df_logs = _get_cached_sheet_v3("daily_logs", hotel_type=current_hotel)
