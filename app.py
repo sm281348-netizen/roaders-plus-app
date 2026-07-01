@@ -5913,26 +5913,32 @@ if selected_page == "🛒 菜價分析":
                 bc1, bc2 = st.columns(2)
                 with bc1:
                     st.markdown("**🔴 漲幅最大 Top 5**")
-                    top_up = ranked.head(5)
-                    for _, r in top_up.iterrows():
-                        if r['change_pct'] > 0:
+                    up_items = ranked[ranked['change_pct'] > 0]
+                    if not up_items.empty:
+                        top_up = up_items.head(5)
+                        for _, r in top_up.iterrows():
                             st.markdown(
                                 f"<div style='background:#fdf2f2; border-left:4px solid #e74c3c; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
                                 f"<strong>{r['item_name']}</strong> <span style='color:#e74c3c; font-size:13px;'>▲ +{r['change_pct']:.1f}%</span>"
                                 f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
                                 unsafe_allow_html=True
                             )
+                    else:
+                        st.info("💡 本期無漲價品項")
                 with bc2:
                     st.markdown("**🟢 跌幅最大 Top 5**")
-                    top_down = ranked.tail(5).iloc[::-1]
-                    for _, r in top_down.iterrows():
-                        if r['change_pct'] < 0:
+                    down_items = ranked[ranked['change_pct'] < 0]
+                    if not down_items.empty:
+                        top_down = down_items.tail(5).iloc[::-1]
+                        for _, r in top_down.iterrows():
                             st.markdown(
                                 f"<div style='background:#f2fdf5; border-left:4px solid #2ecc71; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
                                 f"<strong>{r['item_name']}</strong> <span style='color:#2ecc71; font-size:13px;'>▼ {r['change_pct']:.1f}%</span>"
                                 f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
                                 unsafe_allow_html=True
                             )
+                    else:
+                        st.info("💡 本期無跌價品項")
             else:
                 st.info("💡 尚無足夠比對資料可產生漲跌排行。")
             st.divider()
@@ -5990,16 +5996,17 @@ if selected_page == "🛒 菜價分析":
                                         < -5].sort_values('change_pct')
 
                 # 漏洞5修復：歷史天價/低點警報需至少 3 期資料，避免剛上線時的假警報
+                import numpy as np
                 MIN_PERIODS_FOR_ATH = 3
                 alert_all_time_high = ranked_all[
-                    (ranked_all['price'] >= ranked_all.get('ytd_max', 0)) &
+                    ((ranked_all['price'] >= ranked_all.get('ytd_max', 0) * 0.9999)) &
                     (ranked_all.get('ytd_max', 0) > ranked_all.get('ytd_min', 0)) &
                     (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
                 ] if 'ytd_max' in ranked_all.columns else pd.DataFrame()
                 
                 # 歷史低點警報 (同樣需至少 3 期)
                 alert_all_time_low = ranked_all[
-                    (ranked_all['price'] <= ranked_all.get('ytd_min', float('inf'))) &
+                    ((ranked_all['price'] <= ranked_all.get('ytd_min', float('inf')) * 1.0001)) &
                     (ranked_all.get('ytd_max', 0) > ranked_all.get('ytd_min', 0)) &
                     (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
                 ] if 'ytd_min' in ranked_all.columns else pd.DataFrame()
@@ -6035,9 +6042,10 @@ if selected_page == "🛒 菜價分析":
                 with st.expander("📋 完整戰略摘要表"):
                     summary_rows = []
                     for _, r in ranked_all.iterrows():
-                        is_ath = (r['price'] >= r['ytd_max']) and (
+                        import math
+                        is_ath = (math.isclose(r['price'], r['ytd_max'], rel_tol=1e-5) or r['price'] >= r['ytd_max']) and (
                             r['ytd_max'] > r['ytd_min']) and (r.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
-                        is_atl = (r['price'] <= r['ytd_min']) and (
+                        is_atl = (math.isclose(r['price'], r['ytd_min'], rel_tol=1e-5) or r['price'] <= r['ytd_min']) and (
                             r['ytd_max'] > r['ytd_min']) and (r.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
 
                         if is_ath:
