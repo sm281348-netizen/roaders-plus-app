@@ -7308,12 +7308,16 @@ def render_report_tab():
             with v_col2:
                 if cpg_diff > 0:
                     st.error(f"**本月 CPG 較上月增加 NT$ {cpg_diff:.1f}**")
-                    st.write(f"📈 **價差 (供應商通膨責任)**: 增加 NT$ {price_variance:.1f} (佔比 {price_variance/cpg_diff*100:.1f}%)")
-                    st.write(f"🍽️ **量差 (內部耗損/用量責任)**: 增加 NT$ {volume_variance:.1f} (佔比 {volume_variance/cpg_diff*100:.1f}%)")
+                    p_word = "增加" if price_variance >= 0 else "減少"
+                    v_word = "增加" if volume_variance >= 0 else "減少"
+                    st.write(f"📈 **價差 (供應商通膨責任)**: {p_word} NT$ {abs(price_variance):.1f} (佔比 {price_variance/cpg_diff*100:.1f}%)")
+                    st.write(f"🍽️ **量差 (內部耗損/用量責任)**: {v_word} NT$ {abs(volume_variance):.1f} (佔比 {volume_variance/cpg_diff*100:.1f}%)")
                 elif cpg_diff < 0:
                     st.success(f"**本月 CPG 較上月減少 NT$ {abs(cpg_diff):.1f}**")
-                    st.write(f"📉 **價差 (供應商降價紅利)**: 減少 NT$ {abs(price_variance):.1f}")
-                    st.write(f"🍽️ **量差 (內部節流/用量減少)**: 減少 NT$ {abs(volume_variance):.1f}")
+                    p_word = "增加" if price_variance >= 0 else "減少"
+                    v_word = "增加" if volume_variance >= 0 else "減少"
+                    st.write(f"📉 **價差 (供應商通膨責任)**: {p_word} NT$ {abs(price_variance):.1f} (佔比 {price_variance/cpg_diff*100:.1f}%)")
+                    st.write(f"🍽️ **量差 (內部耗損/用量責任)**: {v_word} NT$ {abs(volume_variance):.1f} (佔比 {volume_variance/cpg_diff*100:.1f}%)")
                 else:
                     st.info("本月 CPG 與上月持平。")
     else:
