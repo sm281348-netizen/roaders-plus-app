@@ -7089,40 +7089,7 @@ def render_report_tab():
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
         
-        # Only show debug info if calculated CPG is 0
-        if cpg_actual == 0:
-            with st.expander("🔍 CPG 計算除錯診斷資訊 (CPG為0時自動顯示)", expanded=True):
-                st.write(f"**計算年月**: {year}-{month:02d}")
-                st.write(f"**來客數 (Denominator)**: {hist_guests} (df_occ 空: {df_occ is None or df_occ.empty}, df_fb_daily 空: {df_fb_daily.empty})")
-                st.write(f"**採購花費 (Numerator)**: {peak_spent} (df_purchase 空: {diag_purchase_empty})")
-                st.write(f"**偵測欄位**: 日期欄={diag_date_col} | 工地/部門欄={diag_dept_col} | 金額欄={diag_total_col}")
-                st.write(f"**日期欄前5筆原始資料**: {diag_raw_dates_preview}")
-                st.write(f"**日期欄前5筆轉換後資料**: {diag_parsed_dates_preview}")
-                if df_purchase is not None and not df_purchase.empty:
-                    st.write(f"**總表欄位清單**: {list(df_purchase.columns)}")
-                    st.write(f"**當月採購列數**: {0 if diag_df_t_empty else len(df_t)}")
-        
-        # Only show debug info if calculated CPG is 0
-        if cpg_actual == 0:
-            with st.expander("🔍 CPG 計算除錯診斷資訊 (CPG為0時自動顯示)", expanded=True):
-                st.write(f"**計算年月**: {year}-{month:02d}")
-                st.write(f"**來客數 (Denominator)**: {hist_guests} (df_occ 空: {df_occ is None or df_occ.empty}, df_fb_daily 空: {df_fb_daily.empty})")
-                st.write(f"**採購花費 (Numerator)**: {peak_spent} (df_purchase 空: {diag_purchase_empty})")
-                st.write(f"**偵測欄位**: 日期欄={diag_date_col} | 工地/部門欄={diag_dept_col} | 金額欄={diag_total_col}")
-                if df_purchase is not None and not df_purchase.empty:
-                    st.write(f"**總表欄位清單**: {list(df_purchase.columns)}")
-                    st.write(f"**當月採購列數**: {0 if diag_df_t_empty else len(df_t)}")
-        
-        # Only show debug info if calculated CPG is 0
-        if cpg_actual == 0:
-            with st.expander("🔍 CPG 計算除錯診斷資訊 (CPG為0時自動顯示)", expanded=True):
-                st.write(f"**計算年月**: {year}-{month:02d}")
-                st.write(f"**來客數 (Denominator)**: {hist_guests} (df_occ 空: {df_occ is None or df_occ.empty}, df_fb_daily 空: {df_fb_daily.empty})")
-                st.write(f"**採購花費 (Numerator)**: {peak_spent} (df_purchase 空: {diag_purchase_empty})")
-                st.write(f"**偵測欄位**: 日期欄={diag_date_col} | 工地/部門欄={diag_dept_col} | 金額欄={diag_total_col}")
-                if df_purchase is not None and not df_purchase.empty:
-                    st.write(f"**總表欄位清單**: {list(df_purchase.columns)}")
-                    st.write(f"**當月採購列數**: {0 if diag_df_t_empty else len(df_t)}")
+
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
         
         # 3. Trends for the year
