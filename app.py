@@ -5902,32 +5902,36 @@ if selected_page == "🛒 菜價分析":
             # 防呆：若 Section C 因異常未執行導致 full_latest_df 未定義，用基本資料代替
             if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
                 full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
-            ranked = full_latest_df.dropna(subset=['change']).copy() if 'change' in full_latest_df.columns else pd.DataFrame()
-            ranked = ranked.sort_values('change_pct', ascending=False)
+            
+            if 'change_pct' in full_latest_df.columns:
+                ranked = full_latest_df.dropna(subset=['change_pct']).copy()
+                ranked = ranked.sort_values('change_pct', ascending=False)
 
-            bc1, bc2 = st.columns(2)
-            with bc1:
-                st.markdown("**🔴 漲幅最大 Top 5**")
-                top_up = ranked.head(5)
-                for _, r in top_up.iterrows():
-                    if r['change_pct'] > 0:
-                        st.markdown(
-                            f"<div style='background:#fdf2f2; border-left:4px solid #e74c3c; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
-                            f"<strong>{r['item_name']}</strong> <span style='color:#e74c3c; font-size:13px;'>▲ +{r['change_pct']:.1f}%</span>"
-                            f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
-                            unsafe_allow_html=True
-                        )
-            with bc2:
-                st.markdown("**🟢 跌幅最大 Top 5**")
-                top_down = ranked.tail(5).iloc[::-1]
-                for _, r in top_down.iterrows():
-                    if r['change_pct'] < 0:
-                        st.markdown(
-                            f"<div style='background:#f2fdf5; border-left:4px solid #2ecc71; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
-                            f"<strong>{r['item_name']}</strong> <span style='color:#2ecc71; font-size:13px;'>▼ {r['change_pct']:.1f}%</span>"
-                            f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
-                            unsafe_allow_html=True
-                        )
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    st.markdown("**🔴 漲幅最大 Top 5**")
+                    top_up = ranked.head(5)
+                    for _, r in top_up.iterrows():
+                        if r['change_pct'] > 0:
+                            st.markdown(
+                                f"<div style='background:#fdf2f2; border-left:4px solid #e74c3c; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                                f"<strong>{r['item_name']}</strong> <span style='color:#e74c3c; font-size:13px;'>▲ +{r['change_pct']:.1f}%</span>"
+                                f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
+                                unsafe_allow_html=True
+                            )
+                with bc2:
+                    st.markdown("**🟢 跌幅最大 Top 5**")
+                    top_down = ranked.tail(5).iloc[::-1]
+                    for _, r in top_down.iterrows():
+                        if r['change_pct'] < 0:
+                            st.markdown(
+                                f"<div style='background:#f2fdf5; border-left:4px solid #2ecc71; padding:8px 12px; border-radius:6px; margin-bottom:6px;'>"
+                                f"<strong>{r['item_name']}</strong> <span style='color:#2ecc71; font-size:13px;'>▼ {r['change_pct']:.1f}%</span>"
+                                f"<br><span style='font-size:12px; color:#888;'>{r['prev_price']:.0f} → {r['price']:.0f} 元/{r['unit']}</span></div>",
+                                unsafe_allow_html=True
+                            )
+            else:
+                st.info("💡 尚無足夠比對資料可產生漲跌排行。")
             st.divider()
 
         # ── E. 品項趨勢圖 ────────────────────────────────
@@ -5972,51 +5976,56 @@ if selected_page == "🛒 菜價分析":
             # 防呆：若 full_latest_df 未定義，補上基本資料
             if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
                 full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
-            ranked_all = full_latest_df.dropna(subset=['change_pct']).copy() if 'change_pct' in full_latest_df.columns else pd.DataFrame()
-            # 持續漲價：漲幅 > 5%
-            alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values(
-                'change_pct', ascending=False)
-            # 明顯降價：跌幅 > 5%
-            alert_down = ranked_all[ranked_all['change_pct']
-                                    < -5].sort_values('change_pct')
+            
+            if 'change_pct' in full_latest_df.columns:
+                ranked_all = full_latest_df.dropna(subset=['change_pct']).copy()
+                # 持續漲價：漲幅 > 5%
+                alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values(
+                    'change_pct', ascending=False)
+                # 明顯降價：跌幅 > 5%
+                alert_down = ranked_all[ranked_all['change_pct']
+                                        < -5].sort_values('change_pct')
 
-            # 漏洞5修復：歷史天價/低點警報需至少 3 期資料，避免剛上線時的假警報
-            MIN_PERIODS_FOR_ATH = 3
-            alert_all_time_high = ranked_all[
-                (ranked_all['price'] >= ranked_all['ytd_max']) &
-                (ranked_all['ytd_max'] > ranked_all['ytd_min']) &
-                (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
-            ]
-            # 歷史低點警報 (同樣需至少 3 期)
-            alert_all_time_low = ranked_all[
-                (ranked_all['price'] <= ranked_all['ytd_min']) &
-                (ranked_all['ytd_max'] > ranked_all['ytd_min']) &
-                (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
-            ]
+                # 漏洞5修復：歷史天價/低點警報需至少 3 期資料，避免剛上線時的假警報
+                MIN_PERIODS_FOR_ATH = 3
+                alert_all_time_high = ranked_all[
+                    (ranked_all['price'] >= ranked_all.get('ytd_max', 0)) &
+                    (ranked_all.get('ytd_max', 0) > ranked_all.get('ytd_min', 0)) &
+                    (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
+                ] if 'ytd_max' in ranked_all.columns else pd.DataFrame()
+                
+                # 歷史低點警報 (同樣需至少 3 期)
+                alert_all_time_low = ranked_all[
+                    (ranked_all['price'] <= ranked_all.get('ytd_min', float('inf'))) &
+                    (ranked_all.get('ytd_max', 0) > ranked_all.get('ytd_min', 0)) &
+                    (ranked_all.get('ytd_periods', 0) >= MIN_PERIODS_FOR_ATH)
+                ] if 'ytd_min' in ranked_all.columns else pd.DataFrame()
 
-            if not alert_all_time_high.empty:
-                high_items = '、'.join(
-                    alert_all_time_high['item_name'].head(5).tolist())
-                st.error(
-                    f"🚨 **【歷史高點警報】**：{high_items} 目前為今年最高價！\n\n👉 強烈建議：全面停用或切換至高防禦(穩定)食材，直到價格回落。")
+                if not alert_all_time_high.empty:
+                    high_items = '、'.join(
+                        alert_all_time_high['item_name'].head(5).tolist())
+                    st.error(
+                        f"🚨 **【歷史高點警報】**：{high_items} 目前為今年最高價！\n\n👉 強烈建議：全面停用或切換至高防禦(穩定)食材，直到價格回落。")
 
-            if not alert_up.empty:
-                up_items = '、'.join(alert_up['item_name'].head(5).tolist())
-                st.warning(
-                    f"📈 **短期漲幅警示（>{5}%）**：{up_items}\n\n👉 建議：評估替代食材，或提前確認這週用量是否能縮減。")
+                if not alert_up.empty:
+                    up_items = '、'.join(alert_up['item_name'].head(5).tolist())
+                    st.warning(
+                        f"📈 **短期漲幅警示（>{5}%）**：{up_items}\n\n👉 建議：評估替代食材，或提前確認這週用量是否能縮減。")
 
-            if not alert_all_time_low.empty:
-                low_items = '、'.join(
-                    alert_all_time_low['item_name'].head(5).tolist())
-                st.success(
-                    f"✅ **【歷史低點進場】**：{low_items} 目前來到今年低價！\n\n👉 建議：可在不超庫存、確保新鮮的前提下多囤貨，鎖住 CPG。")
-            elif not alert_down.empty:
-                down_items = '、'.join(alert_down['item_name'].head(5).tolist())
-                st.success(
-                    f"📉 **短期降價機會（>{5}%↓）**：{down_items}\n\n👉 建議：這批相對便宜，可適量多叫。")
+                if not alert_all_time_low.empty:
+                    low_items = '、'.join(
+                        alert_all_time_low['item_name'].head(5).tolist())
+                    st.success(
+                        f"✅ **【歷史低點進場】**：{low_items} 目前來到今年低價！\n\n👉 建議：可在不超庫存、確保新鮮的前提下多囤貨，鎖住 CPG。")
+                elif not alert_down.empty:
+                    down_items = '、'.join(alert_down['item_name'].head(5).tolist())
+                    st.success(
+                        f"📉 **短期降價機會（>{5}%↓）**：{down_items}\n\n👉 建議：這批相對便宜，可適量多叫。")
 
-            if alert_up.empty and alert_down.empty and alert_all_time_high.empty and alert_all_time_low.empty:
-                st.info("✅ 本期菜價整體穩定，無明顯異常波動，按原採購計畫執行即可。")
+                if alert_up.empty and alert_down.empty and alert_all_time_high.empty and alert_all_time_low.empty:
+                    st.info("✅ 本期菜價整體穩定，無明顯異常波動，按原採購計畫執行即可。")
+            else:
+                st.info("💡 尚無足夠比對資料可產生戰略建議。")
 
             # 彙整摘要表
             with st.expander("📋 完整戰略摘要表"):
