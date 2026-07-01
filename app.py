@@ -2033,57 +2033,57 @@ selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visib
 
 
 if current_hotel != "採購":
+    # 注入專屬 CSS 與 Card 產生器 (共用於多個頁面)
+    st.markdown("""
+    <style>
+    .metric-card {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 18px 20px;
+        margin: 8px 0 16px 0;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+        border-left: 6px solid #4CAF50;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.12);
+    }
+    .metric-title {
+        color: #7f8c8d;
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .metric-value {
+        color: #2c3e50;
+        font-size: 1.8rem;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }
+    .card-theme-blue { border-left-color: #3498db; }
+    .card-theme-orange { border-left-color: #f39c12; }
+    .card-theme-purple { border-left-color: #9b59b6; }
+    .card-theme-red { border-left-color: #e74c3c; }
+    .card-theme-green { border-left-color: #2ecc71; }
+    .card-bg-dark {
+        background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
+    }
+    .card-bg-dark .metric-title { color: #d8e2fb; }
+    .card-bg-dark .metric-value { color: #ffffff; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
+        return f'''
+        <div class="metric-card {color_class} {bg_class}">
+            <div class="metric-title">{icon} {title}</div>
+            <div class="metric-value">{value}</div>
+        </div>
+        '''
+
     if selected_page == "📊 營運總覽":
         st.header("📊 營運總覽")
-
-        # 注入專屬 CSS 與 Card 產生器
-        st.markdown("""
-        <style>
-        .metric-card {
-            background: #ffffff;
-            border-radius: 12px;
-            padding: 18px 20px;
-            margin: 8px 0 16px 0;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.06);
-            border-left: 6px solid #4CAF50;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .metric-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 16px rgba(0,0,0,0.12);
-        }
-        .metric-title {
-            color: #7f8c8d;
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        .metric-value {
-            color: #2c3e50;
-            font-size: 1.8rem;
-            font-weight: 800;
-            letter-spacing: 0.5px;
-        }
-        .card-theme-blue { border-left-color: #3498db; }
-        .card-theme-orange { border-left-color: #f39c12; }
-        .card-theme-purple { border-left-color: #9b59b6; }
-        .card-theme-red { border-left-color: #e74c3c; }
-        .card-theme-green { border-left-color: #2ecc71; }
-        .card-bg-dark {
-            background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
-        }
-        .card-bg-dark .metric-title { color: #d8e2fb; }
-        .card-bg-dark .metric-value { color: #ffffff; }
-        </style>
-        """, unsafe_allow_html=True)
-
-        def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
-            return f'''
-            <div class="metric-card {color_class} {bg_class}">
-                <div class="metric-title">{icon} {title}</div>
-                <div class="metric-value">{value}</div>
-            </div>
-            '''
 
         occ_val = st.session_state.get('input_occ', 0.0)
         if occ_val >= 90.0:
