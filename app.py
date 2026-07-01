@@ -5899,7 +5899,10 @@ if selected_page == "🛒 菜價分析":
         # ── D. 本期 vs 上期漲跌排行 ──────────────────────
         if n_periods >= 2:
             st.markdown("#### 📊 D. 本期 vs 上期：漲跌排行")
-            ranked = full_latest_df.dropna(subset=['change']).copy()
+            # 防呆：若 Section C 因異常未執行導致 full_latest_df 未定義，用基本資料代替
+            if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
+                full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
+            ranked = full_latest_df.dropna(subset=['change']).copy() if 'change' in full_latest_df.columns else pd.DataFrame()
             ranked = ranked.sort_values('change_pct', ascending=False)
 
             bc1, bc2 = st.columns(2)
@@ -5966,7 +5969,10 @@ if selected_page == "🛒 菜價分析":
         # ── F. 叫貨戰略建議 ──────────────────────────────
         st.markdown("#### 🎯 F. 叫貨戰略建議")
         if n_periods >= 2:
-            ranked_all = full_latest_df.dropna(subset=['change_pct']).copy()
+            # 防呆：若 full_latest_df 未定義，補上基本資料
+            if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
+                full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
+            ranked_all = full_latest_df.dropna(subset=['change_pct']).copy() if 'change_pct' in full_latest_df.columns else pd.DataFrame()
             # 持續漲價：漲幅 > 5%
             alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values(
                 'change_pct', ascending=False)
