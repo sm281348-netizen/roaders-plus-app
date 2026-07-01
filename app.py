@@ -5355,6 +5355,9 @@ if selected_page == "💰 採購分析":
                 help="只顯示歷史請購次數 ≥ 此值的品項（設為 0 則不過濾）"
             )
 
+        # ── 先儲存完整版 latest_df，給 Section D/E/F 使用（不受使用者篩選影響）──
+        full_latest_df = latest_df.copy()
+
         # 1. 套用搜尋
         if search_kw:
             latest_df = latest_df[latest_df['item_name'].str.contains(search_kw, na=False)]
@@ -5419,16 +5422,6 @@ if selected_page == "💰 採購分析":
                 _low_names = '、'.join(_alert_lows['item_name'].head(5).tolist())
                 st.success(f"✅ **常購品項中有歷史低點！** `{_low_names}` 目前為今年最便宜，是囤貨的好時機！")
 
-            else:
-                st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
-                st.write(
-                    f"ℹ️ 在「**{used_name}**」分頁中總共發現 {len(df_purchase)} 筆資料，但沒有符合 {current_month_str} 的紀錄。")
-                with st.expander("🛠️ 點此查看分頁中的前 5 筆原始資料 (除錯用)"):
-                    st.write(df_purchase.head(5))
-        else:
-            st.warning(
-                f"⚠️ 無法在 Google Sheet 中找到採購分頁 (嘗試過: {', '.join(possible_names)})。")
-            st.info("💡 請確認分頁名稱是否正確，且分頁中至少已填入一行資料。")
 
     except Exception as e:
         if "WorksheetNotFound" in str(e):
@@ -5906,7 +5899,7 @@ if selected_page == "🛒 菜價分析":
         # ── D. 本期 vs 上期漲跌排行 ──────────────────────
         if n_periods >= 2:
             st.markdown("#### 📊 D. 本期 vs 上期：漲跌排行")
-            ranked = latest_df.dropna(subset=['change']).copy()
+            ranked = full_latest_df.dropna(subset=['change']).copy()
             ranked = ranked.sort_values('change_pct', ascending=False)
 
             bc1, bc2 = st.columns(2)
@@ -5973,7 +5966,7 @@ if selected_page == "🛒 菜價分析":
         # ── F. 叫貨戰略建議 ──────────────────────────────
         st.markdown("#### 🎯 F. 叫貨戰略建議")
         if n_periods >= 2:
-            ranked_all = latest_df.dropna(subset=['change_pct']).copy()
+            ranked_all = full_latest_df.dropna(subset=['change_pct']).copy()
             # 持續漲價：漲幅 > 5%
             alert_up = ranked_all[ranked_all['change_pct'] > 5].sort_values(
                 'change_pct', ascending=False)
