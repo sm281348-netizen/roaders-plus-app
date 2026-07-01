@@ -5418,13 +5418,6 @@ if selected_page == "💰 採購分析":
             if not _alert_lows.empty:
                 _low_names = '、'.join(_alert_lows['item_name'].head(5).tolist())
                 st.success(f"✅ **常購品項中有歷史低點！** `{_low_names}` 目前為今年最便宜，是囤貨的好時機！")
-                    
-                    else:
-                        st.warning(
-                            f"⚠️ 在目前的採購資料中，找不到含有「{search_term}」的品項名稱。")
-                        st.info("💡 請嘗試選擇其他常用關鍵字，或自訂輸入更精確的關鍵字（如：雞蛋、高麗菜）。")
-                    else:
-                        st.info("💡 採購分頁缺少「品名」或「數量」欄位，無法進行單品消耗率分析。")
 
             else:
                 st.info(f"💡 {current_month_str} 尚未有採購數據紀錄。")
