@@ -5311,6 +5311,9 @@ if selected_page == "💰 採購分析":
             display_cols = ['item_name', 'unit', 'price', '請購次數']
             col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})', '請購次數': '📦 請購次數'}
 
+        # ── 計算完全部資料後再儲存 full_latest_df，供 D/E/F 使用（包含 change/ytd 欄位）──
+        full_latest_df = latest_df.copy()
+
         # ── 搜尋、篩選、排序 UI ─────────────────────────────
         # 主要篩選：以 radio 按鈕群組呈現，強調「經常性請購」為預設
         c_info, c_filter = st.columns([2, 1])
@@ -5354,9 +5357,6 @@ if selected_page == "💰 採購分析":
                 step=1,
                 help="只顯示歷史請購次數 ≥ 此值的品項（設為 0 則不過濾）"
             )
-
-        # ── 先儲存完整版 latest_df，給 Section D/E/F 使用（不受使用者篩選影響）──
-        full_latest_df = latest_df.copy()
 
         # 1. 套用搜尋
         if search_kw:
