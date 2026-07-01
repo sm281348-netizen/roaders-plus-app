@@ -7139,8 +7139,8 @@ def render_report_tab():
                     diag_df_t_empty = False
                     df_t['小計'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     t_all_depts = df_t[dept_col].astype(str).unique().tolist()
-                    t_hh = [d for d in t_all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                    t_peak_depts = [d for d in t_all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                    t_hh = [d for d in t_all_depts if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    t_peak_depts = [d for d in t_all_depts if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
                     peak_spent = df_t[df_t[dept_col].isin(t_peak_depts)]['小計'].sum()
                     
                 lm_month_str = f"{last_month_date.year}-{last_month_date.month:02d}"
@@ -7148,8 +7148,8 @@ def render_report_tab():
                 if not df_lm.empty:
                     df_lm['小計'] = pd.to_numeric(df_lm[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     t_all_depts_lm = df_lm[dept_col].astype(str).unique().tolist()
-                    t_hh_lm = [d for d in t_all_depts_lm if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                    t_peak_depts_lm = [d for d in t_all_depts_lm if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh_lm]
+                    t_hh_lm = [d for d in t_all_depts_lm if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    t_peak_depts_lm = [d for d in t_all_depts_lm if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh_lm]
                     lm_peak_spent = df_lm[df_lm[dept_col].isin(t_peak_depts_lm)]['小計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
