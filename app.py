@@ -3890,8 +3890,39 @@ if selected_page == "💰 採購分析":
             st.session_state['_budget_est_guests'] = total_est_guests
             st.session_state['_budget_total'] = total_budget
             
-            # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 推算) ---
-            current_mtd_cpg = peak_spent / hist_guests if hist_guests > 0 else target_cpg
+            # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 或前月 CPG 推算) ---
+            # 如果本月尚未有客數 (例如月初)，則改採「前月實際 CPG」作為未來消耗率預測基準，而非理想的目標值。
+            fallback_cpg = target_cpg
+            fallback_source = f"目標目標消耗率 (NT${int(target_cpg)})"
+            try:
+                import dateutil.relativedelta
+                prev_d = selected_date - dateutil.relativedelta.relativedelta(months=1)
+                df_fb_hist_prev = get_combined_fb_daily_df(prev_d.year, prev_d.month, current_hotel)
+                prev_hist_guests = df_fb_hist_prev['peak_guests'].sum() if not df_fb_hist_prev.empty and 'peak_guests' in df_fb_hist_prev.columns else 0
+                
+                prev_peak_spent = 0
+                if 'df_prev_month' in locals() and not df_prev_month.empty:
+                    _df_pm = df_prev_month.copy()
+                    _df_pm['小計'] = pd.to_numeric(_df_pm[total_col], errors='coerce').fillna(0)
+                    _pm_depts = _df_pm.groupby(dept_col)['小計'].sum().reset_index()
+                    _all_pm_d = _pm_depts[dept_col].astype(str).tolist()
+                    _pm_hh = [d for d in _all_pm_d if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    _pm_peak = [d for d in _all_pm_d if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in _pm_hh]
+                    prev_peak_spent = _pm_depts[_pm_depts[dept_col].isin(_pm_peak)]['小計'].sum()
+                
+                if prev_hist_guests > 0 and prev_peak_spent > 0:
+                    fallback_cpg = prev_peak_spent / prev_hist_guests
+                    fallback_source = f"前月實際消耗率 (NT${int(fallback_cpg)})"
+            except Exception:
+                pass
+
+            if hist_guests > 0:
+                current_mtd_cpg = peak_spent / hist_guests
+                used_rate_source = f"目前消耗率 (NT${int(current_mtd_cpg)})"
+            else:
+                current_mtd_cpg = fallback_cpg
+                used_rate_source = fallback_source
+                
             expected_future_spend = future_guests * current_mtd_cpg
             projected_eom_cost = peak_spent + expected_future_spend
             projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
@@ -4002,7 +4033,7 @@ if selected_page == "💰 採購分析":
             <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
                 <div style="flex: 1;">
                     <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
-                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來維持目前消耗率 (NT${int(current_mtd_cpg)}) 推算</div>
+                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">基於目前累積花費 <b>NT${int(peak_spent):,}</b>，並假設未來維持{used_rate_source} 推算</div>
                     <div style="display:flex; gap: 15px; margin-top: 15px;">
                         <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
                             <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐落點</span><br>
