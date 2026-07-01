@@ -5204,6 +5204,225 @@ if selected_page == "💰 採購分析":
                             st.warning(
                                 f"⚠️ 在目前的採購資料中，找不到含有「{search_term}」的品項名稱。")
                             st.info("💡 請嘗試選擇其他常用關鍵字，或自訂輸入更精確的關鍵字（如：雞蛋、高麗菜）。")
+                    
+        # ── C. 本期菜價總覽 ──────────────────────────────
+        st.markdown("#### 📋 C. 本期菜價總覽")
+        latest_period = periods_available[-1]
+        latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
+
+        # ── 計算歷史請購頻率 (從 thepeak_daily_purchase_report 及 4FHH) ────────
+        df_peak_hist = fetch_thepeak_daily_purchase_report()
+        df_hh_hist = fetch_4fhh_daily_purchase_report()
+        
+        freq_map = {}  # item_name -> purchase count
+        for _h_df in [df_peak_hist, df_hh_hist]:
+            if not _h_df.empty:
+                _item_col = next((c for c in _h_df.columns if '品項' in c or 'item' in c.lower()), None)
+                if _item_col:
+                    for item_val in _h_df[_item_col].dropna().astype(str).values:
+                        # 品項名稱有時候包含數量資訊如 "雞蛋 (10 個)", 嘗試取純品項名
+                        item_clean = item_val.split('(')[0].strip()
+                        freq_map[item_clean] = freq_map.get(item_clean, 0) + 1
+
+        # 用品項名模糊對應到 sp_df 中的 item_name (帶寬鬆匹配)
+        all_sp_items = latest_df['item_name'].astype(str).tolist()
+        frequent_items_set = set()
+        item_freq_count = {}  # item_name -> total frequency
+        for sp_item in all_sp_items:
+            matched_count = 0
+            for freq_item, cnt in freq_map.items():
+                if sp_item in freq_item or freq_item in sp_item:
+                    matched_count += cnt
+            if matched_count > 0:
+                frequent_items_set.add(sp_item)
+                item_freq_count[sp_item] = matched_count
+        
+        # 也從請購單歷史品項名稱中直接配對到 sp_df
+        for freq_item, cnt in freq_map.items():
+            if freq_item in all_sp_items:
+                frequent_items_set.add(freq_item)
+                item_freq_count[freq_item] = item_freq_count.get(freq_item, 0) + cnt
+        
+        n_frequent = len(frequent_items_set)
+        
+        if n_periods >= 2:
+            prev_period = periods_available[-2]
+            prev_df = sp_df[sp_df['period_dt'] == prev_period][['item_name', 'unit', 'price']].rename(columns={'price': 'prev_price'})
+            latest_df = latest_df.merge(prev_df, on=['item_name', 'unit'], how='left')
+            latest_df['change'] = latest_df['price'] - latest_df['prev_price']
+            # 漏洞4修復：防止 prev_price 為 0 時產生除以零錯誤
+            latest_df['change_pct'] = latest_df.apply(
+                lambda r: round(r['change'] / r['prev_price'] * 100, 1)
+                if pd.notna(r.get('prev_price')) and r.get('prev_price', 0) > 0
+                else float('nan'),
+                axis=1
+            )
+
+            # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
+            current_year = selected_date.year
+            ytd_sp_df = sp_df[sp_df['period_dt'].apply(lambda x: getattr(x, 'year', None)) == current_year] if not sp_df.empty else sp_df
+            ytd_stats = ytd_sp_df.groupby(['item_name', 'unit'])['price'].agg(['mean', 'max', 'min', 'count']).reset_index()
+            ytd_stats.rename(columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min', 'count': 'ytd_periods'}, inplace=True)
+            latest_df = latest_df.merge(ytd_stats, on=['item_name', 'unit'], how='left')
+
+            def fmt_change(row):
+                if pd.isna(row.get('change')):
+                    return '—'
+                sign = '+' if row['change'] > 0 else ''
+                color = '#e74c3c' if row['change'] > 0 else ('#2ecc71' if row['change'] < 0 else '#888')
+                arrow = '▲' if row['change'] > 0 else ('▼' if row['change'] < 0 else '─')
+                return f"<span style='color:{color};font-weight:bold;'>{arrow} {sign}{row['change_pct']:.1f}%</span>"
+
+            latest_df['漲跌'] = latest_df.apply(fmt_change, axis=1)
+
+            def fmt_ytd(row):
+                if pd.isna(row.get('ytd_avg')):
+                    return '—'
+                avg_p = row['ytd_avg']
+                curr_p = row['price']
+                if pd.isna(curr_p) or avg_p == 0:
+                    return '—'
+
+                diff_pct = ((curr_p - avg_p) / avg_p * 100)
+                sign = '+' if diff_pct > 0 else ''
+                color = '#e74c3c' if diff_pct > 0 else ('#2ecc71' if diff_pct < 0 else '#888')
+                text = f"<span style='color:{color};'>{sign}{diff_pct:.1f}%</span>"
+
+                badges = ""
+                if row['ytd_max'] > row['ytd_min']:
+                    if curr_p >= row['ytd_max']:
+                        badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史高點</span>"
+                    elif curr_p <= row['ytd_min']:
+                        badges = " <span style='background:#2ecc71;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史低點</span>"
+
+                return f"均 {avg_p:.1f} ({text}){badges}"
+
+            latest_df['純平基準對照'] = latest_df.apply(fmt_ytd, axis=1)
+            
+            # 加入請購頻率欄位
+            latest_df['請購次數'] = latest_df['item_name'].map(lambda x: item_freq_count.get(x, 0))
+            latest_df['_is_frequent'] = latest_df['item_name'].isin(frequent_items_set)
+            
+            display_cols = ['item_name', 'unit', 'price', '漲跌', '純平基準對照', '請購次數']
+            col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})', '請購次數': '📦 請購次數'}
+        else:
+            latest_df['請購次數'] = latest_df['item_name'].map(lambda x: item_freq_count.get(x, 0))
+            latest_df['_is_frequent'] = latest_df['item_name'].isin(frequent_items_set)
+            display_cols = ['item_name', 'unit', 'price', '請購次數']
+            col_rename = {'item_name': '品項', 'unit': '單位', 'price': f'本期單價 ({latest_period})', '請購次數': '📦 請購次數'}
+
+        # ── 搜尋、篩選、排序 UI ─────────────────────────────
+        # 主要篩選：以 radio 按鈕群組呈現，強調「經常性請購」為預設
+        c_info, c_filter = st.columns([2, 1])
+        with c_info:
+            if n_frequent > 0:
+                st.info(f"📦 已從歷史請購紀錄中識別出 **{n_frequent}** 個經常性採購品項（共從 `thepeak_daily_purchase_report` 及 `4FHH_daily_purchase_report` 統計得出）。")
+            else:
+                st.info("💡 尚無歷史請購紀錄可供分析。送出請購單後，「經常性請購」分類將自動建立。")
+        
+        with c_filter:
+            pass  # placeholder
+
+        search_kw = st.text_input("🔍 搜尋品項", placeholder="輸入關鍵字，如：高麗菜、雞蛋")
+        
+        # 篩選器一列三欄
+        sort_col, filter_col, extra_col = st.columns(3)
+        with sort_col:
+            sort_option = st.selectbox("↕️ 排序方式", [
+                "📦 請購頻率：由高至低",
+                "預設 (不排序)",
+                "💰 本期單價：由高至低",
+                "💰 本期單價：由低至高",
+                "📈 漲幅：由高至低 (漲最多)",
+                "📉 跌幅：由低至高 (跌最多)"
+            ])
+            
+        with filter_col:
+            filter_option = st.selectbox("🏷️ 狀態篩選", [
+                "⭐ 經常性請購",
+                "📋 所有品項",
+                "🚨 歷史高點",
+                "✅ 歷史低點",
+                "─ 正常區間"
+            ])
+
+        with extra_col:
+            min_freq = st.number_input(
+                "🔢 最低請購次數篩選",
+                min_value=0,
+                value=0,
+                step=1,
+                help="只顯示歷史請購次數 ≥ 此值的品項（設為 0 則不過濾）"
+            )
+
+        # 1. 套用搜尋
+        if search_kw:
+            latest_df = latest_df[latest_df['item_name'].str.contains(search_kw, na=False)]
+
+        # 2. 套用狀態篩選
+        if filter_option == "⭐ 經常性請購":
+            latest_df = latest_df[latest_df['_is_frequent']].copy()
+        elif filter_option != "📋 所有品項" and 'ytd_max' in latest_df.columns:
+            is_high = (latest_df['price'] >= latest_df['ytd_max']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
+            is_low = (latest_df['price'] <= latest_df['ytd_min']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
+            if filter_option == "🚨 歷史高點":
+                latest_df = latest_df[is_high]
+            elif filter_option == "✅ 歷史低點":
+                latest_df = latest_df[is_low]
+            elif filter_option == "─ 正常區間":
+                latest_df = latest_df[~(is_high | is_low)]
+
+        # 3. 套用最低請購次數篩選
+        if min_freq > 0:
+            latest_df = latest_df[latest_df['請購次數'] >= min_freq]
+
+        # 4. 套用排序
+        if sort_option == "📦 請購頻率：由高至低":
+            latest_df = latest_df.sort_values('請購次數', ascending=False)
+        elif sort_option == "💰 本期單價：由高至低":
+            latest_df = latest_df.sort_values('price', ascending=False)
+        elif sort_option == "💰 本期單價：由低至高":
+            latest_df = latest_df.sort_values('price', ascending=True)
+        elif "漲幅：由高至低" in sort_option and 'change_pct' in latest_df.columns:
+            latest_df = latest_df.sort_values('change_pct', ascending=False)
+        elif "跌幅：由低至高" in sort_option and 'change_pct' in latest_df.columns:
+            latest_df = latest_df.sort_values('change_pct', ascending=True)
+        
+        # 若是「經常性請購」模式預設按頻率排序（若使用者未選其他）
+        if filter_option == "⭐ 經常性請購" and sort_option == "📦 請購頻率：由高至低":
+            latest_df = latest_df.sort_values('請購次數', ascending=False)
+
+        # 5. 新增「今日是否在菜價表」欄位 (供快速確認用)
+        if '品項' not in latest_df.columns:
+            show_df = latest_df[[c for c in display_cols if c in latest_df.columns]].rename(columns=col_rename)
+        else:
+            show_df = latest_df[[c for c in display_cols if c in latest_df.columns]].rename(columns=col_rename)
+
+        # 顯示結果計數
+        total_items_showing = len(show_df)
+        mode_label = "（⭐ 經常性請購）" if filter_option == "⭐ 經常性請購" else f"（{filter_option}）"
+        st.caption(f"🔎 目前顯示 **{total_items_showing}** 個品項 {mode_label}")
+
+        if n_periods >= 2:
+            st.write(show_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+        else:
+            st.dataframe(show_df, use_container_width=True, hide_index=True)
+        
+        # ── 快速提示卡：「經常性請購」模式下的注意品項 ───────────────
+        if filter_option == "⭐ 經常性請購" and n_periods >= 2 and not latest_df.empty and 'ytd_max' in latest_df.columns:
+            _alert_highs = latest_df[(latest_df['price'] >= latest_df['ytd_max']) & (latest_df['ytd_max'] > latest_df['ytd_min']) & latest_df['_is_frequent']]
+            if not _alert_highs.empty:
+                _high_names = '、'.join(_alert_highs['item_name'].head(5).tolist())
+                st.error(f"🚨 **常購品項中有歷史高點！** `{_high_names}` 目前為今年最貴，建議本週評估替代或減量採購。")
+            _alert_lows = latest_df[(latest_df['price'] <= latest_df['ytd_min']) & (latest_df['ytd_max'] > latest_df['ytd_min']) & latest_df['_is_frequent']]
+            if not _alert_lows.empty:
+                _low_names = '、'.join(_alert_lows['item_name'].head(5).tolist())
+                st.success(f"✅ **常購品項中有歷史低點！** `{_low_names}` 目前為今年最便宜，是囤貨的好時機！")
+                    
+                    else:
+                        st.warning(
+                            f"⚠️ 在目前的採購資料中，找不到含有「{search_term}」的品項名稱。")
+                        st.info("💡 請嘗試選擇其他常用關鍵字，或自訂輸入更精確的關鍵字（如：雞蛋、高麗菜）。")
                     else:
                         st.info("💡 採購分頁缺少「品名」或「數量」欄位，無法進行單品消耗率分析。")
 
@@ -5688,139 +5907,6 @@ if selected_page == "🛒 菜價分析":
 
         else:
             st.info("💡 目前查無本月預估總早餐人數，無法試算總預算。請確認上方月分析已載入當月資料。")
-
-        st.divider()
-
-        # ── C. 本期菜價總覽 ──────────────────────────────
-        st.markdown("#### 📋 C. 本期菜價總覽")
-        latest_period = periods_available[-1]
-        latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
-
-        if n_periods >= 2:
-            prev_period = periods_available[-2]
-            prev_df = sp_df[sp_df['period_dt'] == prev_period][[
-                'item_name', 'unit', 'price']].rename(columns={'price': 'prev_price'})
-            latest_df = latest_df.merge(
-                prev_df, on=['item_name', 'unit'], how='left')
-            latest_df['change'] = latest_df['price'] - latest_df['prev_price']
-            # 漏洞4修復：防止 prev_price 為 0 時產生除以零錯誤
-            latest_df['change_pct'] = latest_df.apply(
-                lambda r: round(r['change'] / r['prev_price'] * 100, 1)
-                if pd.notna(r.get('prev_price')) and r.get('prev_price', 0) > 0
-                else float('nan'),
-                axis=1
-            )
-
-            # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
-            current_year = selected_date.year
-            ytd_sp_df = sp_df[sp_df['period_dt'].apply(lambda x: getattr(x, 'year', None)) == current_year] if not sp_df.empty else sp_df
-            ytd_stats = ytd_sp_df.groupby(['item_name', 'unit'])['price'].agg(
-                ['mean', 'max', 'min', 'count']).reset_index()
-            ytd_stats.rename(
-                columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min', 'count': 'ytd_periods'}, inplace=True)
-            latest_df = latest_df.merge(
-                ytd_stats, on=['item_name', 'unit'], how='left')
-
-            def fmt_change(row):
-                if pd.isna(row.get('change')):
-                    return '—'
-                sign = '+' if row['change'] > 0 else ''
-                color = '#e74c3c' if row['change'] > 0 else (
-                    '#2ecc71' if row['change'] < 0 else '#888')
-                arrow = '▲' if row['change'] > 0 else (
-                    '▼' if row['change'] < 0 else '─')
-                return f"<span style='color:{color};font-weight:bold;'>{arrow} {sign}{row['change_pct']:.1f}%</span>"
-
-            latest_df['漲跌'] = latest_df.apply(fmt_change, axis=1)
-
-            def fmt_ytd(row):
-                if pd.isna(row.get('ytd_avg')):
-                    return '—'
-                avg_p = row['ytd_avg']
-                curr_p = row['price']
-                if pd.isna(curr_p) or avg_p == 0:
-                    return '—'
-
-                # 計算與年平均的差距 %
-                diff_pct = ((curr_p - avg_p) / avg_p * 100)
-                sign = '+' if diff_pct > 0 else ''
-                color = '#e74c3c' if diff_pct > 0 else (
-                    '#2ecc71' if diff_pct < 0 else '#888')
-                text = f"<span style='color:{color};'>{sign}{diff_pct:.1f}%</span>"
-
-                # 極值徽章 (排除只有1期或變動為0的無意義標籤)
-                badges = ""
-                if row['ytd_max'] > row['ytd_min']:
-                    if curr_p >= row['ytd_max']:
-                        badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史高點</span>"
-                    elif curr_p <= row['ytd_min']:
-                        badges = " <span style='background:#2ecc71;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史低點</span>"
-
-                return f"均 {avg_p:.1f} ({text}){badges}"
-
-            latest_df['純平基準對照'] = latest_df.apply(fmt_ytd, axis=1)
-            display_cols = ['item_name', 'unit', 'price', '漲跌', '純平基準對照']
-            col_rename = {'item_name': '品項', 'unit': '單位',
-                          'price': f'本期單價 ({latest_period})'}
-        else:
-            display_cols = ['item_name', 'unit', 'price']
-            col_rename = {'item_name': '品項', 'unit': '單位',
-                          'price': f'本期單價 ({latest_period})'}
-
-        # 搜尋過濾與進階選項
-        search_kw = st.text_input("🔍 搜尋品項", placeholder="輸入關鍵字，如：高麗菜")
-        
-        sort_col, filter_col = st.columns(2)
-        with sort_col:
-            sort_option = st.selectbox("↕️ 排序方式", [
-                "預設 (不排序)",
-                "💰 本期單價：由高至低",
-                "💰 本期單價：由低至高",
-                "📈 漲幅：由高至低 (漲最多)",
-                "📉 跌幅：由低至高 (跌最多)"
-            ])
-            
-        with filter_col:
-            filter_option = st.selectbox("🏷️ 狀態篩選", [
-                "全部顯示",
-                "🚨 歷史高點",
-                "✅ 歷史低點",
-                "─ 正常區間"
-            ])
-
-        # 1. 套用搜尋
-        if search_kw:
-            latest_df = latest_df[latest_df['item_name'].str.contains(search_kw, na=False)]
-
-        # 2. 套用篩選
-        if filter_option != "全部顯示" and 'ytd_max' in latest_df.columns:
-            is_high = (latest_df['price'] >= latest_df['ytd_max']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
-            is_low = (latest_df['price'] <= latest_df['ytd_min']) & (latest_df['ytd_max'] > latest_df['ytd_min'])
-            
-            if filter_option == "🚨 歷史高點":
-                latest_df = latest_df[is_high]
-            elif filter_option == "✅ 歷史低點":
-                latest_df = latest_df[is_low]
-            elif filter_option == "─ 正常區間":
-                latest_df = latest_df[~(is_high | is_low)]
-
-        # 3. 套用排序
-        if sort_option == "💰 本期單價：由高至低":
-            latest_df = latest_df.sort_values('price', ascending=False)
-        elif sort_option == "💰 本期單價：由低至高":
-            latest_df = latest_df.sort_values('price', ascending=True)
-        elif "漲幅：由高至低" in sort_option and 'change_pct' in latest_df.columns:
-            latest_df = latest_df.sort_values('change_pct', ascending=False)
-        elif "跌幅：由低至高" in sort_option and 'change_pct' in latest_df.columns:
-            latest_df = latest_df.sort_values('change_pct', ascending=True)
-
-        show_df = latest_df[display_cols].rename(columns=col_rename)
-
-        if n_periods >= 2:
-            st.write(show_df.to_html(escape=False, index=False),
-                     unsafe_allow_html=True)
-        else:
-            st.dataframe(show_df, use_container_width=True, hide_index=True)
 
         st.divider()
 
