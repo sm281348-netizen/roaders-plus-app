@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 import streamlit as st
 
 # --- Gspread Retry Patch ---
@@ -5740,21 +5740,23 @@ if selected_page == "🛒 菜價分析":
 
             def fmt_change(row):
                 if pd.isna(row.get('change')):
-                    return '—'
+                    return "<span style='color:#bbb;'>無上期資料</span>"
+                if row['change'] == 0:
+                    return f"<span style='color:#888;font-weight:bold;'>─ 持平 (0.0%)</span>"
                 sign = '+' if row['change'] > 0 else ''
-                color = '#e74c3c' if row['change'] > 0 else ('#2ecc71' if row['change'] < 0 else '#888')
-                arrow = '▲' if row['change'] > 0 else ('▼' if row['change'] < 0 else '─')
+                color = '#e74c3c' if row['change'] > 0 else '#2ecc71'
+                arrow = '▲' if row['change'] > 0 else '▼'
                 return f"<span style='color:{color};font-weight:bold;'>{arrow} {sign}{row['change_pct']:.1f}%</span>"
 
             latest_df['漲跌'] = latest_df.apply(fmt_change, axis=1)
 
             def fmt_ytd(row):
                 if pd.isna(row.get('ytd_avg')):
-                    return '—'
+                    return "<span style='color:#bbb;'>無歷史資料</span>"
                 avg_p = row['ytd_avg']
                 curr_p = row['price']
                 if pd.isna(curr_p) or avg_p == 0:
-                    return '—'
+                    return "<span style='color:#bbb;'>無歷史資料</span>"
 
                 diff_pct = ((curr_p - avg_p) / avg_p * 100)
                 sign = '+' if diff_pct > 0 else ''
@@ -5762,10 +5764,11 @@ if selected_page == "🛒 菜價分析":
                 text = f"<span style='color:{color};'>{sign}{diff_pct:.1f}%</span>"
 
                 badges = ""
+                import math
                 if row['ytd_max'] > row['ytd_min']:
-                    if curr_p >= row['ytd_max']:
+                    if math.isclose(curr_p, row['ytd_max'], rel_tol=1e-5) or curr_p > row['ytd_max']:
                         badges = " <span style='background:#e74c3c;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史高點</span>"
-                    elif curr_p <= row['ytd_min']:
+                    elif math.isclose(curr_p, row['ytd_min'], rel_tol=1e-5) or curr_p < row['ytd_min']:
                         badges = " <span style='background:#2ecc71;color:white;font-size:10px;padding:2px 4px;border-radius:4px;margin-left:4px;'>歷史低點</span>"
 
                 return f"均 {avg_p:.1f} ({text}){badges}"
