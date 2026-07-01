@@ -225,9 +225,10 @@ def append_4fhh_daily_purchase_report(new_rows_df):
     except Exception as e:
         st.error(f"寫入失敗: {e}")
         return False
-def get_market_index_df(sp_df):
-    """將 supplier_prices DataFrame 轉換為大盤物價指數 (Market Price Index) DataFrame
-    使用連鎖指數法 (Chain-linking) 以支援中途新增或移除的食材。"""
+def get_market_index_df(sp_df, weights_dict=None):
+    """將 supplier_prices DataFrame 轉換為大盤指數 (Market Price Index) DataFrame
+    使用連鎖法 (Chain-linking) 以支援品項新增與淘汰。
+    若提供 weights_dict，將同時計算加權指數。"""
     if sp_df is None or sp_df.empty:
         return pd.DataFrame()
 
@@ -238,12 +239,14 @@ def get_market_index_df(sp_df):
     index_data = []
     prev_dict = sp_df[sp_df['period_dt'] == periods_available[0]].set_index(['item_name', 'unit'])['price'].to_dict()
     current_index = 100.0
+    current_weighted_index = 100.0 if weights_dict is not None else None
     
     index_data.append({
         'period_dt': periods_available[0],
         'period_str': str(periods_available[0]),
         'month_label': periods_available[0].strftime('%Y-%m'),
-        'index': round(current_index, 1)
+        'index': round(current_index, 1),
+        **({'weighted_index': round(current_weighted_index, 1)} if weights_dict is not None else {})
     })
 
     for i in range(1, len(periods_available)):
@@ -252,19 +255,33 @@ def get_market_index_df(sp_df):
         curr_dict = curr_df.set_index(['item_name', 'unit'])['price'].to_dict()
         
         ratios = []
+        weighted_ratios = []
+        total_weight = 0.0
+        
         for key, price in curr_dict.items():
             if key in prev_dict and prev_dict[key] > 0 and pd.notna(price):
-                ratios.append(price / prev_dict[key])
+                ratio = price / prev_dict[key]
+                ratios.append(ratio)
+                
+                if weights_dict is not None:
+                    item_name = key[0]
+                    weight = weights_dict.get(item_name, 0.0)
+                    weighted_ratios.append(ratio * weight)
+                    total_weight += weight
                 
         if ratios:
             period_ratio = sum(ratios) / len(ratios)
             current_index = current_index * period_ratio
+        if weights_dict is not None and total_weight > 0:
+            weighted_period_ratio = sum(weighted_ratios) / total_weight
+            current_weighted_index = current_weighted_index * weighted_period_ratio
             
         index_data.append({
             'period_dt': p,
             'period_str': str(p),
             'month_label': p.strftime('%Y-%m'),
-            'index': round(current_index, 1)
+            'index': round(current_index, 1),
+            **({'weighted_index': round(current_weighted_index, 1)} if weights_dict is not None else {})
         })
         
         prev_dict = curr_dict
@@ -5575,9 +5592,25 @@ if selected_page == "🛒 菜價分析":
         if n_periods >= 2:
             st.markdown("#### 📈 A. 菜商物價指數")
             st.info(
-                "💡 **什麼是大盤指數？** 以第一期（基準期）的整體物價為 100 分。如果本期指數為 105，代表飯店整體的食材採購成本「通膨了 5%」。**這是與供應商談判及調整 CPG 預算的最強客觀依據！**\n\n⚠️ **注意**：本指數採用**等權重平均計算**，每個品項貢獻相同的權重，高波動但採購量小的品項（如香草、松露）可能略微放大指數，請搭配品項趨勢圖一併判斷。")
+                "💡 **真實成本通膨指數 (實線)**：結合您的歷史請購明細，賦予大用量食材較高的權重，真實反映 CPG 的通膨壓力。\n\n"
+                "**大盤報價指數 (虛線)**：等權重計算，單純反映供應商整體的報價趨勢。")
 
-            index_df = get_market_index_df(sp_df)
+            weights_dict = None
+            try:
+                df_pur = _get_cached_sheet_v3('purchase_data', hotel_type=current_hotel)
+                if df_pur is not None and not df_pur.empty:
+                    df_pur.columns = df_pur.columns.astype(str).str.strip()
+                    total_col = next((c for c in df_pur.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
+                    item_col = next((c for c in df_pur.columns if '品名' in c or 'item' in c), None)
+                    
+                    if item_col and total_col:
+                        pur_amt = pd.to_numeric(df_pur[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        weights_df = pd.DataFrame({'item': df_pur[item_col].astype(str), 'amt': pur_amt})
+                        weights_dict = weights_df.groupby('item')['amt'].sum().to_dict()
+            except Exception as e:
+                pass
+
+            index_df = get_market_index_df(sp_df, weights_dict=weights_dict)
             base_period = periods_available[0]
 
             if not index_df.empty:
@@ -5585,27 +5618,41 @@ if selected_page == "🛒 菜價分析":
                 prev_idx = index_df.iloc[-2]['index']
                 diff_idx = latest_idx - prev_idx
 
+                has_weighted = 'weighted_index' in index_df.columns
+                latest_w_idx = index_df.iloc[-1]['weighted_index'] if has_weighted else latest_idx
+                prev_w_idx = index_df.iloc[-2]['weighted_index'] if has_weighted else prev_idx
+                diff_w_idx = latest_w_idx - prev_w_idx
+
                 ic1, ic2 = st.columns([1, 3])
                 with ic1:
-                    st.metric(label="本期大盤指數", value=f"{latest_idx:.1f}",
-                              delta=f"{diff_idx:+.1f} 點 (vs上期)", delta_color="inverse")
+                    st.metric(label="本期真實通膨指數 (加權)", value=f"{latest_w_idx:.1f}",
+                              delta=f"{diff_w_idx:+.1f} 點 (vs上期)", delta_color="inverse")
+                    st.caption(f"同期大盤指數：{latest_idx:.1f} ({diff_idx:+.1f})")
                     st.caption(f"基準期：{base_period} (=100)")
                 with ic2:
-                    # 取得折線圖的上下限，並包含 100
                     all_idx_vals = index_df['index'].tolist() + [100]
+                    if has_weighted:
+                        all_idx_vals += index_df['weighted_index'].tolist()
                     idx_min = max(0, int(min(all_idx_vals) * 0.98))
                     idx_max = int(max(all_idx_vals) * 1.02)
 
-                    line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
-                        x=alt.X('period_str:O', title='期別',
-                                axis=alt.Axis(labelAngle=-30)),
-                        y=alt.Y('index:Q', title='指數', scale=alt.Scale(
-                            domain=[idx_min, idx_max], zero=False)),
-                        tooltip=[
-                            alt.Tooltip('period_str:N', title='期別'),
-                            alt.Tooltip('index:Q', title='大盤指數', format='.1f'),
-                        ]
-                    )
+                    if has_weighted:
+                        chart_df = index_df.melt(id_vars=['period_str', 'month_label'], value_vars=['index', 'weighted_index'], var_name='index_type', value_name='index_value')
+                        chart_df['index_type'] = chart_df['index_type'].map({'index': '大盤報價指數 (等權重)', 'weighted_index': '真實採購通膨指數 (用量加權)'})
+                        
+                        line_chart = alt.Chart(chart_df).mark_line(point=True, strokeWidth=3).encode(
+                            x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
+                            y=alt.Y('index_value:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
+                            color=alt.Color('index_type:N', legend=alt.Legend(title='指數類型', orient='bottom')),
+                            strokeDash=alt.condition(alt.datum.index_type == '大盤報價指數 (等權重)', alt.value([5, 5]), alt.value([0])),
+                            tooltip=['period_str:N', 'index_type:N', alt.Tooltip('index_value:Q', title='指數', format='.1f')]
+                        )
+                    else:
+                        line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
+                            x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
+                            y=alt.Y('index:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
+                            tooltip=[alt.Tooltip('period_str:N', title='期別'), alt.Tooltip('index:Q', title='大盤指數', format='.1f')]
+                        )
 
                     base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
                         strokeDash=[5, 5], color='gray').encode(y='y:Q')
@@ -6977,40 +7024,43 @@ def render_report_tab():
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
         
         # 1. Get hist_guests (dynamically merge with f&b_report for safety)
-        hist_guests = 0
-        df_occ = curr_summary.get('df')
-        df_fb_daily = get_combined_fb_daily_df(year, month, current_hotel)
-        
-        if df_occ is not None and not df_occ.empty:
-            df_merged = df_occ.copy()
-            if not df_fb_daily.empty:
-                df_merged = df_merged.merge(df_fb_daily, on='date', how='left')
-        elif not df_fb_daily.empty:
-            df_merged = df_fb_daily.copy()
-        else:
-            df_merged = pd.DataFrame()
+        def _calc_guests(y, m, summ):
+            g = 0
+            d_occ = summ.get('df')
+            d_fb = get_combined_fb_daily_df(y, m, current_hotel)
             
-        if not df_merged.empty:
-            for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests']:
-                if c in df_merged.columns:
-                    df_merged[c] = pd.to_numeric(df_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                else:
-                    df_merged[c] = 0
+            if d_occ is not None and not d_occ.empty:
+                d_merged = d_occ.copy()
+                if not d_fb.empty:
+                    d_merged = d_merged.merge(d_fb, on='date', how='left')
+            elif not d_fb.empty:
+                d_merged = d_fb.copy()
+            else:
+                d_merged = pd.DataFrame()
+                
+            if not d_merged.empty:
+                for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests']:
+                    if c in d_merged.columns:
+                        d_merged[c] = pd.to_numeric(d_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    else:
+                        d_merged[c] = 0
+                for _, r in d_merged.iterrows():
+                    if r['peak_guests'] > 0: g += r['peak_guests']
+                    elif r['rest_day_guests'] > 0: g += r['rest_day_guests']
+                    else:
+                        bf = r['bf_total_act'] if r['bf_total_act'] > 0 else r['bf_act']
+                        af = r['af_total_act'] if r['af_total_act'] > 0 else r['af_act']
+                        g += (bf + af)
+            return g
             
-            for _, row in df_merged.iterrows():
-                # Prefer peak_guests or rest_day_guests, otherwise bf + af
-                if row['peak_guests'] > 0:
-                    hist_guests += row['peak_guests']
-                elif row['rest_day_guests'] > 0:
-                    hist_guests += row['rest_day_guests']
-                else:
-                    bf = row['bf_total_act'] if row['bf_total_act'] > 0 else row['bf_act']
-                    af = row['af_total_act'] if row['af_total_act'] > 0 else row['af_act']
-                    hist_guests += (bf + af)
+        hist_guests = _calc_guests(year, month, curr_summary)
+        lm_hist_guests = _calc_guests(last_month_date.year, last_month_date.month, lm_summary)
 
         # 2. Get peak_spent (from purchase_data + daily report)
         df_purchase = get_purchase_data_cached()
         peak_spent = 0
+        lm_peak_spent = 0
+        weights_dict = None
         
         # Debug diagnostics vars
         diag_date_col = None
@@ -7028,6 +7078,12 @@ def render_report_tab():
             date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
             dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '單位' in c or '工地' in c), None)
             total_col = next((c for c in df_purchase.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
+            item_col = next((c for c in df_purchase.columns if '品名' in c or 'item' in c), None)
+            
+            if item_col and total_col:
+                pur_amt = pd.to_numeric(df_purchase[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                weights_df = pd.DataFrame({'item': df_purchase[item_col].astype(str), 'amt': pur_amt})
+                weights_dict = weights_df.groupby('item')['amt'].sum().to_dict()
             
             diag_date_col = date_col
             diag_dept_col = dept_col
@@ -7086,8 +7142,18 @@ def render_report_tab():
                     t_hh = [d for d in t_all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                     t_peak_depts = [d for d in t_all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
                     peak_spent = df_t[df_t[dept_col].isin(t_peak_depts)]['小計'].sum()
+                    
+                lm_month_str = f"{last_month_date.year}-{last_month_date.month:02d}"
+                df_lm = df_purchase[pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m') == lm_month_str].copy()
+                if not df_lm.empty:
+                    df_lm['小計'] = pd.to_numeric(df_lm[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    t_all_depts_lm = df_lm[dept_col].astype(str).unique().tolist()
+                    t_hh_lm = [d for d in t_all_depts_lm if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    t_peak_depts_lm = [d for d in t_all_depts_lm if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh_lm]
+                    lm_peak_spent = df_lm[df_lm[dept_col].isin(t_peak_depts_lm)]['小計'].sum()
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
+        last_month_cpg = lm_peak_spent / lm_hist_guests if lm_hist_guests > 0 else 0
         
 
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
@@ -7110,16 +7176,34 @@ def render_report_tab():
         
         # 4. Supplier Prices (Market Index)
         sp_df = fetch_supplier_prices()
-        idx_df = get_market_index_df(sp_df)
+        idx_df = get_market_index_df(sp_df, weights_dict=weights_dict)
         market_idx_curr = 100
         market_idx_prev = 100
+        weighted_idx_curr = 100
+        weighted_idx_prev = 100
         if not idx_df.empty:
+            has_weighted = 'weighted_index' in idx_df.columns
             curr_row = idx_df[idx_df['month_label'] == f"{year}-{month:02d}"]
             if not curr_row.empty:
                 market_idx_curr = curr_row.iloc[0]['index']
+                if has_weighted: weighted_idx_curr = curr_row.iloc[0]['weighted_index']
             prev_row = idx_df[idx_df['month_label'] == f"{last_month_date.year}-{last_month_date.month:02d}"]
             if not prev_row.empty:
                 market_idx_prev = prev_row.iloc[0]['index']
+                if has_weighted: weighted_idx_prev = prev_row.iloc[0]['weighted_index']
+                
+        # CPG Variance Analysis
+        inflation_rate = 0
+        price_variance = 0
+        volume_variance = 0
+        cpg_diff = cpg_actual - last_month_cpg
+        variance_valid = False
+        
+        if last_month_cpg > 0 and weighted_idx_prev > 0 and market_idx_prev != market_idx_curr:
+            inflation_rate = (weighted_idx_curr - weighted_idx_prev) / weighted_idx_prev
+            price_variance = last_month_cpg * inflation_rate
+            volume_variance = cpg_diff - price_variance
+            variance_valid = True
 
         # 5. Channel and Nationality
         top_channels = []
@@ -7213,6 +7297,30 @@ def render_report_tab():
         st.metric("食材 CPG", f"NT$ {int(cpg_actual):,}", f"{int(cpg_actual - cpg_target):+} vs 目標", help=f"狀態: {cpg_status}")
     with col5:
         st.metric("滿房天數 (≥90%)", f"{fh_days} 天", f"狀態: {fh_status}")
+
+    # CPG Variance UI
+    if variance_valid:
+        with st.container():
+            st.markdown("<br>", unsafe_allow_html=True)
+            v_col1, v_col2 = st.columns([1, 4])
+            with v_col1:
+                st.markdown("#### 🔍 CPG 價量拆解")
+            with v_col2:
+                if cpg_diff > 0:
+                    st.error(f"**本月 CPG 較上月增加 NT$ {cpg_diff:.1f}**")
+                    st.write(f"📈 **價差 (供應商通膨責任)**: 增加 NT$ {price_variance:.1f} (佔比 {price_variance/cpg_diff*100:.1f}%)")
+                    st.write(f"🍽️ **量差 (內部耗損/用量責任)**: 增加 NT$ {volume_variance:.1f} (佔比 {volume_variance/cpg_diff*100:.1f}%)")
+                elif cpg_diff < 0:
+                    st.success(f"**本月 CPG 較上月減少 NT$ {abs(cpg_diff):.1f}**")
+                    st.write(f"📉 **價差 (供應商降價紅利)**: 減少 NT$ {abs(price_variance):.1f}")
+                    st.write(f"🍽️ **量差 (內部節流/用量減少)**: 減少 NT$ {abs(volume_variance):.1f}")
+                else:
+                    st.info("本月 CPG 與上月持平。")
+    else:
+        with st.container():
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.info("💡 **CPG 價量拆解模組**：需累積兩期以上的營運與請購資料，方可啟用分析。")
+
 
     st.markdown("---")
     st.subheader("📈 2. 趨勢分析 (Trend Analysis)")
