@@ -5510,7 +5510,8 @@ if selected_page == "🛒 菜價分析":
             df_order_form = df_order_form[df_order_form['item_name'].str.contains(search_term, na=False, case=False)]
             
         # 帶入購物車數量
-        df_order_form['請購數量'] = df_order_form['item_name'].apply(lambda x: st.session_state[cart_key].get(x, 0.0))
+        df_order_form['請購數量'] = df_order_form['item_name'].apply(lambda x: float(st.session_state[cart_key].get(x, 0.0)))
+        df_order_form['請購數量'] = df_order_form['請購數量'].astype(float)
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
         df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
         
@@ -5536,8 +5537,18 @@ if selected_page == "🛒 菜價分析":
         for _, row in edited_df.iterrows():
             item = row['品項名稱']
             qty = row['請購數量']
-            if qty > 0:
-                st.session_state[cart_key][item] = qty
+            
+            # 安全防護：避免使用者刪除儲存格內容時，qty 變成 NoneType 或 NaN 導致 TypeError 頁面中斷
+            try:
+                if pd.isna(qty) or qty == "":
+                    qty_val = 0.0
+                else:
+                    qty_val = float(qty)
+            except (ValueError, TypeError):
+                qty_val = 0.0
+
+            if qty_val > 0:
+                st.session_state[cart_key][item] = qty_val
             elif item in st.session_state[cart_key]:
                 del st.session_state[cart_key][item]
                 
