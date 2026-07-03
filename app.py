@@ -3521,7 +3521,7 @@ if selected_page == "💰 採購分析":
                 st.stop()
 
             # 展開可查看偵測結果的小將器（方便尋找問題）
-            with st.expander("🔍 資料偵測資訊（診斷中，確認後可收起）", expanded=True):
+            if False: # with st.expander("🔍 資料偵測資訊（診斷中，確認後可收起）", expanded=True):
                 st.write(f"日期欄：`{date_col}` ｜ 部門欄：`{dept_col}` ｜ 金額欄：`{total_col}`")
                 st.write("所有欄位：", list(df_purchase.columns))
                 sample_dates = df_purchase[date_col].dropna().head(5).tolist()
@@ -3651,7 +3651,7 @@ if selected_page == "💰 採購分析":
                 df_purchase['日期'] <= m_end)].copy()
 
             # 診斷：日期解析後的狀況
-            with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
+            if False: # with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
                 parsed_sample = df_purchase['日期'].dropna().head(5).tolist()
                 st.write(f"解析後前 5 筆日期：{parsed_sample}")
                 st.write(f"篩選區間：{m_start} ～ {m_end}")
@@ -6592,8 +6592,8 @@ def render_channel_tab():
                 df_raw.columns = [str(c).strip().lower() for c in df_raw.columns]
 
                 if 'date' in df_raw.columns:
-                    # 處理合併儲存格 (向前填補 date)
-                    df_raw['date'] = df_raw['date'].replace('', pd.NA).ffill()
+                    # 處理合併儲存格或日期在底部的狀況 (向上填補 date)
+                    df_raw['date'] = df_raw['date'].replace('', pd.NA).bfill()
                 
                 if set(['date', 'company name', 'rooms']).issubset(set(df_raw.columns)):
                     # 將日期格式統一轉換為 YYYY-MM-DD
