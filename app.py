@@ -3998,22 +3998,17 @@ if selected_page == "💰 採購分析":
                     help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
                 )
 
-            # --- 新增: 動態未來成本預估 (Dynamic Projected CPG) ---
-            if hist_guests > 0 and (hist_bf + k_val * hist_af) > 0:
-                current_cb = peak_spent / (hist_bf + k_val * hist_af)
-                current_ca = k_val * current_cb
-                used_rate_source = f"本月歷史拆分 (早 NT${current_cb:.0f} / 午 NT${current_ca:.0f})"
+            # --- 優化版作法B: 以「上個月」或「目標值」等常態常數推估未來成本，避免月初囤貨造成的 CPG 爆衝 ---
+            if 'prev_peak_spent' in locals() and prev_peak_spent > 0 and 'prev_hist_bf' in locals() and (prev_hist_bf + k_val * prev_hist_af) > 0:
+                future_cb = prev_peak_spent / (prev_hist_bf + k_val * prev_hist_af)
+                future_ca = k_val * future_cb
+                used_rate_source = f"上月歷史常態拆分 (早 NT${future_cb:.0f} / 午 NT${future_ca:.0f})"
             else:
-                if 'prev_peak_spent' in locals() and prev_peak_spent > 0 and 'prev_hist_bf' in locals() and (prev_hist_bf + k_val * prev_hist_af) > 0:
-                    current_cb = prev_peak_spent / (prev_hist_bf + k_val * prev_hist_af)
-                    current_ca = k_val * current_cb
-                    used_rate_source = f"前月歷史拆分 (早 NT${current_cb:.0f} / 午 NT${current_ca:.0f})"
-                else:
-                    current_cb = target_cpg
-                    current_ca = target_cpg
-                    used_rate_source = f"目標單客成本基準 (NT${int(target_cpg)})"
+                future_cb = target_cpg
+                future_ca = target_cpg
+                used_rate_source = f"設定目標值 (NT${int(target_cpg)})"
             
-            expected_future_spend = (adj_future_bf * current_cb) + (adj_future_af * current_ca)
+            expected_future_spend = (adj_future_bf * future_cb) + (adj_future_af * future_ca)
             projected_eom_cost = peak_spent + expected_future_spend
             projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
             cpg_delta = projected_cpg - target_cpg
