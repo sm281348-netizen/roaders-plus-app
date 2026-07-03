@@ -5261,10 +5261,11 @@ if selected_page == "💰 採購分析":
             all_hh_items   = []
 
             if not df_purchase_all_clean.empty and '_dept' in df_purchase_all_clean.columns:
-                mask_peak = df_purchase_all_clean['_dept'].apply(lambda d: any(k in d for k in peak_dept_keywords))
-                mask_hh   = df_purchase_all_clean['_dept'].apply(lambda d: any(k in d for k in hh_dept_keywords))
+                mask_peak = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in peak_dept_keywords) if pd.notna(d) else False)
+                mask_hh   = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in hh_dept_keywords) if pd.notna(d) else False)
                 all_peak_items = sorted(df_purchase_all_clean[mask_peak]['_item'].dropna().unique().tolist())
                 all_hh_items   = sorted(df_purchase_all_clean[mask_hh]['_item'].dropna().unique().tolist())
+
 
             # 若無法從部門過濾（部門欄空），提供所有品項
             if not all_peak_items and not all_hh_items and not df_purchase_all_clean.empty:
