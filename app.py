@@ -3431,22 +3431,20 @@ if current_hotel != "採購":
     if selected_page == "📝 每日營運紀錄":
         st.header("📝 每日營運紀錄")
 
-
-            st.subheader(f"📋 當日數字手動確認 ({date_str})")
-            with st.form(f"form_daily_{date_str}"):
-                rc1, rc2, rc3 = st.columns(3)
-                rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
-                                 step=0.1, key="input_occ")
-                rc2.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr")
-                rc3.number_input("總營收", min_value=0, step=100, key="input_rev")
-                rc4, rc5 = st.columns(2)
-                rc4.number_input("總住房數", min_value=0, step=1, key="input_rooms")
-                rc5.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp")
-                st.text_area("負評客訴", key="input_complaints")
-                if st.form_submit_button("💾 儲存當日數據", type="primary", use_container_width=True):
-                    sync_st_to_db(date_str)
-                    st.success("✅ 當日數據已儲存！")
-
+        st.subheader(f"📋 當日數字手動確認 ({date_str})")
+        with st.form(f"form_daily_{date_str}"):
+            rc1, rc2, rc3 = st.columns(3)
+            rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
+                             step=0.1, key="input_occ")
+            rc2.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr")
+            rc3.number_input("總營收", min_value=0, step=100, key="input_rev")
+            rc4, rc5 = st.columns(2)
+            rc4.number_input("總住房數", min_value=0, step=1, key="input_rooms")
+            rc5.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp")
+            st.text_area("負評客訴", key="input_complaints")
+            if st.form_submit_button("💾 儲存當日數據", type="primary", use_container_width=True):
+                sync_st_to_db(date_str)
+                st.success("✅ 當日數據已儲存！")
 
         if selected_week != "--- 關閉週預覽 ---":
             import calendar
