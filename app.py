@@ -5283,16 +5283,6 @@ if selected_page == "💰 採購分析":
             if not candidate_items:
                 candidate_items = sorted(df_purchase_all_clean['_item'].dropna().unique().tolist()) if not df_purchase_all_clean.empty else []
 
-            if candidate_items:
-                selected_inv_item = st.selectbox(
-                    "🔍 選擇監控品項",
-                    options=candidate_items,
-                    key="inv_item_select"
-                )
-            else:
-                st.warning("⚠️ 尚無採購資料可供選擇，請確認採購報表已上傳至 Google Sheets。")
-                selected_inv_item = None
-
         with inv_col2:
             forecast_days = st.selectbox(
                 "📅 未來叫貨預測區間",
@@ -5302,49 +5292,116 @@ if selected_page == "💰 採購分析":
                 key="inv_forecast_days"
             )
 
+        # ── C. 取得 90 天 F&B 到客數（全區域通用） ──
+        total_guests_90d = 0
+        try:
+            _df_fb_hist = get_combined_fb_data(selected_date.year, selected_date.month) if 'get_combined_fb_data' in dir() else pd.DataFrame()
+        except Exception:
+            _df_fb_hist = pd.DataFrame()
+
+        try:
+            if _df_fb_hist.empty and 'df_daily_rest' in dir():
+                _df_fb_hist = df_daily_rest.copy() if not df_daily_rest.empty else pd.DataFrame()
+        except Exception:
+            pass
+
+        if not _df_fb_hist.empty:
+            if 'date' in _df_fb_hist.columns:
+                _df_fb_hist['_d'] = _df_fb_hist['date'].astype(str)
+            elif '日期' in _df_fb_hist.columns:
+                _df_fb_hist['_d'] = _df_fb_hist['日期'].astype(str)
+            else:
+                _df_fb_hist['_d'] = ''
+            mask_90 = _df_fb_hist['_d'] >= window_90_start
+            if is_peak_area and 'effective_peak_guests' in _df_fb_hist.columns:
+                total_guests_90d = pd.to_numeric(_df_fb_hist.loc[mask_90, 'effective_peak_guests'], errors='coerce').fillna(0).sum()
+            elif not is_peak_area and 'rest_hh_guests' in _df_fb_hist.columns:
+                total_guests_90d = pd.to_numeric(_df_fb_hist.loc[mask_90, 'rest_hh_guests'], errors='coerce').fillna(0).sum()
+
+        # ── D. 產生全品項 UPG 總表 ──
+        if candidate_items and not df_purchase_all_clean.empty:
+            mask_summary = (df_purchase_all_clean['_item'].isin(candidate_items)) & (df_purchase_all_clean['_date_str'] >= window_90_start)
+            df_summary_data = df_purchase_all_clean[mask_summary]
+
+            if not df_summary_data.empty:
+                def get_mode(s):
+                    m = s.dropna().mode()
+                    return m.iloc[0] if len(m) > 0 else '單位'
+
+                summary_grouped = df_summary_data.groupby('_item').agg(
+                    總採購量=('_qty', 'sum'),
+                    採購次數=('_date_str', 'nunique'),
+                    單位=('_unit', get_mode)
+                ).reset_index()
+
+                summary_grouped.rename(columns={'_item': '品項名稱'}, inplace=True)
+
+                if total_guests_90d > 0:
+                    summary_grouped['每客耗用率 (UPG)'] = (summary_grouped['總採購量'] / total_guests_90d).round(4)
+                else:
+                    summary_grouped['每客耗用率 (UPG)'] = None
+
+                def get_status(row):
+                    if row['採購次數'] < 2:
+                        return '⚠️ 樣本不足'
+                    if pd.isna(row['每客耗用率 (UPG)']):
+                        return '— 無到客資料'
+                    return '✔️ 正常'
+                
+                summary_grouped['狀態'] = summary_grouped.apply(get_status, axis=1)
+                summary_grouped['90天到客數'] = int(total_guests_90d)
+
+                display_cols = ['品項名稱', '單位', '總採購量', '採購次數', '90天到客數', '每客耗用率 (UPG)', '狀態']
+                summary_display_df = summary_grouped[display_cols]
+                summary_display_df = summary_display_df.sort_values(by='每客耗用率 (UPG)', ascending=False, na_position='last')
+
+                st.markdown("---")
+                st.markdown(f"#### 📊 全品項耗用率 (UPG) 總表 — 近 90 天 ({inv_area})")
+                st.caption("點擊表頭可依不同欄位排序。點選此處可找出耗用最大或需留意的品項，再從下方「選擇監控品項」進階算料。")
+                st.dataframe(
+                    summary_display_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "每客耗用率 (UPG)": st.column_config.NumberColumn(
+                            "每客耗用率 (UPG)",
+                            format="%.4f"
+                        ),
+                        "總採購量": st.column_config.NumberColumn(
+                            "總採購量",
+                            format="%.1f"
+                        )
+                    }
+                )
+
+        # ── E. 單品進階盤點與預測 ──
+        st.markdown("---")
+        st.markdown("#### 🔍 單品進階盤點與預測")
+        
+        if candidate_items:
+            selected_inv_item = st.selectbox(
+                "選擇欲盤點或精算的品項",
+                options=candidate_items,
+                key="inv_item_select"
+            )
+        else:
+            st.warning("⚠️ 尚無採購資料可供選擇，請確認採購報表已上傳至 Google Sheets。")
+            selected_inv_item = None
+
         if selected_inv_item and not df_purchase_all_clean.empty:
-            # ── C. 過濾出該品項的採購紀錄（90 天） ──
             item_purchase_df = df_purchase_all_clean[
                 (df_purchase_all_clean['_item'] == selected_inv_item) &
                 (df_purchase_all_clean['_date_str'] >= window_90_start)
             ].sort_values('_date_str')
 
-            unit_label = item_purchase_df['_unit'].mode()[0] if not item_purchase_df.empty and '_unit' in item_purchase_df.columns else '單位'
+            _unit_mode = item_purchase_df['_unit'].dropna().mode() if not item_purchase_df.empty else pd.Series()
+            unit_label = _unit_mode.iloc[0] if len(_unit_mode) > 0 else '單位'
             total_purchased_90d = item_purchase_df['_qty'].sum()
             purchase_count_90d  = len(item_purchase_df)
 
-            # ── D. 取得 90 天 F&B 到客數（依區域） ──
-            # 從 df_daily_rest (已於上方建立) 或直接從 analysis_df 取
-            total_guests_90d = 0
-            if 'analysis_df' in locals() and not analysis_df.empty:
-                # 過去 90 天的 F&B 資料
-                analysis_df['_date_obj'] = pd.to_datetime(analysis_df['日期_obj']).dt.date if '日期_obj' in analysis_df.columns else pd.to_datetime(analysis_df.get('日期_str', analysis_df.index)).dt.date
-                mask_90 = analysis_df.get('_date_obj', pd.Series(dtype=object)).apply(
-                    lambda d: d is not None and d.strftime('%Y-%m-%d') >= window_90_start) if '_date_obj' in analysis_df.columns else pd.Series(True, index=analysis_df.index)
-
-                if is_peak_area and 'effective_peak_guests' in analysis_df.columns:
-                    total_guests_90d = analysis_df.loc[mask_90, 'effective_peak_guests'].sum()
-                elif not is_peak_area and 'rest_hh_guests' in analysis_df.columns:
-                    total_guests_90d = analysis_df.loc[mask_90, 'rest_hh_guests'].sum()
-
-            # 若 analysis_df 無法取得，fallback 到當月資料
-            if total_guests_90d == 0 and 'df_daily_rest' in locals() and not df_daily_rest.empty:
-                if is_peak_area and 'effective_peak_guests' in df_daily_rest.columns:
-                    total_guests_90d = pd.to_numeric(df_daily_rest['effective_peak_guests'], errors='coerce').fillna(0).sum()
-                elif not is_peak_area and 'rest_hh_guests' in df_daily_rest.columns:
-                    total_guests_90d = pd.to_numeric(df_daily_rest['rest_hh_guests'], errors='coerce').fillna(0).sum()
-
-            # ── E. 計算 UPG ──
             upg = total_purchased_90d / total_guests_90d if total_guests_90d > 0 else None
             sample_ok = purchase_count_90d >= 2
 
-            # ── F. UPG 儀表板 ──
-            st.markdown("---")
-            st.markdown(f"#### 📊 **「{selected_inv_item}」歷史耗用率 (UPG) — 近 90 天**")
-
-            upg_c1, upg_c2, upg_c3, upg_c4 = st.columns(4)
-            upg_c1.metric("近 90 天總採購量", f"{total_purchased_90d:,.1f} {unit_label}")
-            upg_c2.metric("近 90 天到客數", f"{int(total_guests_90d):,} 人" if total_guests_90d > 0 else "無資料")
             if upg is not None and sample_ok:
                 upg_c3.metric("每客耗用率 (UPG)", f"{upg:.3f} {unit_label}/人")
             elif not sample_ok:
