@@ -687,6 +687,37 @@ def compute_fb_mtd(start_date_str, end_date_str, _dummy_hotel=""):
                     result['matched_days'] += 1
                 if (af_theme_act + af_zq_act) > 0:
                     result['active_af_days'] += 1
+                
+                # --- 新增：收集每日折算率用於計算平假日中位數 (Median DOW) ---
+                import datetime
+                try:
+                    d_obj = datetime.datetime.strptime(d, "%Y-%m-%d")
+                    is_weekend = d_obj.weekday() >= 5  # 5=Sat, 6=Sun
+                    
+                    day_bf_est = (safe_int(row.iloc[1]) if len(row) > 1 else 0) + (safe_int(row.iloc[3]) if len(row) > 3 else 0)
+                    day_af_est = (safe_int(row.iloc[5]) if len(row) > 5 else 0) + (safe_int(row.iloc[7]) if len(row) > 7 else 0)
+                    
+                    if day_bf_est > 0:
+                        bf_rate = (bf_theme_act + bf_zq_act) / day_bf_est
+                        if is_weekend:
+                            result.setdefault('bf_we_rates', []).append(bf_rate)
+                        else:
+                            result.setdefault('bf_wd_rates', []).append(bf_rate)
+                            
+                    if day_af_est > 0:
+                        af_rate = (af_theme_act + af_zq_act) / day_af_est
+                        if is_weekend:
+                            result.setdefault('af_we_rates', []).append(af_rate)
+                        else:
+                            result.setdefault('af_wd_rates', []).append(af_rate)
+                except Exception:
+                    pass
+
+    import statistics
+    result['bf_wd_median'] = statistics.median(result.get('bf_wd_rates', [0])) if result.get('bf_wd_rates') else 0
+    result['bf_we_median'] = statistics.median(result.get('bf_we_rates', [0])) if result.get('bf_we_rates') else 0
+    result['af_wd_median'] = statistics.median(result.get('af_wd_rates', [0])) if result.get('af_wd_rates') else 0
+    result['af_we_median'] = statistics.median(result.get('af_we_rates', [0])) if result.get('af_we_rates') else 0
 
     # 彙總計算
     result['total_est'] = (result['bf_theme_est'] + result['bf_zq_est'] +
@@ -3828,15 +3859,14 @@ if selected_page == "💰 採購分析":
             
             fb_ref = compute_fb_mtd(start_30d_str, end_1d_str)
 
-            _bf_ref_est = fb_ref.get('bf_theme_est', 0) + fb_ref.get('bf_zq_est', 0)
-            _bf_ref_act = fb_ref.get('total_act_bf', 0)
-            _default_bf_rate = (_bf_ref_act / _bf_ref_est) if _bf_ref_est > 0 else 1.0
-
-            _af_ref_est = fb_ref.get('af_theme_est', 0) + fb_ref.get('af_zq_est', 0)
-            _af_ref_act = fb_ref.get('total_act_af', 0)
-            _default_af_rate = (_af_ref_act / _af_ref_est) if _af_ref_est > 0 else 1.0
-
+            bf_wd_median = fb_ref.get('bf_wd_median', 0.0)
+            bf_we_median = fb_ref.get('bf_we_median', 0.0)
+            af_wd_median = fb_ref.get('af_wd_median', 0.0)
+            af_we_median = fb_ref.get('af_we_median', 0.0)
             
+            _default_bf_rate = bf_wd_median
+            _default_af_rate = af_wd_median
+
             # 未來客數原始數據
             raw_future_guests = 0
             raw_future_bf = 0
@@ -3855,9 +3885,10 @@ if selected_page == "💰 採購分析":
                         raw_future_guests = _fut_df['數量'].sum()
                         
                         _meal_col = next((c for c in _fut_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                        _bf_kw = ['早', 'breakfast', 'bf']
+                        _af_kw = ['下午', 'afternoon', 'tea', 'af']
+                        
                         if _meal_col:
-                            _bf_kw = ['早', 'breakfast', 'bf']
-                            _af_kw = ['下午', 'afternoon', 'tea', 'af']
                             _bf_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
                             _af_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
                             raw_future_bf = _fut_df.loc[_bf_mask, '數量'].sum()
@@ -3865,6 +3896,31 @@ if selected_page == "💰 採購分析":
                         else:
                             raw_future_bf = int(raw_future_guests * _bf_ratio)
                             raw_future_af = int(raw_future_guests * _af_ratio)
+                            
+                        # --- 新增: 動態混合推算中位數 (Dynamic Blended Projection) ---
+                        _proj_bf = 0
+                        _proj_af = 0
+                        for _, row in _fut_df.iterrows():
+                            try:
+                                qty = int(float(str(row.get('數量', 0)).replace(',', '')))
+                            except:
+                                qty = 0
+                            is_we = row['date_obj'].weekday() >= 5
+                            
+                            if _meal_col:
+                                val = str(row[_meal_col]).lower()
+                                if any(k in val for k in _bf_kw):
+                                    _proj_bf += qty * (bf_we_median if is_we else bf_wd_median)
+                                if any(k in val for k in _af_kw):
+                                    _proj_af += qty * (af_we_median if is_we else af_wd_median)
+                            else:
+                                _proj_bf += (qty * _bf_ratio) * (bf_we_median if is_we else bf_wd_median)
+                                _proj_af += (qty * _af_ratio) * (af_we_median if is_we else af_wd_median)
+                                
+                        if raw_future_bf > 0:
+                            _default_bf_rate = _proj_bf / raw_future_bf
+                        if raw_future_af > 0:
+                            _default_af_rate = _proj_af / raw_future_af
 
             # 3. UI 呈現：到客率與 CPG
             col_w1, col_w2, col_w3 = st.columns([1, 1, 1.5])
