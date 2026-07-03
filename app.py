@@ -2914,26 +2914,32 @@ if current_hotel != "採購":
         if not curr_df.empty:
             y_str, m_str = curr_df['date'].iloc[0].split('-')[:2]
             h_dict = fetch_holidays_for_month(int(y_str), int(m_str))
-            h_dates = {d for d, info in h_dict.items() if info['flags']}
+            # 修正：只取包含 [台] 的國定假日，避免外國冷門節慶稀釋資料
+            h_dates = {d for d, info in h_dict.items() if '[台]' in str(info['flags'])}
             e_dates = set(taipei_events_df['date'].unique(
             )) if not taipei_events_df.empty else set()
 
             curr_df['is_h'] = curr_df['date'].isin(h_dates)
             curr_df['is_e'] = curr_df['date'].isin(e_dates)
             curr_df['is_any'] = curr_df['is_h'] | curr_df['is_e']
+            # 新增：定義週末 (週五與週六)
+            curr_df['is_weekend'] = pd.to_datetime(curr_df['date']).dt.dayofweek.isin([4, 5])
 
             def render_impact_row(df, condition_col, title, icon):
                 holiday_days = df[df[condition_col]]
                 non_holiday_days = df[~df[condition_col]]
 
-                h_occ = holiday_days['occ_rate'].mean() if len(
-                    holiday_days) > 0 else 0
-                h_adr = holiday_days['revenue'].sum() / holiday_days['total_rooms'].sum() if len(
-                    holiday_days) > 0 and holiday_days['total_rooms'].sum() > 0 else 0
-                nh_occ = non_holiday_days['occ_rate'].mean() if len(
-                    non_holiday_days) > 0 else 0
-                nh_adr = non_holiday_days['revenue'].sum() / non_holiday_days['total_rooms'].sum(
-                ) if len(non_holiday_days) > 0 and non_holiday_days['total_rooms'].sum() > 0 else 0
+                def get_row_metrics(sub_df):
+                    if len(sub_df) == 0: return 0, 0
+                    sold = sub_df.get('sold_rooms', pd.Series(dtype=float)).sum()
+                    avail = sub_df.get('total_rooms', pd.Series(dtype=float)).sum()
+                    rev = sub_df.get('revenue', pd.Series(dtype=float)).sum()
+                    occ = (sold / avail * 100) if avail > 0 else sub_df['occ_rate'].mean()
+                    adr = (rev / sold) if sold > 0 else 0
+                    return occ, adr
+                
+                h_occ, h_adr = get_row_metrics(holiday_days)
+                nh_occ, nh_adr = get_row_metrics(non_holiday_days)
 
                 diff_occ = h_occ - nh_occ
                 diff_adr = h_adr - nh_adr
@@ -2955,25 +2961,48 @@ if current_hotel != "採購":
 
                 is_e = df['is_e']
                 is_h = df['is_h']
+                is_w = df.get('is_weekend', pd.Series(False, index=df.index))
 
-                df_pure_weekday = df[~is_e & ~is_h]
+                # 真·純平日：排除活動、假日，且排除週末
+                df_pure_weekday = df[~is_e & ~is_h & ~is_w]
                 df_pure_event = df[is_e & ~is_h]
                 df_pure_holiday = df[~is_e & is_h]
                 df_double_impact = df[is_e & is_h]
+                
+                # 計算週末的基準對照組 (無活動無節慶的週末)
+                df_pure_weekend = df[~is_e & ~is_h & is_w]
 
                 def get_metrics(sub_df):
                     days = len(sub_df)
-                    if days == 0:
-                        return 0, 0, days
-                    occ = sub_df['occ_rate'].mean()
-                    adr = sub_df['revenue'].sum(
-                    ) / sub_df['total_rooms'].sum() if sub_df['total_rooms'].sum() > 0 else 0
+                    if days == 0: return 0, 0, days
+                    sold = sub_df.get('sold_rooms', pd.Series(dtype=float)).sum()
+                    avail = sub_df.get('total_rooms', pd.Series(dtype=float)).sum()
+                    rev = sub_df.get('revenue', pd.Series(dtype=float)).sum()
+                    occ = (sold / avail * 100) if avail > 0 else sub_df['occ_rate'].mean()
+                    adr = (rev / sold) if sold > 0 else 0
                     return occ, adr, days
 
                 occ_pw, adr_pw, days_pw = get_metrics(df_pure_weekday)
+                occ_bw, adr_bw, _ = get_metrics(df_pure_weekend) # 週末基準
                 occ_pe, adr_pe, days_pe = get_metrics(df_pure_event)
                 occ_ph, adr_ph, days_ph = get_metrics(df_pure_holiday)
                 occ_di, adr_di, days_di = get_metrics(df_double_impact)
+                
+                def calc_lift(sub_df):
+                    if len(sub_df) == 0: return 0, 0
+                    diff_occs, diff_adrs = [], []
+                    for _, r in sub_df.iterrows():
+                        is_wend = r.get('is_weekend', False)
+                        base_occ = occ_bw if is_wend else occ_pw
+                        base_adr = adr_bw if is_wend else adr_pw
+                        sold = r.get('sold_rooms', 0)
+                        avail = r.get('total_rooms', 0)
+                        rev = r.get('revenue', 0)
+                        d_occ = (sold / avail * 100) if avail > 0 else r.get('occ_rate', 0)
+                        d_adr = (rev / sold) if sold > 0 else 0
+                        diff_occs.append(d_occ - base_occ)
+                        diff_adrs.append(d_adr - base_adr)
+                    return sum(diff_occs)/len(diff_occs), sum(diff_adrs)/len(diff_adrs)
 
                 col1, col2, col3, col4 = st.columns(4)
 
@@ -3000,8 +3029,7 @@ if current_hotel != "採購":
 
                 # 象限 1: 純活動日
                 with col2:
-                    diff_occ = occ_pe - occ_pw if days_pe > 0 and days_pw > 0 else 0
-                    diff_adr = adr_pe - adr_pw if days_pe > 0 and days_pw > 0 else 0
+                    diff_occ, diff_adr = calc_lift(df_pure_event)
                     color = "#10b981" if diff_adr >= 0 else "#ef4444"
                     bg_style = "background:#0f172a; border-left:4px solid #3b82f6;"
                     desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_pe > 0 else "無數據"
@@ -3017,8 +3045,7 @@ if current_hotel != "採購":
 
                 # 象限 2: 純節慶日
                 with col3:
-                    diff_occ = occ_ph - occ_pw if days_ph > 0 and days_pw > 0 else 0
-                    diff_adr = adr_ph - adr_pw if days_ph > 0 and days_pw > 0 else 0
+                    diff_occ, diff_adr = calc_lift(df_pure_holiday)
                     color = "#10b981" if diff_adr >= 0 else "#ef4444"
                     bg_style = "background:#0f172a; border-left:4px solid #eab308;"
                     desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_ph > 0 else "無數據"
@@ -3034,8 +3061,7 @@ if current_hotel != "採購":
 
                 # 象限 3: 黃金雙重日
                 with col4:
-                    diff_occ = occ_di - occ_pw if days_di > 0 and days_pw > 0 else 0
-                    diff_adr = adr_di - adr_pw if days_di > 0 and days_pw > 0 else 0
+                    diff_occ, diff_adr = calc_lift(df_double_impact)
                     color = "#10b981" if diff_adr >= 0 else "#ef4444"
                     bg_style = "background:#1e1b4b; border-left:4px solid #a855f7;"
                     desc = f"淨效益: <span style='color:{color}; font-weight:bold;'>{format_diff(diff_occ, True)} / {format_diff(diff_adr)}</span>" if days_di > 0 else "無數據"
@@ -3094,13 +3120,14 @@ if current_hotel != "採購":
                 for md in [m1_date, m2_date, m3_date]:
                     hd = fetch_holidays_for_month(md.year, md.month)
                     for d, info in hd.items():
-                        if info['flags']:
+                        if '[台]' in str(info['flags']):
                             hist_h_dates.add(d)
 
                 hist_df['is_h'] = hist_df['date'].isin(hist_h_dates)
                 hist_df['is_e'] = hist_df['date'].isin(
                     set(taipei_events_df['date'].unique())) if not taipei_events_df.empty else False
                 hist_df['is_any'] = hist_df['is_h'] | hist_df['is_e']
+                hist_df['is_weekend'] = pd.to_datetime(hist_df['date']).dt.dayofweek.isin([4, 5])
 
                 render_impact_row(hist_df, 'is_any', "綜合分析 (過去三個月合計)", "📊")
                 render_impact_row(hist_df, 'is_h', "僅外國節慶分析 (過去三個月合計)", "🌍")
