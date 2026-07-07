@@ -5073,22 +5073,20 @@ if selected_page == "💰 採購分析":
                 mask_peak = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in peak_dept_keywords) if pd.notna(d) else False)
                 mask_hh   = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in hh_dept_keywords) if pd.notna(d) else False)
                 
-                # 新增：過濾出「菜商」的品項 (依據常見關鍵字)，並排除非食材的會計調整項目
-                vendor_kws = ['菜', '農', '蔬', '果']
+                # 排除非食材的會計調整項目，全面開放全品項
                 exclude_items = ['實質差異', '差異', '運費', '折讓', '折扣', '手續費']
-                if '_vendor' in df_purchase_all_clean.columns:
-                    mask_veg = df_purchase_all_clean['_vendor'].apply(lambda v: any(k in str(v) for k in vendor_kws) if pd.notna(v) else False)
+                if '_item' in df_purchase_all_clean.columns:
                     mask_exclude = df_purchase_all_clean['_item'].apply(lambda i: any(k in str(i) for k in exclude_items) if pd.notna(i) else False)
-                    mask_veg = mask_veg & (~mask_exclude)
+                    mask_valid = ~mask_exclude
                 else:
-                    mask_veg = pd.Series(True, index=df_purchase_all_clean.index) # 若無供應商欄位，則不過濾
+                    mask_valid = pd.Series(True, index=df_purchase_all_clean.index)
 
-                peak_veg_df = df_purchase_all_clean[mask_peak & mask_veg]
-                hh_veg_df = df_purchase_all_clean[mask_hh & mask_veg]
+                peak_items_df = df_purchase_all_clean[mask_peak & mask_valid]
+                hh_items_df = df_purchase_all_clean[mask_hh & mask_valid]
 
                 # 依採購次數(頻率)排序，優先顯示常叫的品項
-                all_peak_items = peak_veg_df['_item'].dropna().value_counts().index.tolist()
-                all_hh_items   = hh_veg_df['_item'].dropna().value_counts().index.tolist()
+                all_peak_items = peak_items_df['_item'].dropna().value_counts().index.tolist()
+                all_hh_items   = hh_items_df['_item'].dropna().value_counts().index.tolist()
 
 
             # 改進：不要預設給全部品項，而是盡量包含常見的部門關鍵字
@@ -5183,10 +5181,26 @@ if selected_page == "💰 採購分析":
 
                 display_cols = ['品項名稱', '單位', '總採購量', '日均消耗速度 (單位/天)', '平均叫貨頻率 (天/次)', '單次叫貨中位數', '狀態']
                 summary_display_df = summary_grouped[display_cols]
-                summary_display_df = summary_display_df.sort_values(by='日均消耗速度 (單位/天)', ascending=False)
 
                 st.markdown("---")
                 st.markdown(f"#### 📊 全品項供餐耗損與採購慣性稽核表 — 近 90 天 ({inv_area})")
+                
+                sort_col, _ = st.columns([1, 2])
+                with sort_col:
+                    sort_option = st.selectbox(
+                        "🔍 選擇抓鬼模式 (排序方式)",
+                        ["日均消耗速度 (高→低)", "單次叫貨中位數 (大→小)", "平均叫貨頻率 (頻繁→稀少)", "總採購量 (大→小)"],
+                        key="audit_table_sort"
+                    )
+
+                if "日均消耗速度" in sort_option:
+                    summary_display_df = summary_display_df.sort_values(by='日均消耗速度 (單位/天)', ascending=False)
+                elif "單次叫貨中位數" in sort_option:
+                    summary_display_df = summary_display_df.sort_values(by='單次叫貨中位數', ascending=False)
+                elif "平均叫貨頻率" in sort_option:
+                    summary_display_df = summary_display_df.sort_values(by='平均叫貨頻率 (天/次)', ascending=True)
+                elif "總採購量" in sort_option:
+                    summary_display_df = summary_display_df.sort_values(by='總採購量', ascending=False)
                 
                 st.markdown(
                     f"""
@@ -5249,13 +5263,15 @@ if selected_page == "💰 採購分析":
                 st.warning(f"⚠️ **樣本不足**：過去 90 天內「{selected_inv_item}」的採購天數僅有 {order_count} 天，無法推估歷史慣性，請觀察更多週期。")
 
             if sample_ok:
-                # ── K. 歷史慣性與 CPG 雙重防線預測模型 ──
+                # ── K. 決策雙引擎預測模型 ──
                 st.markdown("---")
-                st.markdown(f"#### 🚚 歷史慣性叫貨建議 (預測未來 {forecast_days} 天)")
+                st.markdown(f"#### 🚚 決策雙引擎預測模組 (預測未來 {forecast_days} 天)")
 
-                # 1. 歷史慣性分析
+                # 1. 歷史分析 (UPG 與 慣性)
+                total_qty_90d = daily_orders['_qty'].sum()
                 freq_days = 90 / order_count if order_count > 0 else 90
                 median_qty = daily_orders['_qty'].median()
+                upg = total_qty_90d / total_guests_90d if total_guests_90d > 0 else 0
                 
                 # 2. 最新單價擷取 (供預算檢核)
                 price_col = next((c for c in item_purchase_df.columns if any(k in c for k in ['單價', 'Price', 'Rate', 'price'])), None)
@@ -5315,59 +5331,79 @@ if selected_page == "💰 採購分析":
                                 
                     future_guests_est = _proj_guests
 
-                # 3. 叫貨建議計算 (歷史慣性推估)
+                # 3. 雙引擎計算
+                # 引擎 A: 核心食材模式 (UPG)
+                core_forecast_qty = upg * future_guests_est
+                core_restock_qty = core_forecast_qty * 1.05 # 5% safety buffer
+                
+                # 引擎 B: 歷史慣性模式
                 expected_orders = forecast_days / freq_days
                 habit_forecast_qty = expected_orders * median_qty
-                restock_qty = habit_forecast_qty * 1.05 # 5% safety buffer
+                habit_restock_qty = habit_forecast_qty * 1.05 # 5% safety buffer
 
-                # 4. CPG 預算檢核
-                total_cost = restock_qty * latest_price
-                cpg_consumed = total_cost / future_guests_est if future_guests_est > 0 else 0
-                budget_pct = (cpg_consumed / 150) * 100 if future_guests_est > 0 else 0
-                
-                fcast_c1, fcast_c2, fcast_c3 = st.columns(3)
-                fcast_c1.metric("歷史叫貨中位數", f"{median_qty:,.1f} {unit_label}", help=f"過去 90 天共叫貨 {order_count} 天")
-                fcast_c2.metric("歷史平均頻率", f"約 {freq_days:,.1f} 天/次")
-                fcast_c3.metric(
-                    f"未來 {forecast_days} 天預估客數",
-                    f"{int(future_guests_est):,} 人" if future_guests_est > 0 else "無資料"
-                )
+                fcast_c1, fcast_c2, fcast_c3, fcast_c4 = st.columns(4)
+                fcast_c1.metric("歷史每客耗損率", f"{upg:.4f} {unit_label}/客")
+                fcast_c2.metric("單次叫貨中位數", f"{median_qty:,.1f} {unit_label}")
+                fcast_c3.metric("歷史平均頻率", f"約 {freq_days:,.1f} 天/次")
+                fcast_c4.metric(f"未來 {forecast_days} 天預估客數", f"{int(future_guests_est):,} 人" if future_guests_est > 0 else "無資料")
 
                 if future_guests_est > 0:
-                    alert_color = "#ff4d4d" if budget_pct > 3.0 else "#a0c4a0"
-                    warning_icon = "⚠️" if budget_pct > 3.0 else "✅"
-                    warning_msg = f"<b style='color:#ff4d4d;'>佔用比例偏高，可能排擠核心食材預算！</b>" if budget_pct > 3.0 else "預算佔比合理。"
+                    col_a, col_b = st.columns(2)
                     
-                    import textwrap
-                    cpg_alert_html = f"""
-<div style='margin-top:15px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);'>
-<p style='margin:0; font-size:14px; color:#e0e0e0;'>{warning_icon} <b>CPG 預算天花板檢核 (總預算上限 $150/客)</b></p>
-<p style='margin:5px 0 0 0; font-size:13.5px; color:{alert_color};'>
-本次推估總花費：<b>NT$ {int(total_cost):,}</b> (參考單價 ${latest_price:,.0f})<br>
-折合每客成本消耗：<b>NT$ {cpg_consumed:.2f} / 客</b> (佔 $150 總額度 <b>{budget_pct:.1f}%</b>) <br>
-{warning_msg}
-</p>
-</div>
-"""
-
-                    st.markdown(
-                        f"""
-<div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {alert_color};'>
-<p style='margin:0; font-size:14px; color:#b0bec5;'>未來 {forecast_days} 天慣性推估叫貨量</p>
-<h2 style='margin:5px 0; color:#ffffff; font-size:2.8rem;'>
-{restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
+                    with col_a:
+                        # 核心食材卡片
+                        core_total_cost = core_restock_qty * latest_price
+                        core_cpg = core_total_cost / future_guests_est if future_guests_est > 0 else 0
+                        core_budget_pct = (core_cpg / 150) * 100
+                        core_alert = "#ff4d4d" if core_budget_pct > 15.0 else "#4d94ff"
+                        
+                        st.markdown(
+                            f"""
+<div style='background:linear-gradient(135deg,#1e3c72,#2a5298); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {core_alert}; height:100%;'>
+<p style='margin:0; font-size:15px; color:#b0bec5;'>🥩 <b>模式 A【核心食材：客數驅動預估】</b></p>
+<p style='margin:5px 0 10px 0; font-size:12px; color:#90caf9;'>💡 若此為肉類、海鮮等直接受客數影響的<b>主菜</b>，請參考此數值以避免斷貨。</p>
+<h2 style='margin:5px 0; color:#ffffff; font-size:2.4rem;'>
+{core_restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
 </h2>
-<p style='margin:5px 0 0 0; font-size:12px; color:#78909c;'>
-基礎計算公式：({forecast_days} 天 ÷ {freq_days:.1f} 天/次) × {median_qty:.1f} {unit_label} + 5% 安全緩衝 = {restock_qty:.1f}
+<p style='margin:5px 0 10px 0; font-size:11px; color:#b0bec5;'>
+基礎公式：({upg:.4f} {unit_label}/客 × {int(future_guests_est)} 人) + 5% 緩衝
 </p>
-{cpg_alert_html}
-<p style='margin:12px 0 0 0; font-size:12px; color:#ffcc80;'>
-💡 <b>輔助決策提示</b>：此數值反映歷史廚房操作慣性，排除了客數暴增導致的異常放大。實際叫貨仍需考量冰箱空間與現有庫存。
-</p>
+<div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.2);'>
+<p style='margin:0; font-size:12px; color:#e0e0e0;'>本次推估總花費：<b>NT$ {int(core_total_cost):,}</b></p>
+<p style='margin:0; font-size:12px; color:#e0e0e0;'>每客成本消耗：<b>NT$ {core_cpg:.2f} / 客</b> (佔 $150 總額 <b>{core_budget_pct:.1f}%</b>)</p>
+</div>
 </div>
 """,
-                        unsafe_allow_html=True
-                    )
+                            unsafe_allow_html=True
+                        )
+
+                    with col_b:
+                        # 配菜慣性卡片
+                        habit_total_cost = habit_restock_qty * latest_price
+                        habit_cpg = habit_total_cost / future_guests_est if future_guests_est > 0 else 0
+                        habit_budget_pct = (habit_cpg / 150) * 100
+                        habit_alert = "#ff4d4d" if habit_budget_pct > 3.0 else "#a0c4a0"
+                        h_warning = "<br><b style='color:#ff4d4d;'>⚠️ 佔用比例偏高，可能排擠核心預算！</b>" if habit_budget_pct > 3.0 else ""
+                        
+                        st.markdown(
+                            f"""
+<div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {habit_alert}; height:100%;'>
+<p style='margin:0; font-size:15px; color:#b0bec5;'>🥦 <b>模式 B【配菜防暴衝：歷史慣性推估】</b></p>
+<p style='margin:5px 0 10px 0; font-size:12px; color:#a5d6a7;'>💡 若此為沙拉吧、點綴用等<b>固定耗損品</b>，請參考此數值防止過度叫貨。</p>
+<h2 style='margin:5px 0; color:#ffffff; font-size:2.4rem;'>
+{habit_restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
+</h2>
+<p style='margin:5px 0 10px 0; font-size:11px; color:#b0bec5;'>
+基礎公式：({forecast_days}天 ÷ {freq_days:.1f}天/次 × {median_qty:.1f} {unit_label}) + 5% 緩衝
+</p>
+<div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.2);'>
+<p style='margin:0; font-size:12px; color:#e0e0e0;'>本次推估總花費：<b>NT$ {int(habit_total_cost):,}</b></p>
+<p style='margin:0; font-size:12px; color:{habit_alert};'>每客成本消耗：<b>NT$ {habit_cpg:.2f} / 客</b> (佔 $150 總額 <b>{habit_budget_pct:.1f}%</b>){h_warning}</p>
+</div>
+</div>
+""",
+                            unsafe_allow_html=True
+                        )
                 else:
                     st.info(
                         f"💡 目前未取得未來 {forecast_days} 天的 F&B 預測到客資料。\n\n"
