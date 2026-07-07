@@ -5135,7 +5135,7 @@ if selected_page == "💰 採購分析":
             elif not is_peak_area and 'rest_hh_guests' in _df_fb_hist.columns:
                 total_guests_90d = pd.to_numeric(_df_fb_hist.loc[mask_90, 'rest_hh_guests'], errors='coerce').fillna(0).sum()
 
-        # ── D. 產生全品項 UPG 總表 ──
+        # ── D. 產生全品項供餐耗損與採購慣性稽核表 ──
         if candidate_items and not df_purchase_all_clean.empty:
             mask_summary = (df_purchase_all_clean['_item'].isin(candidate_items)) & (df_purchase_all_clean['_date_str'] >= window_90_start)
             df_summary_data = df_purchase_all_clean[mask_summary]
@@ -5144,50 +5144,71 @@ if selected_page == "💰 採購分析":
                 def get_mode(s):
                     m = s.dropna().mode()
                     return m.iloc[0] if len(m) > 0 else '單位'
-
+                
+                # 先依品項與日期加總，以計算「單次叫貨中位數」與「叫貨頻率」
+                daily_item_orders = df_summary_data.groupby(['_item', '_date_str'])['_qty'].sum().reset_index()
+                
+                # 計算中位數
+                median_df = daily_item_orders.groupby('_item')['_qty'].median().reset_index().rename(columns={'_qty': '單次叫貨中位數'})
+                
+                # 基礎彙總
                 summary_grouped = df_summary_data.groupby('_item').agg(
                     總採購量=('_qty', 'sum'),
-                    採購次數=('_date_str', 'nunique'),
+                    採購天數=('_date_str', 'nunique'),
                     單位=('_unit', get_mode)
                 ).reset_index()
 
+                # 合併中位數
+                summary_grouped = summary_grouped.merge(median_df, on='_item', how='left')
+
                 summary_grouped.rename(columns={'_item': '品項名稱'}, inplace=True)
 
-                if total_guests_90d > 0:
-                    summary_grouped['每客耗用率 (UPG)'] = (summary_grouped['總採購量'] / total_guests_90d).round(4)
-                else:
-                    summary_grouped['每客耗用率 (UPG)'] = None
+                # 計算日均消耗速度 (Daily Burn Rate)
+                summary_grouped['日均消耗速度 (單位/天)'] = (summary_grouped['總採購量'] / 90).round(2)
+                
+                # 計算叫貨頻率
+                summary_grouped['平均叫貨頻率 (天/次)'] = summary_grouped['採購天數'].apply(
+                    lambda x: round(90 / x, 1) if x > 0 else 90.0
+                )
 
                 def get_status(row):
-                    if row['採購次數'] < 2:
+                    if row['採購天數'] < 2:
                         return '⚠️ 樣本不足'
-                    if pd.isna(row['每客耗用率 (UPG)']):
-                        return '— 無到客資料'
                     return '✔️ 正常'
                 
                 summary_grouped['狀態'] = summary_grouped.apply(get_status, axis=1)
-                summary_grouped['90天到客數'] = int(total_guests_90d)
 
-                display_cols = ['品項名稱', '單位', '總採購量', '採購次數', '90天到客數', '每客耗用率 (UPG)', '狀態']
+                display_cols = ['品項名稱', '單位', '總採購量', '日均消耗速度 (單位/天)', '平均叫貨頻率 (天/次)', '單次叫貨中位數', '狀態']
                 summary_display_df = summary_grouped[display_cols]
-                summary_display_df = summary_display_df.sort_values(by='每客耗用率 (UPG)', ascending=False, na_position='last')
+                summary_display_df = summary_display_df.sort_values(by='日均消耗速度 (單位/天)', ascending=False)
 
                 st.markdown("---")
-                st.markdown(f"#### 📊 全品項耗用率 (UPG) 總表 — 近 90 天 ({inv_area})")
-                st.caption("點擊表頭可依不同欄位排序。點選此處可找出耗用最大或需留意的品項，再從下方「選擇監控品項」進階算料。")
+                st.markdown(f"#### 📊 全品項供餐耗損與採購慣性稽核表 — 近 90 天 ({inv_area})")
+                
+                st.markdown(
+                    f"""
+                    <div style='background-color:rgba(255,204,128,0.1); padding:15px; border-left: 4px solid #ffcc80; border-radius:4px; margin-bottom:15px;'>
+                        <p style='margin:0; font-size:14px; color:#ffcc80;'>💡 <b>管理稽核指南 (抓出內場圖方便的浪費行為)</b></p>
+                        <p style='margin:5px 0 0 0; font-size:13px; color:#e0e0e0; line-height:1.5;'>
+                            本表已廢除容易因淡旺季失真的「每客耗用率」，改用 <b>「日均消耗速度」</b> 來呈現廚房每天固定燒掉多少食材。若您發現某項配菜的：<br>
+                            1. <b>單次叫貨中位數</b> 很高 (習慣一次叫一大堆)<br>
+                            2. <b>日均消耗速度</b> 也異常高 (與該配菜應有的消耗量不符)<br>
+                            <span style='color:#ff4d4d;'>這代表內場可能圖方便一次開出大量食材，未依當日客流縮減備料，導致嚴重報廢浪費！請列為重點稽核對象。</span>
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
                 st.dataframe(
                     summary_display_df,
                     hide_index=True,
                     use_container_width=True,
                     column_config={
-                        "每客耗用率 (UPG)": st.column_config.NumberColumn(
-                            "每客耗用率 (UPG)",
-                            format="%.4f"
-                        ),
-                        "總採購量": st.column_config.NumberColumn(
-                            "總採購量",
-                            format="%.1f"
-                        )
+                        "總採購量": st.column_config.NumberColumn("總採購量", format="%.1f"),
+                        "日均消耗速度 (單位/天)": st.column_config.NumberColumn("日均消耗速度 (單位/天)", format="%.2f"),
+                        "平均叫貨頻率 (天/次)": st.column_config.NumberColumn("平均叫貨頻率 (天/次)", format="%.1f"),
+                        "單次叫貨中位數": st.column_config.NumberColumn("單次叫貨中位數", format="%.1f"),
                     }
                 )
 
