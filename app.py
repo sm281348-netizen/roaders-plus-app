@@ -5129,8 +5129,7 @@ if selected_page == "💰 採購分析":
                                     "📅 未來一週預計總來客數",
                                     min_value=10,
                                     max_value=5000,
-                                    value=int(
-                                        total_guests_month / 4) if total_guests_month > 0 else 500,
+                                    value=max(10, int(total_guests_month / 4)) if total_guests_month > 0 else 500,
                                     step=50,
                                     key="item_calc_guests_input_widget"
                                 )
@@ -5256,7 +5255,7 @@ if selected_page == "💰 採購分析":
         with inv_col1:
             # 從採購資料中過濾出 The Peak / HH 相關品項
             peak_dept_keywords = ['Peak', 'peak', 'THE PEAK', 'The Peak', '餐廳', '下午茶']
-            hh_dept_keywords   = ['HH', 'Happy Hour', 'HAPPY HOUR', 'hh']
+            hh_dept_keywords   = ['HH', 'Happy Hour', 'HAPPY HOUR', 'hh', '4F']
             all_peak_items = []
             all_hh_items   = []
 
@@ -5267,21 +5266,17 @@ if selected_page == "💰 採購分析":
                 all_hh_items   = sorted(df_purchase_all_clean[mask_hh]['_item'].dropna().unique().tolist())
 
 
-            # 若無法從部門過濾（部門欄空），提供所有品項
-            if not all_peak_items and not all_hh_items and not df_purchase_all_clean.empty:
-                all_peak_items = sorted(df_purchase_all_clean['_item'].dropna().unique().tolist())
-                all_hh_items   = all_peak_items
+            # 改進：不要預設給全部品項，而是盡量包含常見的部門關鍵字
+            # 如果還是找不到，就維持空列表，避免混入房卡套等非餐飲品項
 
             inv_area = st.selectbox(
                 "🏷️ 選擇區域",
-                ["The Peak (下午茶)", "Happy Hour (HH)"],
+                ["The Peak", "Happy Hour (HH)"],
                 key="inv_area_select"
             )
             is_peak_area = "Peak" in inv_area
 
             candidate_items = all_peak_items if is_peak_area else all_hh_items
-            if not candidate_items:
-                candidate_items = sorted(df_purchase_all_clean['_item'].dropna().unique().tolist()) if not df_purchase_all_clean.empty else []
 
         with inv_col2:
             forecast_days = st.selectbox(
@@ -5402,13 +5397,6 @@ if selected_page == "💰 採購分析":
             upg = total_purchased_90d / total_guests_90d if total_guests_90d > 0 else None
             sample_ok = purchase_count_90d >= 2
 
-            if upg is not None and sample_ok:
-                upg_c3.metric("每客耗用率 (UPG)", f"{upg:.3f} {unit_label}/人")
-            elif not sample_ok:
-                upg_c3.metric("每客耗用率 (UPG)", "⚠️ 樣本不足")
-            else:
-                upg_c3.metric("每客耗用率 (UPG)", "— 無到客資料")
-            upg_c4.metric("90 天採購次數", f"{purchase_count_90d} 次")
 
             if not sample_ok:
                 st.warning(f"⚠️ **樣本不足**：過去 90 天內「{selected_inv_item}」的採購次數僅有 {purchase_count_90d} 次，UPG 數字可信度較低，建議觀察更多週期後再做叫貨決策。")
