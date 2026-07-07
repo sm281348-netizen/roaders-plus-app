@@ -5043,6 +5043,7 @@ if selected_page == "💰 採購分析":
             _qty_col_inv  = next((c for c in df_purchase_all.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
             _unit_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['單位', 'Unit'])), None)
             _dept_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
+            _vendor_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['供應商', '廠商', 'Vendor'])), None)
 
             if _date_col_inv and _item_col_inv and _qty_col_inv:
                 df_purchase_all_clean = df_purchase_all.copy()
@@ -5056,6 +5057,7 @@ if selected_page == "💰 採購分析":
                 df_purchase_all_clean['_item'] = df_purchase_all_clean[_item_col_inv].astype(str).str.strip()
                 df_purchase_all_clean['_unit'] = df_purchase_all_clean[_unit_col_inv].astype(str).str.strip() if _unit_col_inv else ''
                 df_purchase_all_clean['_dept'] = df_purchase_all_clean[_dept_col_inv].astype(str).str.strip() if _dept_col_inv else ''
+                df_purchase_all_clean['_vendor'] = df_purchase_all_clean[_vendor_col_inv].astype(str).str.strip() if _vendor_col_inv else ''
 
         # ── B. 品項選擇 ──
         inv_col1, inv_col2 = st.columns([2, 1])
@@ -5070,8 +5072,20 @@ if selected_page == "💰 採購分析":
             if not df_purchase_all_clean.empty and '_dept' in df_purchase_all_clean.columns:
                 mask_peak = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in peak_dept_keywords) if pd.notna(d) else False)
                 mask_hh   = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in hh_dept_keywords) if pd.notna(d) else False)
-                all_peak_items = sorted(df_purchase_all_clean[mask_peak]['_item'].dropna().unique().tolist())
-                all_hh_items   = sorted(df_purchase_all_clean[mask_hh]['_item'].dropna().unique().tolist())
+                
+                # 新增：過濾出「菜商」的品項 (依據常見關鍵字)
+                vendor_kws = ['菜', '農', '蔬', '果']
+                if '_vendor' in df_purchase_all_clean.columns:
+                    mask_veg = df_purchase_all_clean['_vendor'].apply(lambda v: any(k in str(v) for k in vendor_kws) if pd.notna(v) else False)
+                else:
+                    mask_veg = pd.Series(True, index=df_purchase_all_clean.index) # 若無供應商欄位，則不過濾
+
+                peak_veg_df = df_purchase_all_clean[mask_peak & mask_veg]
+                hh_veg_df = df_purchase_all_clean[mask_hh & mask_veg]
+
+                # 依採購次數(頻率)排序，優先顯示常叫的品項
+                all_peak_items = peak_veg_df['_item'].dropna().value_counts().index.tolist()
+                all_hh_items   = hh_veg_df['_item'].dropna().value_counts().index.tolist()
 
 
             # 改進：不要預設給全部品項，而是盡量包含常見的部門關鍵字
