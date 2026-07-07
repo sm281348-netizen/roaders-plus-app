@@ -3605,8 +3605,12 @@ if selected_page == "💰 採購分析":
             # 過濾 NaT/None
             df_purchase = df_purchase[df_purchase['日期'].notna()]
             
-            # --- 新增：找出官方 purchase_data 中已經有紀錄的所有 Year-Month ---
-            official_ym = set(pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m').dropna().unique())
+            # --- 找出官方 purchase_data 中已經有紀錄的「部門+年月」組合（以部門為單位防重複）---
+            # 注意：這裡用 dept+ym 而非只用 ym，避免 The Peak 有官方資料時誤擋 HH 的 Daily Report
+            _ym_series = pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
+            official_dept_ym = set(
+                zip(df_purchase[dept_col].astype(str).str.strip(), _ym_series.fillna(''))
+            )
 
             # --- 新增：將 thepeak_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
             df_daily_report = fetch_thepeak_daily_purchase_report()
@@ -3619,9 +3623,10 @@ if selected_page == "💰 採購分析":
                 append_df[dept_col] = "The Peak"
                 append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
                 
-                # 自動排除「官方總表已經有該月資料」的每日請購紀錄，防止 Double Counting
-                append_df['ym'] = pd.to_datetime(append_df['日期']).dt.strftime('%Y-%m')
-                append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
+                # 只排除「The Peak」這個部門在官方總表中已有的月份，不影響其他部門
+                append_df['ym'] = pd.to_datetime(append_df['日期'], errors='coerce').dt.strftime('%Y-%m')
+                append_df['_dept_ym'] = list(zip(append_df[dept_col].astype(str), append_df['ym'].fillna('')))
+                append_df = append_df[~append_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
 
                 if not append_df.empty:
                     # 嘗試對應品名欄位以顯示在明細中
@@ -3650,9 +3655,10 @@ if selected_page == "💰 採購分析":
                 append_hh_df[dept_col] = "Happy Hour"
                 append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
                 
-                # 自動排除「官方總表已經有該月資料」的每日請購紀錄，防止 Double Counting
-                append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期']).dt.strftime('%Y-%m')
-                append_hh_df = append_hh_df[~append_hh_df['ym'].isin(official_ym)].drop(columns=['ym'])
+                # 只排除「Happy Hour」這個部門在官方總表中已有的月份，不影響其他部門
+                append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期'], errors='coerce').dt.strftime('%Y-%m')
+                append_hh_df['_dept_ym'] = list(zip(append_hh_df[dept_col].astype(str), append_hh_df['ym'].fillna('')))
+                append_hh_df = append_hh_df[~append_hh_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
 
                 if not append_hh_df.empty:
                     # 嘗試對應品名欄位以顯示在明細中
