@@ -5213,20 +5213,35 @@ if selected_page == "💰 採購分析":
 
             _unit_mode = item_purchase_df['_unit'].dropna().mode() if not item_purchase_df.empty else pd.Series()
             unit_label = _unit_mode.iloc[0] if len(_unit_mode) > 0 else '單位'
-            total_purchased_90d = item_purchase_df['_qty'].sum()
-            purchase_count_90d  = len(item_purchase_df)
-
-            upg = total_purchased_90d / total_guests_90d if total_guests_90d > 0 else None
-            sample_ok = purchase_count_90d >= 2
-
+            
+            # 計算單日採購加總，用來推算頻率與中位數
+            daily_orders = item_purchase_df.groupby('_date_str')['_qty'].sum().reset_index()
+            daily_orders = daily_orders.sort_values('_date_str')
+            order_count = len(daily_orders)
+            
+            sample_ok = order_count >= 2
 
             if not sample_ok:
-                st.warning(f"⚠️ **樣本不足**：過去 90 天內「{selected_inv_item}」的採購次數僅有 {purchase_count_90d} 次，UPG 數字可信度較低，建議觀察更多週期後再做叫貨決策。")
+                st.warning(f"⚠️ **樣本不足**：過去 90 天內「{selected_inv_item}」的採購天數僅有 {order_count} 天，無法推估歷史慣性，請觀察更多週期。")
 
-            if upg is not None and sample_ok:
-                # ── K. 未來叫貨建議 ──
+            if sample_ok:
+                # ── K. 歷史慣性與 CPG 雙重防線預測模型 ──
                 st.markdown("---")
-                st.markdown(f"#### 🚚 未來 {forecast_days} 天叫貨建議")
+                st.markdown(f"#### 🚚 歷史慣性叫貨建議 (預測未來 {forecast_days} 天)")
+
+                # 1. 歷史慣性分析
+                freq_days = 90 / order_count if order_count > 0 else 90
+                median_qty = daily_orders['_qty'].median()
+                
+                # 2. 最新單價擷取 (供預算檢核)
+                price_col = next((c for c in item_purchase_df.columns if any(k in c for k in ['單價', 'Price', 'Rate', 'price'])), None)
+                latest_price = 0
+                if price_col:
+                    try:
+                        last_val = str(item_purchase_df.iloc[-1][price_col]).replace(',', '')
+                        latest_price = float(last_val)
+                    except:
+                        latest_price = 0
 
                 # 從 F&B 預測資料取得未來到客數 (套用戰情室動態到客率邏輯)
                 future_guests_est = 0
@@ -5237,7 +5252,6 @@ if selected_page == "💰 採購分析":
                     mask_fut = (df_fb_future_inv['_fdate'] >= today_inv) & (df_fb_future_inv['_fdate'] <= future_end)
                     _fut_df_inv = df_fb_future_inv[mask_fut]
                     
-                    # 取得過去 30 天的平假日到客率中位數
                     _ref_start = (today_inv - _dt_inv.timedelta(days=30)).strftime('%Y-%m-%d')
                     _ref_end = (today_inv - _dt_inv.timedelta(days=1)).strftime('%Y-%m-%d')
                     _fb_ref_inv = compute_fb_mtd(_ref_start, _ref_end)
@@ -5258,8 +5272,6 @@ if selected_page == "💰 採購分析":
                             qty = 0
                         is_we = row['_fdate'].weekday() >= 5
                         
-                        # 若 The Peak (早午餐為主)，套用早/下午茶到客率
-                        # 若 HH (歡樂時光)，目前預設抓下午茶或全部，視部門而定
                         if _meal_col_inv:
                             val = str(row[_meal_col_inv]).lower()
                             if is_peak_area:
@@ -5267,12 +5279,10 @@ if selected_page == "💰 採購分析":
                                     _proj_guests += qty * (_bf_we_med if is_we else _bf_wd_med)
                                 if any(k in val for k in _af_kw):
                                     _proj_guests += qty * (_af_we_med if is_we else _af_wd_med)
-                            else: # HH 區
+                            else: 
                                 if any(k in val for k in _af_kw) or any(k in val for k in ['hh', 'happy']):
-                                    # 假設 HH 轉換率與下午茶相近，或未來可獨立計算 HH 轉換率
                                     _proj_guests += qty * (_af_we_med if is_we else _af_wd_med)
                         else:
-                            # 無餐別欄位，依預設早/下午茶比例混合計算
                             if is_peak_area:
                                 _proj_guests += (qty * 0.93) * (_bf_we_med if is_we else _bf_wd_med)
                                 _proj_guests += (qty * 0.07) * (_af_we_med if is_we else _af_wd_med)
@@ -5281,35 +5291,53 @@ if selected_page == "💰 採購分析":
                                 
                     future_guests_est = _proj_guests
 
-                # 叫貨建議計算 (零基需求預測)
-                needed_qty     = future_guests_est * upg
-                safety_buffer  = needed_qty * 0.05
-                restock_qty    = needed_qty + safety_buffer
+                # 3. 叫貨建議計算 (歷史慣性推估)
+                expected_orders = forecast_days / freq_days
+                habit_forecast_qty = expected_orders * median_qty
+                restock_qty = habit_forecast_qty * 1.05 # 5% safety buffer
 
-                fcast_c1, fcast_c2 = st.columns(2)
-                fcast_c1.metric(
-                    f"未來 {forecast_days} 天預估到客數",
-                    f"{int(future_guests_est):,} 人" if future_guests_est > 0 else "無預測資料"
-                )
-                fcast_c2.metric(
-                    "預估消耗定額",
-                    f"{needed_qty:,.1f} {unit_label}",
-                    help=f"{int(future_guests_est)} 人 × {upg:.4f} UPG"
+                # 4. CPG 預算檢核
+                total_cost = restock_qty * latest_price
+                cpg_consumed = total_cost / future_guests_est if future_guests_est > 0 else 0
+                budget_pct = (cpg_consumed / 150) * 100 if future_guests_est > 0 else 0
+                
+                fcast_c1, fcast_c2, fcast_c3 = st.columns(3)
+                fcast_c1.metric("歷史叫貨中位數", f"{median_qty:,.1f} {unit_label}", help=f"過去 90 天共叫貨 {order_count} 天")
+                fcast_c2.metric("歷史平均頻率", f"約 {freq_days:,.1f} 天/次")
+                fcast_c3.metric(
+                    f"未來 {forecast_days} 天預估客數",
+                    f"{int(future_guests_est):,} 人" if future_guests_est > 0 else "無資料"
                 )
 
                 if future_guests_est > 0:
+                    alert_color = "#ff4d4d" if budget_pct > 3.0 else "#a0c4a0"
+                    warning_icon = "⚠️" if budget_pct > 3.0 else "✅"
+                    warning_msg = f"<b style='color:#ff4d4d;'>佔用比例偏高，可能排擠核心食材預算！</b>" if budget_pct > 3.0 else "預算佔比合理。"
+                    
+                    cpg_alert_html = f"""
+                    <div style='margin-top:15px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);'>
+                        <p style='margin:0; font-size:14px; color:#e0e0e0;'>{warning_icon} <b>CPG 預算天花板檢核 (總預算上限 $150/客)</b></p>
+                        <p style='margin:5px 0 0 0; font-size:13.5px; color:{alert_color};'>
+                            本次推估總花費：<b>NT$ {int(total_cost):,}</b> (參考單價 ${latest_price:,.0f})<br>
+                            折合每客成本消耗：<b>NT$ {cpg_consumed:.2f} / 客</b> (佔 $150 總額度 <b>{budget_pct:.1f}%</b>) <br>
+                            {warning_msg}
+                        </p>
+                    </div>
+                    """
+
                     st.markdown(
                         f"""
-                        <div style='background:linear-gradient(135deg,#1a3a5c,#0d5e3f); padding:20px; border-radius:12px; margin-top:10px;'>
-                            <p style='margin:0; font-size:14px; color:#a0c4a0;'>未來 {forecast_days} 天預估總消耗量 (建議採購基準)</p>
-                            <h2 style='margin:5px 0; color:#ffffff; font-size:2.5rem;'>
+                        <div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {alert_color};'>
+                            <p style='margin:0; font-size:14px; color:#b0bec5;'>未來 {forecast_days} 天慣性推估叫貨量</p>
+                            <h2 style='margin:5px 0; color:#ffffff; font-size:2.8rem;'>
                                 {restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
                             </h2>
-                            <p style='margin:5px 0 0 0; font-size:13px; color:#90c0a0;'>
-                                計算公式：({int(future_guests_est)} 人 × {upg:.4f} UPG) + 5% 安全緩衝 = {restock_qty:.1f} {unit_label}
+                            <p style='margin:5px 0 0 0; font-size:12px; color:#78909c;'>
+                                基礎計算公式：({forecast_days} 天 ÷ {freq_days:.1f} 天/次) × {median_qty:.1f} {unit_label} + 5% 安全緩衝 = {restock_qty:.1f}
                             </p>
-                            <p style='margin:10px 0 0 0; font-size:13px; color:#ffcc80;'>
-                                ⚠️ <b>純數據驅動提示</b>：此為滿足未來客數之純耗用量。實際叫貨時，請主廚自行視現場冰箱剩餘量予以扣除。
+                            {cpg_alert_html}
+                            <p style='margin:12px 0 0 0; font-size:12px; color:#ffcc80;'>
+                                💡 <b>輔助決策提示</b>：此數值反映歷史廚房操作慣性，排除了客數暴增導致的異常放大。實際叫貨仍需考量冰箱空間與現有庫存。
                             </p>
                         </div>
                         """,
