@@ -5315,33 +5315,33 @@ if selected_page == "💰 採購分析":
                     warning_msg = f"<b style='color:#ff4d4d;'>佔用比例偏高，可能排擠核心食材預算！</b>" if budget_pct > 3.0 else "預算佔比合理。"
                     
                     import textwrap
-                    cpg_alert_html = textwrap.dedent(f"""
-                        <div style='margin-top:15px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);'>
-                            <p style='margin:0; font-size:14px; color:#e0e0e0;'>{warning_icon} <b>CPG 預算天花板檢核 (總預算上限 $150/客)</b></p>
-                            <p style='margin:5px 0 0 0; font-size:13.5px; color:{alert_color};'>
-                                本次推估總花費：<b>NT$ {int(total_cost):,}</b> (參考單價 ${latest_price:,.0f})<br>
-                                折合每客成本消耗：<b>NT$ {cpg_consumed:.2f} / 客</b> (佔 $150 總額度 <b>{budget_pct:.1f}%</b>) <br>
-                                {warning_msg}
-                            </p>
-                        </div>
-                    """)
+                    cpg_alert_html = f"""
+<div style='margin-top:15px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.2);'>
+<p style='margin:0; font-size:14px; color:#e0e0e0;'>{warning_icon} <b>CPG 預算天花板檢核 (總預算上限 $150/客)</b></p>
+<p style='margin:5px 0 0 0; font-size:13.5px; color:{alert_color};'>
+本次推估總花費：<b>NT$ {int(total_cost):,}</b> (參考單價 ${latest_price:,.0f})<br>
+折合每客成本消耗：<b>NT$ {cpg_consumed:.2f} / 客</b> (佔 $150 總額度 <b>{budget_pct:.1f}%</b>) <br>
+{warning_msg}
+</p>
+</div>
+"""
 
                     st.markdown(
-                        textwrap.dedent(f"""
-                            <div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {alert_color};'>
-                                <p style='margin:0; font-size:14px; color:#b0bec5;'>未來 {forecast_days} 天慣性推估叫貨量</p>
-                                <h2 style='margin:5px 0; color:#ffffff; font-size:2.8rem;'>
-                                    {restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
-                                </h2>
-                                <p style='margin:5px 0 0 0; font-size:12px; color:#78909c;'>
-                                    基礎計算公式：({forecast_days} 天 ÷ {freq_days:.1f} 天/次) × {median_qty:.1f} {unit_label} + 5% 安全緩衝 = {restock_qty:.1f}
-                                </p>
-                                {cpg_alert_html}
-                                <p style='margin:12px 0 0 0; font-size:12px; color:#ffcc80;'>
-                                    💡 <b>輔助決策提示</b>：此數值反映歷史廚房操作慣性，排除了客數暴增導致的異常放大。實際叫貨仍需考量冰箱空間與現有庫存。
-                                </p>
-                            </div>
-                        """),
+                        f"""
+<div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:20px; border-radius:12px; margin-top:15px; border-left: 4px solid {alert_color};'>
+<p style='margin:0; font-size:14px; color:#b0bec5;'>未來 {forecast_days} 天慣性推估叫貨量</p>
+<h2 style='margin:5px 0; color:#ffffff; font-size:2.8rem;'>
+{restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
+</h2>
+<p style='margin:5px 0 0 0; font-size:12px; color:#78909c;'>
+基礎計算公式：({forecast_days} 天 ÷ {freq_days:.1f} 天/次) × {median_qty:.1f} {unit_label} + 5% 安全緩衝 = {restock_qty:.1f}
+</p>
+{cpg_alert_html}
+<p style='margin:12px 0 0 0; font-size:12px; color:#ffcc80;'>
+💡 <b>輔助決策提示</b>：此數值反映歷史廚房操作慣性，排除了客數暴增導致的異常放大。實際叫貨仍需考量冰箱空間與現有庫存。
+</p>
+</div>
+""",
                         unsafe_allow_html=True
                     )
                 else:
