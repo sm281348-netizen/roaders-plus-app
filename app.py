@@ -4362,13 +4362,21 @@ if selected_page == "💰 採購分析":
                         calculate_peak_guests, axis=1)
 
                     # 篩選 The Peak 與 Happy Hour 採購 (強力模糊匹配)
-                    all_depts_list = dept_summary['部門'].astype(str).tolist()
+                    # 直接從 df_month 的部門欄抓取所有部門，保證 Daily Report 附加進來的 Happy Hour / The Peak 都被偵測到
+                    all_depts_list = df_month[dept_col].dropna().astype(str).unique().tolist()
 
-                    # HH 匹配：包含 '4'、'HH' 或 'HAPPY'
+                    # HH 匹配：包含 'HH'、'HAPPY'、'歡樂時光'、'4F'、'交誼廳'，或直接等於 'Happy Hour'
                     hh_matched = [d for d in all_depts_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳'])]
-                    # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門
+                    # 確保 'Happy Hour'（Daily Report 附加的部門名）一定被包含
+                    if 'Happy Hour' not in hh_matched and 'Happy Hour' in all_depts_list:
+                        hh_matched.append('Happy Hour')
+
+                    # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門；或直接等於 'The Peak'
                     peak_matched = [d for d in all_depts_list if (any(k in d.upper(
                     ) for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and (d not in hh_matched)]
+                    # 確保 'The Peak'（Daily Report 附加的部門名）一定被包含
+                    if 'The Peak' not in peak_matched and 'The Peak' in all_depts_list:
+                        peak_matched.append('The Peak')
 
                     with st.expander("🛠️ 數據匹配校準器 (若數據不正確請點開)"):
                         st.info(f"📍 偵測到之所有部門: `{all_depts_list}`")
