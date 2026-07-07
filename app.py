@@ -4403,7 +4403,7 @@ if selected_page == "💰 採購分析":
                     df_daily_rest['日期_dt'] = pd.to_datetime(
                         df_daily_rest['date'])
 
-                    def spread_monthly_cost(df_purchase_input, df_daily_base):
+                    def spread_monthly_cost(df_purchase_input, df_daily_base, guest_col='effective_peak_guests'):
                         """將全月總費用平分到當月有來客的每一天 (保存規模經濟差異)"""
                         if df_purchase_input.empty or df_daily_base.empty:
                             return pd.Series(0, index=df_daily_base['日期_obj'])
@@ -4414,7 +4414,11 @@ if selected_page == "💰 採購分析":
                         
                         df_base = df_daily_base.copy()
                         
-                        has_guests = df_base['effective_peak_guests'] > 0
+                        if guest_col in df_base.columns:
+                            has_guests = df_base[guest_col] > 0
+                        else:
+                            has_guests = pd.Series(False, index=df_base.index)
+                            
                         days_with_guests = has_guests.sum()
                         
                         df_base['spread_cost'] = 0.0
