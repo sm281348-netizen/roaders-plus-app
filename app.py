@@ -4361,8 +4361,7 @@ if selected_page == "💰 採購分析":
                     all_depts_list = dept_summary['部門'].astype(str).tolist()
 
                     # HH 匹配：包含 '4'、'HH' 或 'HAPPY'
-                    hh_matched = [d for d in all_depts_list if '4' in d or any(
-                        k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    hh_matched = [d for d in all_depts_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳'])]
                     # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門
                     peak_matched = [d for d in all_depts_list if (any(k in d.upper(
                     ) for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and (d not in hh_matched)]
@@ -4429,9 +4428,9 @@ if selected_page == "💰 採購分析":
 
                     # 用月均攤計算每日成本
                     peak_spread = spread_monthly_cost(
-                        df_peak_purchase, df_daily_rest)
+                        df_peak_purchase, df_daily_rest, 'effective_peak_guests')
                     hh_spread = spread_monthly_cost(
-                        df_hh_purchase, df_daily_rest)
+                        df_hh_purchase, df_daily_rest, 'rest_hh_guests')
 
                     # 合併來客數與週均攤成本
                     analysis_df = df_daily_rest[[
@@ -4464,6 +4463,13 @@ if selected_page == "💰 採購分析":
 
                     total_hh_cost = analysis_df['cum_hh_cost'].iloc[-1] if not analysis_df.empty else 0
                     total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
+                    
+                    if total_hh_cost == 0 and not df_month.empty:
+                        try:
+                            _d_list = df_month[dept_col].dropna().unique().tolist() if dept_col else []
+                            st.caption(f"⚠️ 系統找不到 Happy Hour (HH) 的採購資料。目前讀取到的部門有：{_d_list}")
+                        except:
+                            pass
                     final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
 
                     # --- 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數) ---
