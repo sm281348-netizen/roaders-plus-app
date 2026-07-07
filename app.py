@@ -3687,6 +3687,21 @@ if selected_page == "💰 採購分析":
             df_month = df_purchase[(df_purchase['日期'] >= m_start) & (
                 df_purchase['日期'] <= m_end)].copy()
 
+            # ===== TEMP DEBUG: 強制顯示 4FHH 資料追蹤 =====
+            _hh_raw = fetch_4fhh_daily_purchase_report()
+            _hh_in_df = df_purchase[df_purchase[dept_col] == 'Happy Hour'] if dept_col in df_purchase.columns else pd.DataFrame()
+            _hh_in_month = df_month[df_month[dept_col] == 'Happy Hour'] if dept_col in df_month.columns else pd.DataFrame()
+            with st.expander("DEBUG 4FHH 資料追蹤 — 確認後可刪除"):
+                st.write(f"1 fetch_4fhh 筆數: {len(_hh_raw)}, 欄位: {list(_hh_raw.columns) if not _hh_raw.empty else '空'}")
+                st.write(f"2 總價 in cols: {'總價' in _hh_raw.columns if not _hh_raw.empty else 'N/A'}")
+                st.write(f"3 df_purchase Happy Hour 筆數: {len(_hh_in_df)}")
+                st.write(f"4 df_month Happy Hour 筆數: {len(_hh_in_month)}, 區間: {m_start} ~ {m_end}")
+                st.write(f"5 total_col={total_col}, dept_col={dept_col}")
+                st.write(f"6 official_dept_ym 筆數: {len(official_dept_ym)}")
+                if not _hh_raw.empty:
+                    st.dataframe(_hh_raw.head(5))
+            # ===== END TEMP DEBUG =====
+
             # 診斷：日期解析後的狀況
             if False: # with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
                 parsed_sample = df_purchase['日期'].dropna().head(5).tolist()
