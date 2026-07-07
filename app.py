@@ -3614,6 +3614,8 @@ if selected_page == "💰 採購分析":
                 append_df = pd.DataFrame()
                 if '請購日期' in df_daily_report.columns:
                     append_df['日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
+                elif '叫貨日' in df_daily_report.columns:
+                    append_df['日期'] = pd.to_datetime(df_daily_report['叫貨日'], errors='coerce').dt.date
                 append_df[dept_col] = "The Peak"
                 append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
                 
@@ -3643,6 +3645,8 @@ if selected_page == "💰 採購分析":
                 append_hh_df = pd.DataFrame()
                 if '請購日期' in df_hh_report.columns:
                     append_hh_df['日期'] = pd.to_datetime(df_hh_report['請購日期'], errors='coerce').dt.date
+                elif '叫貨日' in df_hh_report.columns:
+                    append_hh_df['日期'] = pd.to_datetime(df_hh_report['叫貨日'], errors='coerce').dt.date
                 append_hh_df[dept_col] = "Happy Hour"
                 append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
                 
@@ -7487,6 +7491,8 @@ def render_report_tab():
                     append_df = pd.DataFrame()
                     if '請購日期' in df_daily_report.columns:
                         append_df['日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
+                    elif '叫貨日' in df_daily_report.columns:
+                        append_df['日期'] = pd.to_datetime(df_daily_report['叫貨日'], errors='coerce').dt.date
                     append_df[dept_col] = "The Peak"
                     append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
                     
@@ -7495,7 +7501,44 @@ def render_report_tab():
                     append_df = append_df[~append_df['ym'].isin(official_ym)].drop(columns=['ym'])
                     
                     if not append_df.empty:
+                        # Add item names if possible to make UPG table works properly for daily items
+                        item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                        if '品項名稱' in df_daily_report.columns:
+                            item_str = df_daily_report['品項名稱'].astype(str)
+                            if '請購數量' in df_daily_report.columns and '單位' in df_daily_report.columns:
+                                item_str += " (" + df_daily_report['請購數量'].astype(str) + " " + df_daily_report['單位'].astype(str) + ")"
+                            if item_desc_col:
+                                append_df[item_desc_col] = item_str
+                            else:
+                                append_df['備註(系統生成)'] = item_str
                         df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+
+                # Combine 4FHH daily report as well
+                df_hh_report = fetch_4fhh_daily_purchase_report()
+                if not df_hh_report.empty and '總價' in df_hh_report.columns:
+                    append_hh_df = pd.DataFrame()
+                    if '請購日期' in df_hh_report.columns:
+                        append_hh_df['日期'] = pd.to_datetime(df_hh_report['請購日期'], errors='coerce').dt.date
+                    elif '叫貨日' in df_hh_report.columns:
+                        append_hh_df['日期'] = pd.to_datetime(df_hh_report['叫貨日'], errors='coerce').dt.date
+                    append_hh_df[dept_col] = "Happy Hour"
+                    append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
+                    
+                    # Prevent Double Counting
+                    append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期']).dt.strftime('%Y-%m')
+                    append_hh_df = append_hh_df[~append_hh_df['ym'].isin(official_ym)].drop(columns=['ym'])
+                    
+                    if not append_hh_df.empty:
+                        item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                        if '品項名稱' in df_hh_report.columns:
+                            item_str = df_hh_report['品項名稱'].astype(str)
+                            if '請購數量' in df_hh_report.columns and '單位' in df_hh_report.columns:
+                                item_str += " (" + df_hh_report['請購數量'].astype(str) + " " + df_hh_report['單位'].astype(str) + ")"
+                            if item_desc_col:
+                                append_hh_df[item_desc_col] = item_str
+                            else:
+                                append_hh_df['備註(系統生成)'] = item_str
+                        df_purchase = pd.concat([df_purchase, append_hh_df], ignore_index=True)
                 
                 # Filter for current month using robustly parsed date
                 df_t = df_purchase[pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m') == month_str].copy()
