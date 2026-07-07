@@ -5073,10 +5073,13 @@ if selected_page == "💰 採購分析":
                 mask_peak = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in peak_dept_keywords) if pd.notna(d) else False)
                 mask_hh   = df_purchase_all_clean['_dept'].apply(lambda d: any(k in str(d) for k in hh_dept_keywords) if pd.notna(d) else False)
                 
-                # 新增：過濾出「菜商」的品項 (依據常見關鍵字)
+                # 新增：過濾出「菜商」的品項 (依據常見關鍵字)，並排除非食材的會計調整項目
                 vendor_kws = ['菜', '農', '蔬', '果']
+                exclude_items = ['實質差異', '差異', '運費', '折讓', '折扣', '手續費']
                 if '_vendor' in df_purchase_all_clean.columns:
                     mask_veg = df_purchase_all_clean['_vendor'].apply(lambda v: any(k in str(v) for k in vendor_kws) if pd.notna(v) else False)
+                    mask_exclude = df_purchase_all_clean['_item'].apply(lambda i: any(k in str(i) for k in exclude_items) if pd.notna(i) else False)
+                    mask_veg = mask_veg & (~mask_exclude)
                 else:
                     mask_veg = pd.Series(True, index=df_purchase_all_clean.index) # 若無供應商欄位，則不過濾
 
