@@ -5224,117 +5224,6 @@ if selected_page == "💰 採購分析":
                 st.warning(f"⚠️ **樣本不足**：過去 90 天內「{selected_inv_item}」的採購次數僅有 {purchase_count_90d} 次，UPG 數字可信度較低，建議觀察更多週期後再做叫貨決策。")
 
             if upg is not None and sample_ok:
-                # ── G. 庫存基準輸入 ──
-                st.markdown("---")
-                st.markdown("#### 📥 最近一次叫貨資訊（手動輸入）")
-                st.caption("⚠️ 請填入最近這次叫貨的日期、數量，以及**叫貨當下倉庫內已有的剩餘量（期初庫存）**，確保理論剩餘的計算準確。")
-
-                inp_c1, inp_c2, inp_c3 = st.columns(3)
-                with inp_c1:
-                    last_order_date = st.date_input(
-                        "上次叫貨日期",
-                        value=_dt_inv.date.today() - _dt_inv.timedelta(days=3),
-                        key="inv_last_order_date"
-                    )
-                with inp_c2:
-                    last_order_qty = st.number_input(
-                        f"上次叫貨數量（{unit_label}）",
-                        min_value=0.0, step=1.0, value=0.0,
-                        key="inv_last_order_qty"
-                    )
-                with inp_c3:
-                    opening_stock = st.number_input(
-                        f"叫貨前期初庫存（{unit_label}）",
-                        min_value=0.0, step=1.0, value=0.0,
-                        help="叫貨當天，倉庫內已有的剩餘量。若從空庫開始請填 0。",
-                        key="inv_opening_stock"
-                    )
-
-                # ── H. 計算理論剩餘庫存 ──
-                total_stock_after_order = last_order_qty + opening_stock
-                last_order_date_str = last_order_date.strftime('%Y-%m-%d')
-
-                # 從 F&B 資料中，累計「叫貨日到今天」的到客數
-                guests_since_order = 0
-                if 'analysis_df' in locals() and not analysis_df.empty:
-                    if is_peak_area and 'effective_peak_guests' in analysis_df.columns and '_date_obj' in analysis_df.columns:
-                        mask_since = analysis_df['_date_obj'].apply(
-                            lambda d: d is not None and d.strftime('%Y-%m-%d') >= last_order_date_str)
-                        guests_since_order = analysis_df.loc[mask_since, 'effective_peak_guests'].sum()
-                    elif not is_peak_area and 'rest_hh_guests' in analysis_df.columns and '_date_obj' in analysis_df.columns:
-                        mask_since = analysis_df['_date_obj'].apply(
-                            lambda d: d is not None and d.strftime('%Y-%m-%d') >= last_order_date_str)
-                        guests_since_order = analysis_df.loc[mask_since, 'rest_hh_guests'].sum()
-
-                if guests_since_order == 0 and 'df_daily_rest' in locals() and not df_daily_rest.empty:
-                    if '日期_str' in df_daily_rest.columns:
-                        mask_since2 = df_daily_rest['日期_str'] >= last_order_date_str
-                    elif '日期' in df_daily_rest.columns:
-                        mask_since2 = df_daily_rest['日期'].astype(str) >= last_order_date_str
-                    else:
-                        mask_since2 = pd.Series(True, index=df_daily_rest.index)
-
-                    if is_peak_area and 'effective_peak_guests' in df_daily_rest.columns:
-                        guests_since_order = pd.to_numeric(df_daily_rest.loc[mask_since2, 'effective_peak_guests'], errors='coerce').fillna(0).sum()
-                    elif not is_peak_area and 'rest_hh_guests' in df_daily_rest.columns:
-                        guests_since_order = pd.to_numeric(df_daily_rest.loc[mask_since2, 'rest_hh_guests'], errors='coerce').fillna(0).sum()
-
-                theoretical_consumed = guests_since_order * upg
-                theoretical_remaining = max(0.0, total_stock_after_order - theoretical_consumed)
-
-                # ── I. 理論剩餘顯示 ──
-                st.markdown("---")
-                st.markdown("#### 🧮 理論剩餘庫存")
-
-                rem_c1, rem_c2, rem_c3 = st.columns(3)
-                rem_c1.metric("進貨後總庫存（期初 + 本次）", f"{total_stock_after_order:,.1f} {unit_label}",
-                             help=f"期初庫存 {opening_stock} + 本次進貨 {last_order_qty}")
-                rem_c2.metric("叫貨後至今累積到客數", f"{int(guests_since_order):,} 人")
-                rem_c3.metric("📦 理論剩餘庫存", f"{theoretical_remaining:,.1f} {unit_label}",
-                             delta=f"已消耗 {theoretical_consumed:,.1f} {unit_label}")
-
-                if opening_stock == 0 and last_order_qty == 0:
-                    st.info("💡 請填入叫貨資訊以計算理論剩餘庫存。")
-
-                # ── J. 現場盤點比對 ──
-                st.markdown("---")
-                st.markdown("#### 🔍 現場盤點比對（選填）")
-                st.caption("實際到現場盤點後，輸入現有剩餘量，系統會自動計算差異並診斷是否有異常耗損。")
-
-                audit_qty = st.number_input(
-                    f"現場實際剩餘量（{unit_label}）",
-                    min_value=0.0, step=0.5, value=0.0,
-                    key="inv_audit_qty",
-                    help="留空（填 0）則跳過盤點比對，直接以理論剩餘量計算叫貨建議。"
-                )
-
-                use_audit = audit_qty > 0
-                effective_remaining = audit_qty if use_audit else theoretical_remaining
-
-                if use_audit and total_stock_after_order > 0:
-                    variance = audit_qty - theoretical_remaining
-                    variance_pct = (variance / theoretical_remaining * 100) if theoretical_remaining > 0 else 0
-
-                    aud_c1, aud_c2, aud_c3 = st.columns(3)
-                    aud_c1.metric("理論剩餘", f"{theoretical_remaining:,.1f} {unit_label}")
-                    aud_c2.metric("實際剩餘", f"{audit_qty:,.1f} {unit_label}")
-                    aud_c3.metric("差異值 (Variance)", f"{variance:+.1f} {unit_label}", delta=f"{variance_pct:+.1f}%")
-
-                    if variance_pct < -10:
-                        st.error(
-                            f"🔴 **異常損耗警告**：實際庫存比理論值少了 {abs(variance):.1f} {unit_label}（{abs(variance_pct):.1f}%）。\n\n"
-                            "可能原因：過度報廢、品質問題、員工私用。建議追蹤近期的損耗紀錄。"
-                        )
-                    elif variance_pct > 10:
-                        st.warning(
-                            f"🟡 **消耗偏慢**：實際庫存比理論值多了 {variance:.1f} {unit_label}（{variance_pct:.1f}%）。\n\n"
-                            "可能原因：上次叫貨高估、客群消費行為改變。建議下次叫貨適度減量。"
-                        )
-                    else:
-                        st.success(
-                            f"🟢 **正常**：實際庫存與理論值相差在 10% 以內（差異 {variance:+.1f} {unit_label}），耗用管控良好。"
-                        )
-
                 # ── K. 未來叫貨建議 ──
                 st.markdown("---")
                 st.markdown(f"#### 🚚 未來 {forecast_days} 天叫貨建議")
@@ -5392,47 +5281,40 @@ if selected_page == "💰 採購分析":
                                 
                     future_guests_est = _proj_guests
 
-                # 叫貨建議計算
+                # 叫貨建議計算 (零基需求預測)
                 needed_qty     = future_guests_est * upg
                 safety_buffer  = needed_qty * 0.05
-                restock_qty    = max(0.0, needed_qty + safety_buffer - effective_remaining)
+                restock_qty    = needed_qty + safety_buffer
 
-                fcast_c1, fcast_c2, fcast_c3 = st.columns(3)
+                fcast_c1, fcast_c2 = st.columns(2)
                 fcast_c1.metric(
                     f"未來 {forecast_days} 天預估到客數",
                     f"{int(future_guests_est):,} 人" if future_guests_est > 0 else "無預測資料"
                 )
                 fcast_c2.metric(
-                    "預估消耗量",
+                    "預估消耗定額",
                     f"{needed_qty:,.1f} {unit_label}",
-                    help=f"{int(future_guests_est)} 人 × {upg:.3f} UPG"
-                )
-                fcast_c3.metric(
-                    "現有可用庫存（基準）",
-                    f"{effective_remaining:,.1f} {unit_label}",
-                    help="現場盤點量（若已輸入）或理論剩餘量"
+                    help=f"{int(future_guests_est)} 人 × {upg:.4f} UPG"
                 )
 
                 if future_guests_est > 0:
                     st.markdown(
                         f"""
                         <div style='background:linear-gradient(135deg,#1a3a5c,#0d5e3f); padding:20px; border-radius:12px; margin-top:10px;'>
-                            <p style='margin:0; font-size:13px; color:#a0c4a0;'>建議本次叫貨量（含 5% 安全緩衝）</p>
-                            <h2 style='margin:5px 0; color:#ffffff; font-size:2.2rem;'>
+                            <p style='margin:0; font-size:14px; color:#a0c4a0;'>未來 {forecast_days} 天預估總消耗量 (建議採購基準)</p>
+                            <h2 style='margin:5px 0; color:#ffffff; font-size:2.5rem;'>
                                 {restock_qty:,.1f} <span style='font-size:1.2rem;'>{unit_label}</span>
                             </h2>
-                            <p style='margin:5px 0 0 0; font-size:12px; color:#90c0a0;'>
-                                計算公式：({int(future_guests_est)} 人 × {upg:.3f} UPG) + 5% 緩衝 − {effective_remaining:.1f} 現有庫存 = {restock_qty:.1f} {unit_label}
+                            <p style='margin:5px 0 0 0; font-size:13px; color:#90c0a0;'>
+                                計算公式：({int(future_guests_est)} 人 × {upg:.4f} UPG) + 5% 安全緩衝 = {restock_qty:.1f} {unit_label}
                             </p>
-                            <p style='margin:6px 0 0 0; font-size:12px; color:#ffcc80;'>
-                                {'⚠️ 注意：F&B 預測資料為預約到客估算，實際來客可能有所出入，建議視當日狀況彈性調整。' if future_guests_est > 0 else ''}
+                            <p style='margin:10px 0 0 0; font-size:13px; color:#ffcc80;'>
+                                ⚠️ <b>純數據驅動提示</b>：此為滿足未來客數之純耗用量。實際叫貨時，請主廚自行視現場冰箱剩餘量予以扣除。
                             </p>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
-                    if restock_qty == 0:
-                        st.success(f"✅ 現有庫存 {effective_remaining:.1f} {unit_label} 已充足，預計可撐過未來 {forecast_days} 天，**暫不需要叫貨**。")
                 else:
                     st.info(
                         f"💡 目前未取得未來 {forecast_days} 天的 F&B 預測到客資料。\n\n"
