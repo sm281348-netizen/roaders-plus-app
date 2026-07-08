@@ -5686,28 +5686,28 @@ if selected_page == "🛒 菜價分析":
                 item_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item'])), None)
                 date_col_hist = next((c for c in df_hist.columns if '日期' in c or 'Date' in c), None)
                 
-                if dept_col_hist and item_col_hist and date_col_hist:
-                    # 過濾出近 90 天
-                    import datetime as _dt_inv
-                    window_90 = (_dt_inv.date.today() - _dt_inv.timedelta(days=90)).strftime('%Y-%m-%d')
-                    df_hist['_d'] = pd.to_datetime(df_hist[date_col_hist], errors='coerce').dt.strftime('%Y-%m-%d')
-                    df_hist_90 = df_hist[df_hist['_d'] >= window_90].copy()
-                    
+                if dept_col_hist and item_col_hist:
+                    # 拔除日期過濾，直接使用所有歷史紀錄計算頻率 (避免因 Excel 日期格式解析失敗導致資料全空)
                     if is_peak_order:
-                        mask_dept = df_hist_90[dept_col_hist].apply(lambda d: any(k in str(d) for k in peak_kws) if pd.notna(d) else False)
+                        mask_dept = df_hist[dept_col_hist].apply(lambda d: any(k in str(d) for k in peak_kws) if pd.notna(d) else False)
                     else:
-                        mask_dept = df_hist_90[dept_col_hist].apply(lambda d: any(k in str(d) for k in hh_kws) if pd.notna(d) else False)
+                        mask_dept = df_hist[dept_col_hist].apply(lambda d: any(k in str(d) for k in hh_kws) if pd.notna(d) else False)
                     
-                    df_hist_dept = df_hist_90[mask_dept]
+                    df_hist_dept = df_hist[mask_dept]
                     freq_map = df_hist_dept[item_col_hist].astype(str).str.strip().value_counts().to_dict()
-        except Exception:
+        except Exception as e:
             pass
 
         # 漏洞1修復：只建立一次 df_order_form，並導入常態性品項置頂排序
         df_order_form = df_target[['item_name', 'price', 'unit']].copy()
         
-        # 依照歷史頻率進行靜態排序
-        df_order_form['freq'] = df_order_form['item_name'].map(freq_map).fillna(0)
+        # 依照歷史頻率進行靜態排序 (確保比對時去除空白)
+        df_order_form['freq'] = df_order_form['item_name'].astype(str).str.strip().map(freq_map).fillna(0)
+        
+        # 如果 freq 全部都是 0 (可能 mapping 失敗或無歷史資料)，加上一個安全網顯示除錯資訊在終端機
+        # if df_order_form['freq'].sum() == 0:
+        #     print("Warning: freq_map is empty or mapping failed!")
+            
         df_order_form = df_order_form.sort_values(by=['freq', 'item_name'], ascending=[False, True])
         df_order_form = df_order_form.drop(columns=['freq'])
         
