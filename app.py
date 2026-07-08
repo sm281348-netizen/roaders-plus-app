@@ -7762,36 +7762,36 @@ def render_report_tab():
                 df_v_display[c] = df_v_display[c].apply(lambda x: f"{int(x):,} 人")
         
         # Build custom HTML table to match Channel Analysis styling
-        table_html = """
-        <div style="display: flex; justify-content: flex-start;">
-        <table style="width: 100%; text-align: center; border-collapse: collapse; font-family: sans-serif; white-space: nowrap; font-size: 16px;">
-            <tr style="background-color: #f7a037; color: white; font-weight: bold;">
-                <td style="border: 1px solid white; padding: 10px 15px;">月份</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">早餐</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">早餐日均</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">下午茶</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">下茶日均</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">HH</td>
-                <td style="border: 1px solid white; padding: 10px 15px;">HH日均</td>
-            </tr>
-        """
+        table_html = (
+            '<div style="display: flex; justify-content: flex-start;">\n'
+            '<table style="width: 100%; text-align: center; border-collapse: collapse; font-family: sans-serif; white-space: nowrap; font-size: 16px;">\n'
+            '<tr style="background-color: #f7a037; color: white; font-weight: bold;">\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">月份</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">早餐</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">早餐日均</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">下午茶</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">下茶日均</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">HH</td>\n'
+            '<td style="border: 1px solid white; padding: 10px 15px;">HH日均</td>\n'
+            '</tr>\n'
+        )
         
         for i, row in df_v_display.iterrows():
             bg_color = "#fffaf0" if i % 2 == 0 else "#ffffff"
             font_color = "red" if i == 0 else "black"
             font_weight = "bold" if i == 0 else "normal"
             
-            table_html += f"""
-            <tr style="background-color: {bg_color}; font-size: 1.05em; color: {font_color}; font-weight: {font_weight};">
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['月份']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['早餐']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['早餐日均']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['下午茶']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['下茶日均']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['HH']}</td>
-                <td style="border: 1px solid white; padding: 12px 15px;">{row['HH日均']}</td>
-            </tr>
-            """
+            table_html += (
+                f'<tr style="background-color: {bg_color}; font-size: 1.05em; color: {font_color}; font-weight: {font_weight};">\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["月份"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["早餐"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["早餐日均"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["下午茶"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["下茶日均"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["HH"]}</td>\n'
+                f'<td style="border: 1px solid white; padding: 12px 15px;">{row["HH日均"]}</td>\n'
+                f'</tr>\n'
+            )
             
         table_html += "</table></div><br>"
         st.markdown(table_html, unsafe_allow_html=True)
