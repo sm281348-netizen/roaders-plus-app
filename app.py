@@ -7750,14 +7750,18 @@ def render_report_tab():
         st.dataframe(df_v_display, use_container_width=True, hide_index=True)
         
     with fb_tab2:
-        m_bf_rate = (m_fb_data['bf'] / m_fb_data['hotel_guests'] * 100) if m_fb_data['hotel_guests'] > 0 else 0
-        m_af_rate = (m_fb_data['af'] / m_fb_data['hotel_guests'] * 100) if m_fb_data['hotel_guests'] > 0 else 0
+        m_hotel_guests = m_fb_data['hotel_guests'] if m_fb_data.get('hotel_guests', 0) > 0 else (curr_summary['sold_rooms'] * 2)
+        lm_hotel_guests = lm_fb_data['hotel_guests'] if lm_fb_data.get('hotel_guests', 0) > 0 else (lm_summary['sold_rooms'] * 2)
+        m2_hotel_guests = m2_fb_data['hotel_guests'] if m2_fb_data.get('hotel_guests', 0) > 0 else (m2_summary['sold_rooms'] * 2)
         
-        lm_bf_rate = (lm_fb_data['bf'] / lm_fb_data['hotel_guests'] * 100) if lm_fb_data['hotel_guests'] > 0 else 0
-        lm_af_rate = (lm_fb_data['af'] / lm_fb_data['hotel_guests'] * 100) if lm_fb_data['hotel_guests'] > 0 else 0
+        m_bf_rate = (m_fb_data['bf'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0
+        m_af_rate = (m_fb_data['af'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0
         
-        m2_bf_rate = (m2_fb_data['bf'] / m2_fb_data['hotel_guests'] * 100) if m2_fb_data['hotel_guests'] > 0 else 0
-        m2_af_rate = (m2_fb_data['af'] / m2_fb_data['hotel_guests'] * 100) if m2_fb_data['hotel_guests'] > 0 else 0
+        lm_bf_rate = (lm_fb_data['bf'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0
+        lm_af_rate = (lm_fb_data['af'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0
+        
+        m2_bf_rate = (m2_fb_data['bf'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0
+        m2_af_rate = (m2_fb_data['af'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0
         
         arr_data = [
             {"月份": f"{m2_date.year}-{m2_date.month:02d}", "類別": "早餐", "到客率": m2_bf_rate},
