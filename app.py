@@ -7232,6 +7232,7 @@ def render_report_tab():
     month_str = f"{year}-{month:02d}"
     last_month_date = curr_date - relativedelta(months=1)
     last_year_date = curr_date - relativedelta(years=1)
+    m2_date = curr_date - relativedelta(months=2)
     
     with st.spinner("🚀 正在為您彙整本月全館運營數據..."):
         # Fetching Data
@@ -7239,6 +7240,7 @@ def render_report_tab():
         curr_summary = fetch_month_summary(year, month)
         ly_summary = fetch_month_summary(last_year_date.year, last_year_date.month)
         lm_summary = fetch_month_summary(last_month_date.year, last_month_date.month)
+        m2_summary = fetch_month_summary(m2_date.year, m2_date.month)
         y_adr, y_pure_adr = fetch_yearly_metrics(year)
         
         # 2. Budget / CPG
@@ -7254,8 +7256,24 @@ def render_report_tab():
         end_of_month = f"{year}-{month:02d}-{last_day:02d}"
         
         # 1. Get hist_guests (dynamically merge with f&b_report for safety)
-        def _calc_guests(y, m, summ):
+        def _calc_fb_metrics(y, m, summ, is_current_month=False):
             g = 0
+            bf_sum = 0
+            af_sum = 0
+            hh_sum = 0
+            fb_rev = 0
+            total_hotel_guests = 0
+            
+            import datetime, calendar
+            last_day = calendar.monthrange(y, m)[1]
+            elapsed_days = last_day
+            if is_current_month:
+                today = datetime.date.today()
+                if today.year == y and today.month == m:
+                    elapsed_days = min(today.day, last_day)
+                    # If we have no data yet (e.g. day 1 morning), avoid 0
+                    if elapsed_days < 1: elapsed_days = 1
+            
             d_occ = summ.get('df')
             d_fb = get_combined_fb_daily_df(y, m, current_hotel)
             
@@ -7269,22 +7287,50 @@ def render_report_tab():
                 d_merged = pd.DataFrame()
                 
             if not d_merged.empty:
-                for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests']:
+                for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests', 'hh_act', 'revenue']:
                     if c in d_merged.columns:
                         d_merged[c] = pd.to_numeric(d_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     else:
                         d_merged[c] = 0
+                        
+                # Room data
+                for c in ['total_guests', 'sold_rooms', 'total_rooms']:
+                    if c in d_merged.columns:
+                        d_merged[c] = pd.to_numeric(d_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        
                 for _, r in d_merged.iterrows():
-                    if r['peak_guests'] > 0: g += r['peak_guests']
-                    elif r['rest_day_guests'] > 0: g += r['rest_day_guests']
+                    # G (Total F&B Guests)
+                    if r['peak_guests'] > 0: 
+                        g += r['peak_guests']
+                    elif r['rest_day_guests'] > 0: 
+                        g += r['rest_day_guests']
                     else:
-                        bf = r['bf_total_act'] if r['bf_total_act'] > 0 else r['bf_act']
-                        af = r['af_total_act'] if r['af_total_act'] > 0 else r['af_act']
-                        g += (bf + af)
-            return g
+                        bf_t = r['bf_total_act'] if r['bf_total_act'] > 0 else r['bf_act']
+                        af_t = r['af_total_act'] if r['af_total_act'] > 0 else r['af_act']
+                        g += (bf_t + af_t)
+                        
+                    bf_sum += (r['bf_total_act'] if r['bf_total_act'] > 0 else r['bf_act'])
+                    af_sum += (r['af_total_act'] if r['af_total_act'] > 0 else r['af_act'])
+                    hh_sum += r['hh_act']
+                    fb_rev += r['revenue']
+                    if 'total_guests' in r: total_hotel_guests += r['total_guests']
+                    
+            return {
+                'total_fb_guests': g,
+                'bf': bf_sum,
+                'af': af_sum,
+                'hh': hh_sum,
+                'fb_rev': fb_rev,
+                'elapsed_days': elapsed_days,
+                'hotel_guests': total_hotel_guests
+            }
             
-        hist_guests = _calc_guests(year, month, curr_summary)
-        lm_hist_guests = _calc_guests(last_month_date.year, last_month_date.month, lm_summary)
+        m_fb_data = _calc_fb_metrics(year, month, curr_summary, is_current_month=True)
+        lm_fb_data = _calc_fb_metrics(last_month_date.year, last_month_date.month, lm_summary)
+        m2_fb_data = _calc_fb_metrics(m2_date.year, m2_date.month, m2_summary)
+        
+        hist_guests = m_fb_data['total_fb_guests']
+        lm_hist_guests = lm_fb_data['total_fb_guests']
 
         # 2. Get peak_spent (from purchase_data + daily report)
         df_purchase = get_purchase_data_cached()
@@ -7420,12 +7466,48 @@ def render_report_tab():
                     t_hh_lm = [d for d in t_all_depts_lm if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
                     t_peak_depts_lm = [d for d in t_all_depts_lm if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh_lm]
                     lm_peak_spent = df_lm[df_lm[dept_col].isin(t_peak_depts_lm)]['小計'].sum()
+                    
+                m2_month_str = f"{m2_date.year}-{m2_date.month:02d}"
+                df_m2 = df_purchase[pd.to_datetime(df_purchase['日期']).dt.strftime('%Y-%m') == m2_month_str].copy()
+                m2_peak_spent = 0
+                if not df_m2.empty:
+                    df_m2['小計'] = pd.to_numeric(df_m2[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    t_all_depts_m2 = df_m2[dept_col].astype(str).unique().tolist()
+                    t_hh_m2 = [d for d in t_all_depts_m2 if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                    t_peak_depts_m2 = [d for d in t_all_depts_m2 if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh_m2]
+                    m2_peak_spent = df_m2[df_m2[dept_col].isin(t_peak_depts_m2)]['小計'].sum()
+                else:
+                    m2_peak_spent = 0
 
         cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
         last_month_cpg = lm_peak_spent / lm_hist_guests if lm_hist_guests > 0 else 0
         
-
         cpg_target = st.session_state.get('tab_p_target_cpg', 150)
+        
+        # Calculate Forecast Guests for Current Month
+        future_guests_est = 0
+        try:
+            df_future = get_combined_fb_future_data() if 'get_combined_fb_future_data' in globals() else pd.DataFrame()
+            if not df_future.empty and 'date' in df_future.columns:
+                today_d = datetime.date.today()
+                df_future['_d'] = pd.to_datetime(df_future['date'], errors='coerce').dt.date
+                df_f_m = df_future[(df_future['_d'] >= today_d) & (df_future['_d'] <= datetime.date(year, month, last_day))]
+                if not df_f_m.empty:
+                    bf_rate = st.session_state.get('tab_p_bf_rate', 0.6)
+                    af_rate = st.session_state.get('tab_p_af_rate', 0.2)
+                    for _, r in df_f_m.iterrows():
+                        raw_g = pd.to_numeric(str(r.get('有效預估人數', 0)).replace(',',''), errors='coerce')
+                        if pd.isna(raw_g): raw_g = 0
+                        future_guests_est += int(raw_g * bf_rate) + int(raw_g * af_rate)
+        except:
+            pass
+            
+        m_est_total_guests = hist_guests + future_guests_est
+        m_est_landing_cost = peak_spent + (future_guests_est * (cpg_actual if cpg_actual > 0 else last_month_cpg))
+        m_est_budget_rem = (m_est_total_guests * cpg_target) - peak_spent
+        
+        lm_budget_rem = (lm_hist_guests * cpg_target) - lm_peak_spent
+        m2_budget_rem = (m2_fb_data['total_fb_guests'] * cpg_target) - m2_peak_spent if 'm2_peak_spent' in locals() else 0
         
         # 3. Trends for the year
         year_summaries = []
@@ -7637,7 +7719,97 @@ def render_report_tab():
             st.write("無資料或尚未載入")
             
     st.markdown("---")
-    st.subheader("📝 5. 本月重點營運日誌")
+    st.subheader("🍽️ 5. 餐飲營運深度分析 (F&B Operations Review)")
+    
+    fb_tab1, fb_tab2, fb_tab3 = st.tabs(["📊 近三月三大餐期量體", "📉 到客率趨勢分析", "💰 預算落點與綜合營收效益"])
+    
+    with fb_tab1:
+        # Volume table
+        v_data = [
+            {"月份": f"{year}-{month:02d} (MTD)", "早餐": m_fb_data['bf'], "早餐日均": m_fb_data['bf']/m_fb_data['elapsed_days'], 
+             "下午茶": m_fb_data['af'], "下茶日均": m_fb_data['af']/m_fb_data['elapsed_days'],
+             "HH": m_fb_data['hh'], "HH日均": m_fb_data['hh']/m_fb_data['elapsed_days']},
+            {"月份": f"{last_month_date.year}-{last_month_date.month:02d}", "早餐": lm_fb_data['bf'], "早餐日均": lm_fb_data['bf']/lm_fb_data['elapsed_days'], 
+             "下午茶": lm_fb_data['af'], "下茶日均": lm_fb_data['af']/lm_fb_data['elapsed_days'],
+             "HH": lm_fb_data['hh'], "HH日均": lm_fb_data['hh']/lm_fb_data['elapsed_days']},
+            {"月份": f"{m2_date.year}-{m2_date.month:02d}", "早餐": m2_fb_data['bf'], "早餐日均": m2_fb_data['bf']/m2_fb_data['elapsed_days'], 
+             "下午茶": m2_fb_data['af'], "下茶日均": m2_fb_data['af']/m2_fb_data['elapsed_days'],
+             "HH": m2_fb_data['hh'], "HH日均": m2_fb_data['hh']/m2_fb_data['elapsed_days']}
+        ]
+        df_v = pd.DataFrame(v_data)
+        
+        st.markdown("**▍ 近三個月絕對量體與每日平均** (日均除以該月已過天數)")
+        
+        # formatting nicely
+        df_v_display = df_v.copy()
+        for c in df_v_display.columns:
+            if '日均' in c:
+                df_v_display[c] = df_v_display[c].apply(lambda x: f"{x:.1f} 人/日")
+            elif c != '月份':
+                df_v_display[c] = df_v_display[c].apply(lambda x: f"{int(x):,} 人")
+        st.dataframe(df_v_display, use_container_width=True, hide_index=True)
+        
+    with fb_tab2:
+        m_bf_rate = (m_fb_data['bf'] / m_fb_data['hotel_guests'] * 100) if m_fb_data['hotel_guests'] > 0 else 0
+        m_af_rate = (m_fb_data['af'] / m_fb_data['hotel_guests'] * 100) if m_fb_data['hotel_guests'] > 0 else 0
+        
+        lm_bf_rate = (lm_fb_data['bf'] / lm_fb_data['hotel_guests'] * 100) if lm_fb_data['hotel_guests'] > 0 else 0
+        lm_af_rate = (lm_fb_data['af'] / lm_fb_data['hotel_guests'] * 100) if lm_fb_data['hotel_guests'] > 0 else 0
+        
+        m2_bf_rate = (m2_fb_data['bf'] / m2_fb_data['hotel_guests'] * 100) if m2_fb_data['hotel_guests'] > 0 else 0
+        m2_af_rate = (m2_fb_data['af'] / m2_fb_data['hotel_guests'] * 100) if m2_fb_data['hotel_guests'] > 0 else 0
+        
+        arr_data = [
+            {"月份": f"{m2_date.year}-{m2_date.month:02d}", "類別": "早餐", "到客率": m2_bf_rate},
+            {"月份": f"{m2_date.year}-{m2_date.month:02d}", "類別": "下午茶", "到客率": m2_af_rate},
+            {"月份": f"{last_month_date.year}-{last_month_date.month:02d}", "類別": "早餐", "到客率": lm_bf_rate},
+            {"月份": f"{last_month_date.year}-{last_month_date.month:02d}", "類別": "下午茶", "到客率": lm_af_rate},
+            {"月份": f"{year}-{month:02d}", "類別": "早餐", "到客率": m_bf_rate},
+            {"月份": f"{year}-{month:02d}", "類別": "下午茶", "到客率": m_af_rate},
+        ]
+        df_arr = pd.DataFrame(arr_data)
+        chart = alt.Chart(df_arr).mark_line(point=True).encode(
+            x=alt.X('月份:N', sort=None),
+            y=alt.Y('到客率:Q', title='到客率 (%)'),
+            color='類別:N',
+            tooltip=['月份', '類別', alt.Tooltip('到客率', format='.1f')]
+        ).properties(height=300)
+        st.altair_chart(chart, use_container_width=True)
+        
+    with fb_tab3:
+        st.markdown("**▍ 落點與預算防線 (Forecast & Budget)**")
+        bc1, bc2, bc3 = st.columns(3)
+        m_budget_color = "normal" if m_est_budget_rem >= 0 else "inverse"
+        lm_budget_color = "normal" if lm_budget_rem >= 0 else "inverse"
+        m2_budget_color = "normal" if m2_budget_rem >= 0 else "inverse"
+        
+        bc1.metric(f"本月 {year}-{month:02d} (含預估)", f"NT$ {int(m_est_landing_cost):,}", f"預估結餘: {int(m_est_budget_rem):,}", delta_color=m_budget_color)
+        bc2.metric(f"上月 {last_month_date.month:02d}月", f"NT$ {int(lm_peak_spent):,}", f"實際結餘: {int(lm_budget_rem):,}", delta_color=lm_budget_color)
+        m2_p_spent = m2_peak_spent if 'm2_peak_spent' in locals() else 0
+        bc3.metric(f"前月 {m2_date.month:02d}月", f"NT$ {int(m2_p_spent):,}", f"實際結餘: {int(m2_budget_rem):,}", delta_color=m2_budget_color)
+        
+        st.markdown("<br>**▍ The Peak 綜合營收效益 (Efficiency)**", unsafe_allow_html=True)
+        
+        # Calculations for The Peak
+        def _calc_eff(spent, f_rev, r_rev, sold):
+            r_ratio = (spent / r_rev * 100) if r_rev > 0 else 0
+            fb_ratio = (spent / f_rev * 100) if f_rev > 0 else 0
+            trevpor = ((r_rev + f_rev) / sold) if sold > 0 else 0
+            return r_ratio, fb_ratio, trevpor
+            
+        m_r_ratio, m_fb_ratio, m_trev = _calc_eff(peak_spent, m_fb_data['fb_rev'], curr_summary['rev'], curr_summary['sold_rooms'])
+        lm_r_ratio, lm_fb_ratio, lm_trev = _calc_eff(lm_peak_spent, lm_fb_data['fb_rev'], lm_summary['rev'], lm_summary['sold_rooms'])
+        m2_r_ratio, m2_fb_ratio, m2_trev = _calc_eff(m2_p_spent, m2_fb_data['fb_rev'], m2_summary['rev'], m2_summary['sold_rooms'])
+        
+        eff_data = [
+            {"月份": f"{year}-{month:02d}", "TRevPOR (每房總創收)": f"NT$ {int(m_trev):,}", "成本佔房費比": f"{m_r_ratio:.1f}%", "餐飲收支比": f"{m_fb_ratio:.1f}%" if m_fb_data['fb_rev']>0 else "N/A"},
+            {"月份": f"{last_month_date.year}-{last_month_date.month:02d}", "TRevPOR (每房總創收)": f"NT$ {int(lm_trev):,}", "成本佔房費比": f"{lm_r_ratio:.1f}%", "餐飲收支比": f"{lm_fb_ratio:.1f}%" if lm_fb_data['fb_rev']>0 else "N/A"},
+            {"月份": f"{m2_date.year}-{m2_date.month:02d}", "TRevPOR (每房總創收)": f"NT$ {int(m2_trev):,}", "成本佔房費比": f"{m2_r_ratio:.1f}%", "餐飲收支比": f"{m2_fb_ratio:.1f}%" if m2_fb_data['fb_rev']>0 else "N/A"}
+        ]
+        st.dataframe(pd.DataFrame(eff_data), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("📝 6. 本月重點營運日誌")
     if log_events:
         with st.expander("展開查看每日日誌重點", expanded=True):
             for e in log_events:
@@ -7646,7 +7818,7 @@ def render_report_tab():
         st.write("本月暫無營運日誌紀錄。")
 
     st.markdown("---")
-    st.subheader("🤖 6. 自動檢討評語 (Auto-Generated Summary)")
+    st.subheader("🤖 7. 自動檢討評語 (Auto-Generated Summary)")
     
     good_pts = []
     bad_pts = []
@@ -7661,6 +7833,17 @@ def render_report_tab():
     else: good_pts.append(f"食材成本 (CPG) 控制得宜，維持在目標 NT$ {int(cpg_target)} 內。")
     
     if idx_diff > 0: bad_pts.append(f"大盤物價指數較上月上漲 {idx_diff:.1f}，推升採購成本壓力。")
+    
+    if m_est_budget_rem < 0:
+        bad_pts.append(f"The Peak 餐飲成本預估將超支 NT$ {abs(int(m_est_budget_rem)):,}，請緊急檢視用量與耗損。")
+    else:
+        good_pts.append(f"The Peak 餐飲成本預估結餘 NT$ {int(m_est_budget_rem):,}，符合預算控制範圍。")
+        
+    if m_r_ratio > lm_r_ratio and m_r_ratio > 0:
+        bad_pts.append(f"The Peak 成本佔房費營收比攀升至 {m_r_ratio:.1f}% (上月 {lm_r_ratio:.1f}%)，餐飲對整體利潤的侵蝕度擴大。")
+    elif m_r_ratio <= lm_r_ratio and m_r_ratio > 0:
+        good_pts.append(f"The Peak 成本佔房費營收比為 {m_r_ratio:.1f}% (上月 {lm_r_ratio:.1f}%)，利潤侵蝕度獲得控制。")
+    
     
     summary_text = f"""**【{year}年{month}月 營運總結報告】**
 
@@ -7681,7 +7864,7 @@ def render_report_tab():
     st.markdown(summary_text)
     
     st.markdown("---")
-    st.subheader("📑 7. 匯出報告 (Copy / Paste)")
+    st.subheader("📑 8. 匯出報告 (Copy / Paste)")
     st.code(summary_text, language='markdown')
 
 if current_hotel != "採購":
