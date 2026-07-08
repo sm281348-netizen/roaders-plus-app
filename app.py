@@ -791,19 +791,30 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
             for _, row in df_report.iterrows():
                 d = parse_date(row.iloc[0])
                 if d and m_start <= d <= m_end:
+                    bf_est_theme = safe_int(row.iloc[1]) if len(row) > 1 else 0
+                    bf_est_zq    = safe_int(row.iloc[3]) if len(row) > 3 else 0
+                    af_est_theme = safe_int(row.iloc[5]) if len(row) > 5 else 0
+                    af_est_zq    = safe_int(row.iloc[7]) if len(row) > 7 else 0
+                    
                     bf_theme = safe_int(row.iloc[2]) if len(row) > 2 else 0
                     bf_zq    = safe_int(row.iloc[4]) if len(row) > 4 else 0
                     af_theme = safe_int(row.iloc[6]) if len(row) > 6 else 0
                     af_zq    = safe_int(row.iloc[8]) if len(row) > 8 else 0
                     hh_act   = safe_int(row.iloc[9]) if len(row) > 9 else 0
+                    
                     bf_act   = bf_theme + bf_zq
                     af_act   = af_theme + af_zq
+                    bf_est   = bf_est_theme + bf_est_zq
+                    af_est   = af_est_theme + af_est_zq
+                    
                     rows.append({
                         'date': d,
                         'bf_act': bf_act,
                         'af_act': af_act,
                         'hh_act': hh_act,
-                        'peak_guests': bf_act + af_act
+                        'peak_guests': bf_act + af_act,
+                        'bf_est': bf_est,
+                        'af_est': af_est
                     })
     except Exception:
         pass
@@ -862,7 +873,7 @@ def get_combined_fb_daily_df(year, month, current_hotel):
     import pandas as pd
     df = fetch_fb_daily_df(year, month)
     if df.empty:
-        return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests'])
+        return pd.DataFrame(columns=['date', 'bf_act', 'af_act', 'hh_act', 'peak_guests', 'bf_est', 'af_est'])
     return df
 
 def get_combined_fb_future_data():
@@ -7264,6 +7275,8 @@ def render_report_tab():
             fb_rev = 0
             total_hotel_guests = 0
             
+            bf_est_sum = 0
+            af_est_sum = 0
             import datetime, calendar
             last_day = calendar.monthrange(y, m)[1]
             elapsed_days = last_day
@@ -7287,7 +7300,7 @@ def render_report_tab():
                 d_merged = pd.DataFrame()
                 
             if not d_merged.empty:
-                for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests', 'hh_act', 'revenue']:
+                for c in ['peak_guests', 'bf_act', 'af_act', 'bf_total_act', 'af_total_act', 'rest_day_guests', 'hh_act', 'revenue', 'bf_est', 'af_est']:
                     if c in d_merged.columns:
                         d_merged[c] = pd.to_numeric(d_merged[c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     else:
@@ -7754,14 +7767,14 @@ def render_report_tab():
         lm_hotel_guests = lm_fb_data['hotel_guests'] if lm_fb_data.get('hotel_guests', 0) > 0 else (lm_summary['sold_rooms'] * 2)
         m2_hotel_guests = m2_fb_data['hotel_guests'] if m2_fb_data.get('hotel_guests', 0) > 0 else (m2_summary['sold_rooms'] * 2)
         
-        m_bf_rate = (m_fb_data['bf'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0
-        m_af_rate = (m_fb_data['af'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0
+        m_bf_rate = (m_fb_data['bf'] / m_fb_data['bf_est'] * 100) if m_fb_data.get('bf_est', 0) > 0 else ((m_fb_data['bf'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0)
+        m_af_rate = (m_fb_data['af'] / m_fb_data['af_est'] * 100) if m_fb_data.get('af_est', 0) > 0 else ((m_fb_data['af'] / m_hotel_guests * 100) if m_hotel_guests > 0 else 0)
         
-        lm_bf_rate = (lm_fb_data['bf'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0
-        lm_af_rate = (lm_fb_data['af'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0
+        lm_bf_rate = (lm_fb_data['bf'] / lm_fb_data['bf_est'] * 100) if lm_fb_data.get('bf_est', 0) > 0 else ((lm_fb_data['bf'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0)
+        lm_af_rate = (lm_fb_data['af'] / lm_fb_data['af_est'] * 100) if lm_fb_data.get('af_est', 0) > 0 else ((lm_fb_data['af'] / lm_hotel_guests * 100) if lm_hotel_guests > 0 else 0)
         
-        m2_bf_rate = (m2_fb_data['bf'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0
-        m2_af_rate = (m2_fb_data['af'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0
+        m2_bf_rate = (m2_fb_data['bf'] / m2_fb_data['bf_est'] * 100) if m2_fb_data.get('bf_est', 0) > 0 else ((m2_fb_data['bf'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0)
+        m2_af_rate = (m2_fb_data['af'] / m2_fb_data['af_est'] * 100) if m2_fb_data.get('af_est', 0) > 0 else ((m2_fb_data['af'] / m2_hotel_guests * 100) if m2_hotel_guests > 0 else 0)
         
         arr_data = [
             {"月份": f"{m2_date.year}-{m2_date.month:02d}", "類別": "早餐", "到客率": m2_bf_rate},
