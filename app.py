@@ -5673,8 +5673,44 @@ if selected_page == "🛒 菜價分析":
         # 獨立的搜尋框，避免遮擋
         search_term = st.text_input("🔍 搜尋品項名稱", "", help="輸入關鍵字即可過濾下方表格")
         
-        # 漏洞1修復：只建立一次 df_order_form，搜尋過濾後帶入購物車數量
+        # 取得 90 天歷史採購資料，計算叫貨頻率 (供智慧排序使用)
+        freq_map = {}
+        try:
+            df_hist = get_purchase_data_cached()
+            if df_hist is not None and not df_hist.empty:
+                is_peak_order = "Peak" in order_dept
+                peak_kws = ['Peak', 'peak', 'THE PEAK', 'The Peak', '餐廳', '下午茶']
+                hh_kws   = ['HH', 'Happy Hour', 'HAPPY HOUR', 'hh', '4F']
+                
+                dept_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
+                item_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item'])), None)
+                date_col_hist = next((c for c in df_hist.columns if '日期' in c or 'Date' in c), None)
+                
+                if dept_col_hist and item_col_hist and date_col_hist:
+                    # 過濾出近 90 天
+                    import datetime as _dt_inv
+                    window_90 = (_dt_inv.date.today() - _dt_inv.timedelta(days=90)).strftime('%Y-%m-%d')
+                    df_hist['_d'] = pd.to_datetime(df_hist[date_col_hist], errors='coerce').dt.strftime('%Y-%m-%d')
+                    df_hist_90 = df_hist[df_hist['_d'] >= window_90].copy()
+                    
+                    if is_peak_order:
+                        mask_dept = df_hist_90[dept_col_hist].apply(lambda d: any(k in str(d) for k in peak_kws) if pd.notna(d) else False)
+                    else:
+                        mask_dept = df_hist_90[dept_col_hist].apply(lambda d: any(k in str(d) for k in hh_kws) if pd.notna(d) else False)
+                    
+                    df_hist_dept = df_hist_90[mask_dept]
+                    freq_map = df_hist_dept[item_col_hist].astype(str).str.strip().value_counts().to_dict()
+        except Exception:
+            pass
+
+        # 漏洞1修復：只建立一次 df_order_form，並導入常態性品項置頂排序
         df_order_form = df_target[['item_name', 'price', 'unit']].copy()
+        
+        # 依照歷史頻率進行靜態排序
+        df_order_form['freq'] = df_order_form['item_name'].map(freq_map).fillna(0)
+        df_order_form = df_order_form.sort_values(by=['freq', 'item_name'], ascending=[False, True])
+        df_order_form = df_order_form.drop(columns=['freq'])
+        
         if search_term:
             df_order_form = df_order_form[df_order_form['item_name'].str.contains(search_term, na=False, case=False)]
             
@@ -5683,6 +5719,9 @@ if selected_page == "🛒 菜價分析":
         df_order_form['請購數量'] = df_order_form['請購數量'].astype(float)
         df_order_form = df_order_form.rename(columns={'item_name': '品項名稱', 'price': '當期單價', 'unit': '單位'})
         df_order_form = df_order_form[['品項名稱', '當期單價', '單位', '請購數量']]
+        
+        # 關鍵修復：強制洗牌 Index，避免與 Streamlit Editor 發生底層 0-based index 錯位導致「第一次輸入被吃掉」的 Bug
+        df_order_form = df_order_form.reset_index(drop=True)
         
         st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫：")
         edited_df = st.data_editor(
