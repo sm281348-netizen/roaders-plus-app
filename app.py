@@ -4531,12 +4531,7 @@ if selected_page == "💰 採購分析":
                         t_label = t_date.strftime('%Y-%m')
 
                         # 抓該月採購數據
-                        t_start = t_date.replace(day=1)
-                        import calendar as _cal
-                        _, t_last = _cal.monthrange(t_date.year, t_date.month)
-                        t_end = t_date.replace(day=t_last)
-                        df_t_purchase = df_purchase[(df_purchase['日期'] >= t_start) & (
-                            df_purchase['日期'] <= t_end)].copy()
+                        df_t_purchase = df_purchase[pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m') == t_label].copy()
 
                         if not df_t_purchase.empty:
                             df_t_purchase['小計'] = pd.to_numeric(
