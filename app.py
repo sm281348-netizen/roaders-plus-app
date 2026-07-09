@@ -4669,6 +4669,10 @@ if selected_page == "💰 採購分析":
                             df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p['日期'], errors='coerce')
                         elif date_col:
                             df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col], errors='coerce')
+                        else:
+                            df_peak_p['日期_dt'] = pd.NaT
+                            
+                        if not df_peak_p['日期_dt'].isna().all():
                             df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
                             df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
                             
