@@ -4651,32 +4651,52 @@ if selected_page == "💰 採購分析":
                     st.caption(
                         "💡 兩條線的形狀應趨近一致。若某週「採購↑ 來客↓」或「採購↓ 來客↑」，代表食材控管可能有問題。")
 
-                    corr_df = analysis_df[[
-                        '日期_obj', 'peak_cost', 'effective_peak_guests']].copy()
+                    corr_df = analysis_df[['日期_obj', 'effective_peak_guests']].copy()
                     corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'])
-                    corr_df['week'] = corr_df['日期_dt'].dt.isocalendar(
-                    ).week.astype(int)
-                    corr_df['year'] = corr_df['日期_dt'].dt.isocalendar(
-                    ).year.astype(int)
-                    corr_df['week_start'] = corr_df['日期_dt'].apply(
-                        lambda x: x - pd.Timedelta(days=x.dayofweek))
-
-                    weekly_corr = corr_df.groupby('week_start').agg(
-                        採購金額=('peak_cost', 'sum'),
-                        來客人數=('effective_peak_guests', 'sum')
+                    corr_df['week_start'] = corr_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                    
+                    # 1. 每週來客數與天數 (計算日均來客)
+                    weekly_guests = corr_df.groupby('week_start').agg(
+                        來客人數=('effective_peak_guests', 'sum'),
+                        營業天數=('日期_obj', 'count')
                     ).reset_index()
-                    weekly_corr['週次'] = weekly_corr['week_start'].dt.strftime(
-                        'W%V\n%m/%d')
-
-                    # 標準化成 0–100%（對各自最大值）
+                    weekly_guests['日均來客'] = weekly_guests['來客人數'] / weekly_guests['營業天數']
+                    
+                    # 2. 每週真實採購金額 (計算日均採購)
+                    if not df_peak_purchase.empty:
+                        df_peak_p = df_peak_purchase.copy()
+                        date_col_p = next((c for c in df_peak_p.columns if '期' in c or 'Date' in c or 'date' in c.lower()), None)
+                        if date_col_p:
+                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col_p], errors='coerce')
+                            df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
+                            df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                            
+                            # 注意 total_col 確保被轉為數值型態
+                            df_peak_p['__cost'] = pd.to_numeric(df_peak_p[total_col], errors='coerce').fillna(0)
+                            weekly_purchases = df_peak_p.groupby('week_start').agg(
+                                採購總額=('__cost', 'sum')
+                            ).reset_index()
+                        else:
+                            weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
+                    else:
+                        weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
+                        
+                    weekly_corr = pd.merge(weekly_guests, weekly_purchases, on='week_start', how='left').fillna({'採購總額': 0})
+                    weekly_corr['日均採購'] = weekly_corr['採購總額'] / weekly_corr['營業天數']
+                    weekly_corr['週次'] = weekly_corr['week_start'].dt.strftime('W%V\n%m/%d')
+                    
+                    # 標準化成 0–100%（對各自日均最大值）
+                    max_cost_avg = weekly_corr['日均採購'].max()
+                    max_guest_avg = weekly_corr['日均來客'].max()
+                    weekly_corr['採購(%)'] = (weekly_corr['日均採購'] / max_cost_avg * 100).round(1) if max_cost_avg > 0 else 0
+                    weekly_corr['來客(%)'] = (weekly_corr['日均來客'] / max_guest_avg * 100).round(1) if max_guest_avg > 0 else 0
+                    
+                    # 為了 tooltip 顯示以及下方判斷
+                    weekly_corr['採購金額'] = weekly_corr['採購總額']
                     max_cost = weekly_corr['採購金額'].max()
                     max_guest = weekly_corr['來客人數'].max()
-                    weekly_corr['採購(%)'] = (
-                        weekly_corr['採購金額'] / max_cost * 100).round(1) if max_cost > 0 else 0
-                    weekly_corr['來客(%)'] = (
-                        weekly_corr['來客人數'] / max_guest * 100).round(1) if max_guest > 0 else 0
-                    weekly_corr['背道而馳'] = (abs(
-                        weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
+                    
+                    weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
 
                     if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
                         # 轉成長格式給 Altair
