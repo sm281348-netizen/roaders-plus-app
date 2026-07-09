@@ -4703,12 +4703,7 @@ if selected_page == "💰 採購分析":
                     
                     weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
                     
-                    st.write('--- DEBUG INFO START ---')
-                    st.write('df_peak_purchase.empty:', df_peak_purchase.empty)
-                    st.write('date_col:', date_col, 'total_col:', total_col)
-                    st.write('weekly_purchases:', weekly_purchases)
-                    st.write('max_cost:', max_cost, 'max_guest:', max_guest)
-                    st.write('--- DEBUG INFO END ---')
+
 
                     if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
                         # 轉成長格式給 Altair
