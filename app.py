@@ -4665,9 +4665,8 @@ if selected_page == "💰 採購分析":
                     # 2. 每週真實採購金額 (計算日均採購)
                     if not df_peak_purchase.empty:
                         df_peak_p = df_peak_purchase.copy()
-                        date_col_p = next((c for c in df_peak_p.columns if '期' in c or 'Date' in c or 'date' in c.lower()), None)
-                        if date_col_p:
-                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col_p], errors='coerce')
+                        if date_col:
+                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col], errors='coerce')
                             df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
                             df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
                             
