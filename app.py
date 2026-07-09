@@ -4537,21 +4537,21 @@ if selected_page == "💰 採購分析":
                             df_t_purchase['小計'] = pd.to_numeric(
                                 df_t_purchase[total_col], errors='coerce').fillna(0)
 
-                        # 抓該月來客數
-                        t_m_data = fetch_month_summary(
-                            t_date.year, t_date.month)
-                        t_df = t_m_data.get('df', pd.DataFrame())
+                        # 抓該月來客數 (修正版：從餐飲合併報表抓取)
+                        t_fb_data = get_combined_fb_daily_df(t_date.year, t_date.month, current_hotel)
                         t_guests = 0
-                        if not t_df.empty:
-                            for _c in ['rest_day_guests', 'bf_total_act', 'af_total_act']:
-                                if _c in t_df.columns:
-                                    t_df[_c] = pd.to_numeric(t_df[_c].astype(
-                                        str).str.replace(',', ''), errors='coerce').fillna(0)
-                            if 'rest_day_guests' in t_df.columns and t_df['rest_day_guests'].sum() > 0:
-                                t_guests = t_df['rest_day_guests'].sum()
-                            elif 'bf_total_act' in t_df.columns:
-                                t_guests = (
-                                    t_df['bf_total_act'] + t_df.get('af_total_act', 0)).sum()
+                        if not t_fb_data.empty:
+                            for _c in ['peak_guests', 'bf_act', 'af_act']:
+                                if _c in t_fb_data.columns:
+                                    t_fb_data[_c] = pd.to_numeric(t_fb_data[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            
+                            peak_sum = t_fb_data['peak_guests'].sum() if 'peak_guests' in t_fb_data.columns else 0
+                            if peak_sum > 0:
+                                t_guests = peak_sum
+                            else:
+                                bf_sum = t_fb_data['bf_act'].sum() if 'bf_act' in t_fb_data.columns else 0
+                                af_sum = t_fb_data['af_act'].sum() if 'af_act' in t_fb_data.columns else 0
+                                t_guests = bf_sum + af_sum
 
                         # 篩選 The Peak 採購
                         t_peak_cost = 0
