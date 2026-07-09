@@ -5684,28 +5684,30 @@ if selected_page == "🛒 菜價分析":
         # 獨立的搜尋框，避免遮擋
         search_term = st.text_input("🔍 搜尋品項名稱", "", help="輸入關鍵字即可過濾下方表格")
         
-        # 取得 90 天歷史採購資料，計算叫貨頻率 (供智慧排序使用)
+        # 取 90 天歷史資料，計算品項頻率 (預設以字典儲存)
         freq_map = {}
         try:
-            df_hist = get_purchase_data_cached()
-            if df_hist is not None and not df_hist.empty:
-                is_peak_order = "Peak" in order_dept
-                peak_kws = ['Peak', 'peak', 'THE PEAK', 'The Peak', '餐廳', '下午茶']
-                hh_kws   = ['HH', 'Happy Hour', 'HAPPY HOUR', 'hh', '4F']
+            import datetime as _dt_inv
+            today_inv = _dt_inv.date.today()
+            window_90_start = (today_inv - _dt_inv.timedelta(days=90)).strftime('%Y-%m-%d')
+            
+            is_peak_order = "Peak" in order_dept
+            if is_peak_order:
+                df_hist = fetch_thepeak_daily_purchase_report()
+            else:
+                df_hist = fetch_4fhh_daily_purchase_report()
+
+            if not df_hist.empty:
+                item_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item', 'item'])), None)
+                date_col_hist = next((c for c in df_hist.columns if '期' in c or 'Date' in c or 'date' in c.lower() or '時間' in c), None)
                 
-                dept_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
-                item_col_hist = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item'])), None)
-                date_col_hist = next((c for c in df_hist.columns if '日期' in c or 'Date' in c), None)
-                
-                if dept_col_hist and item_col_hist:
-                    # 拔除日期過濾，直接使用所有歷史紀錄計算頻率 (避免因 Excel 日期格式解析失敗導致資料全空)
-                    if is_peak_order:
-                        mask_dept = df_hist[dept_col_hist].apply(lambda d: any(k in str(d) for k in peak_kws) if pd.notna(d) else False)
-                    else:
-                        mask_dept = df_hist[dept_col_hist].apply(lambda d: any(k in str(d) for k in hh_kws) if pd.notna(d) else False)
+                if item_col_hist and date_col_hist:
+                    df_hist['_d'] = pd.to_datetime(df_hist[date_col_hist], errors='coerce').dt.strftime('%Y-%m-%d')
+                    df_hist_90 = df_hist[df_hist['_d'] >= window_90_start]
                     
-                    df_hist_dept = df_hist[mask_dept]
-                    freq_map = df_hist_dept[item_col_hist].astype(str).str.strip().value_counts().to_dict()
+                    # 清理品項名稱中的數量資訊 (例如 "檸檬原汁 (10包)" -> "檸檬原汁")
+                    clean_items = df_hist_90[item_col_hist].dropna().astype(str).apply(lambda x: x.split('(')[0].strip())
+                    freq_map = clean_items.value_counts().to_dict()
         except Exception as e:
             pass
 
@@ -5734,13 +5736,39 @@ if selected_page == "🛒 菜價分析":
         # 關鍵修復：強制洗牌 Index，避免與 Streamlit Editor 發生底層 0-based index 錯位導致「第一次輸入被吃掉」的 Bug
         df_order_form = df_order_form.reset_index(drop=True)
         
+                # 儲存 df 供 callback 讀取品項名稱
+        st.session_state[f"df_editor_{search_term}"] = df_order_form
+
+        def update_cart_from_editor():
+            editor_state = st.session_state.get(f"editor_{search_term}", {})
+            edited_rows = editor_state.get("edited_rows", {})
+            df = st.session_state.get(f"df_editor_{search_term}")
+            if df is not None:
+                for row_idx, edits in edited_rows.items():
+                    if "請購數量" in edits:
+                        qty = edits["請購數量"]
+                        try:
+                            if pd.isna(qty) or qty == "":
+                                qty_val = 0.0
+                            else:
+                                qty_val = float(qty)
+                        except (ValueError, TypeError):
+                            qty_val = 0.0
+                            
+                        item = df.iloc[int(row_idx)]['品項名稱']
+                        if qty_val > 0:
+                            st.session_state[cart_key][item] = qty_val
+                        elif item in st.session_state[cart_key]:
+                            del st.session_state[cart_key][item]
+
         st.markdown("請在下方表格直接點擊 **請購數量** 進行填寫：")
-        edited_df = st.data_editor(
+        st.data_editor(
             df_order_form,
             disabled=['品項名稱', '當期單價', '單位'],
             hide_index=True,
             use_container_width=True,
-            key=f"editor_{search_term}", # 當搜尋改變時強制重新渲染，避免狀態衝突
+            key=f"editor_{search_term}", # 依搜尋字詞強制重新渲染，避免狀態殘留
+            on_change=update_cart_from_editor,
             column_config={
                 "請購數量": st.column_config.NumberColumn(
                     "請購數量",
@@ -5751,25 +5779,6 @@ if selected_page == "🛒 菜價分析":
                 )
             }
         )
-        
-        # 將編輯結果寫回購物車（依部門分開儲存）
-        for _, row in edited_df.iterrows():
-            item = row['品項名稱']
-            qty = row['請購數量']
-            
-            # 安全防護：避免使用者刪除儲存格內容時，qty 變成 NoneType 或 NaN 導致 TypeError 頁面中斷
-            try:
-                if pd.isna(qty) or qty == "":
-                    qty_val = 0.0
-                else:
-                    qty_val = float(qty)
-            except (ValueError, TypeError):
-                qty_val = 0.0
-
-            if qty_val > 0:
-                st.session_state[cart_key][item] = qty_val
-            elif item in st.session_state[cart_key]:
-                del st.session_state[cart_key][item]
                 
         # 結算與已選清單（從分部門購物車讀取）
         final_order_list = []
