@@ -4665,7 +4665,9 @@ if selected_page == "💰 採購分析":
                     # 2. 每週真實採購金額 (計算日均採購)
                     if not df_peak_purchase.empty:
                         df_peak_p = df_peak_purchase.copy()
-                        if date_col:
+                        if '日期' in df_peak_p.columns:
+                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p['日期'], errors='coerce')
+                        elif date_col:
                             df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col], errors='coerce')
                             df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
                             df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
@@ -4696,6 +4698,13 @@ if selected_page == "💰 採購分析":
                     max_guest = weekly_corr['來客人數'].max()
                     
                     weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
+                    
+                    st.write('--- DEBUG INFO START ---')
+                    st.write('df_peak_purchase.empty:', df_peak_purchase.empty)
+                    st.write('date_col:', date_col, 'total_col:', total_col)
+                    st.write('weekly_purchases:', weekly_purchases)
+                    st.write('max_cost:', max_cost, 'max_guest:', max_guest)
+                    st.write('--- DEBUG INFO END ---')
 
                     if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
                         # 轉成長格式給 Altair
