@@ -5628,6 +5628,8 @@ if selected_page == "💰 採購分析":
                     try:
                         last_val = str(item_purchase_df.iloc[-1][price_col]).replace(',', '')
                         latest_price = float(last_val)
+                        if pd.isna(latest_price):
+                            latest_price = 0
                     except:
                         latest_price = 0
 
