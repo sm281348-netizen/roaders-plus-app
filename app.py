@@ -5262,6 +5262,268 @@ if selected_page == "💰 採購分析":
                     }
                 )
 
+
+        # ══════════════════════════════════════════════
+        # 採購紀律儀表板 — 模組一、二、三
+        # ══════════════════════════════════════════════
+        if not df_purchase_all_clean.empty and candidate_items:
+            # 重新計算稽核彙整基礎數據（與上方稽核表使用相同資料）
+            mask_all = (df_purchase_all_clean['_item'].isin(candidate_items)) & (df_purchase_all_clean['_date_str'] >= window_90_start)
+            df_disc_base = df_purchase_all_clean[mask_all].copy()
+
+            if not df_disc_base.empty:
+
+                # ── 模組一：採購節奏燈號 ──
+                st.markdown("---")
+                st.markdown("#### 🚦 採購節奏燈號（依採購頻率分級）")
+                st.caption("💡 依品項的採購頻率分四類，各自採用不同的燈號邏輯。低頻品（D類）僅顯示資訊，不強行判斷異常。")
+
+                daily_disc = df_disc_base.groupby(['_item', '_date_str'])['_qty'].sum().reset_index()
+                daily_disc = daily_disc.sort_values('_date_str')
+                freq_summary = daily_disc.groupby('_item').agg(
+                    採購天數=('_date_str', 'nunique'),
+                    最後採購日=('_date_str', 'max')
+                ).reset_index()
+
+                import datetime as _dt_disc
+                today_disc = _dt_disc.date.today()
+
+                rhythm_rows = []
+                for _, row in freq_summary.iterrows():
+                    item = row['_item']
+                    n_days = row['採購天數']
+                    last_date_str = row['最後採購日']
+                    try:
+                        last_date = _dt_disc.date.fromisoformat(last_date_str)
+                        days_since = (today_disc - last_date).days
+                    except Exception:
+                        days_since = None
+
+                    std_interval = round(90 / n_days, 1) if n_days > 0 else 90
+
+                    # 分類
+                    if std_interval <= 10:
+                        category = "A 類（週採）"
+                    elif std_interval <= 21:
+                        category = "B 類（雙週採）"
+                    elif std_interval <= 45:
+                        category = "C 類（月採）"
+                    else:
+                        category = "D 類（低頻）"
+
+                    # 燈號判斷
+                    if n_days < 2:
+                        signal = "⚪ 樣本不足"
+                    elif category.startswith("D"):
+                        signal = "ℹ️ 僅供參考"
+                    elif days_since is None:
+                        signal = "⚪ 日期異常"
+                    else:
+                        ratio = days_since / std_interval if std_interval > 0 else 1
+                        if category.startswith("A") or category.startswith("B"):
+                            # 高頻品：節奏偏差偵測
+                            if ratio > 1.5:
+                                signal = "🔴 採購過晚（斷貨風險）"
+                            elif ratio > 1.2:
+                                signal = "🟡 略慢，請留意"
+                            elif ratio < 0.5:
+                                signal = "🔴 採購過早（可能囤積）"
+                            elif ratio < 0.7:
+                                signal = "🟡 略早，輕度囤積"
+                            else:
+                                signal = "✅ 節奏正常"
+                        else:
+                            # C 類月採品：看已過期比率
+                            if ratio > 1.1:
+                                signal = "🟡 採購已略有延遲"
+                            elif ratio > 0.8:
+                                signal = "⏳ 即將進入補貨週期"
+                            else:
+                                signal = "✅ 尚在週期內"
+
+                    rhythm_rows.append({
+                        '品項名稱': item,
+                        '分類': category,
+                        '上次採購日': last_date_str,
+                        '距今天數': days_since if days_since is not None else '-',
+                        '標準間隔（天）': std_interval,
+                        '燈號': signal
+                    })
+
+                df_rhythm = pd.DataFrame(rhythm_rows)
+                if not df_rhythm.empty:
+                    # 紅燈優先排序
+                    signal_order = {'🔴': 0, '🟡': 1, '⏳': 2, '✅': 3, 'ℹ️': 4, '⚪': 5}
+                    df_rhythm['_sig_order'] = df_rhythm['燈號'].apply(lambda s: signal_order.get(s[:2], 9))
+                    df_rhythm = df_rhythm.sort_values('_sig_order').drop(columns='_sig_order')
+                    st.dataframe(df_rhythm, hide_index=True, use_container_width=True)
+
+                # ── 模組二：採購行為與來客數同步分析 ──
+                st.markdown("---")
+                st.markdown("#### 📈 採購行為與來客數同步分析")
+                st.caption("💡 僅對近 90 天採購天數 ≥ 8 次的品項計算週度相關係數，其他品項屬固定耗損型，不適用此分析。")
+
+                # 建立週來客數序列
+                try:
+                    _fb_for_corr = _df_fb_hist.copy() if '_df_fb_hist' in dir() and not _df_fb_hist.empty else pd.DataFrame()
+                except Exception:
+                    _fb_for_corr = pd.DataFrame()
+
+                if not _fb_for_corr.empty and '_d' in _fb_for_corr.columns:
+                    _fb_for_corr['_date_parsed'] = pd.to_datetime(_fb_for_corr['_d'], errors='coerce')
+                    _fb_for_corr = _fb_for_corr.dropna(subset=['_date_parsed'])
+                    _fb_for_corr['week_start'] = _fb_for_corr['_date_parsed'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                    _guest_col_corr = 'effective_peak_guests' if is_peak_area else 'rest_hh_guests'
+                    if _guest_col_corr in _fb_for_corr.columns:
+                        weekly_guests_corr = _fb_for_corr.groupby('week_start')[_guest_col_corr].apply(
+                            lambda x: pd.to_numeric(x, errors='coerce').fillna(0).sum()
+                        ).reset_index()
+                        weekly_guests_corr.columns = ['week_start', 'guest_count']
+                    else:
+                        weekly_guests_corr = pd.DataFrame()
+                else:
+                    weekly_guests_corr = pd.DataFrame()
+
+                corr_rows = []
+                for item in candidate_items:
+                    item_df = df_disc_base[df_disc_base['_item'] == item].copy()
+                    n_order_days = item_df['_date_str'].nunique()
+
+                    if n_order_days < 8:
+                        corr_rows.append({'品項名稱': item, '分析結果': '固定耗損型，不適用相關分析', '相關係數': None})
+                        continue
+
+                    if weekly_guests_corr.empty:
+                        corr_rows.append({'品項名稱': item, '分析結果': '來客數資料不足，無法計算', '相關係數': None})
+                        continue
+
+                    item_df['_date_parsed'] = pd.to_datetime(item_df['_date_str'], errors='coerce')
+                    item_df = item_df.dropna(subset=['_date_parsed'])
+                    item_df['week_start'] = item_df['_date_parsed'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                    weekly_purchase = item_df.groupby('week_start')['_qty'].sum().reset_index()
+                    weekly_purchase.columns = ['week_start', 'purchase_qty']
+
+                    merged = weekly_guests_corr.merge(weekly_purchase, on='week_start', how='left').fillna(0)
+                    if len(merged) < 4 or merged['purchase_qty'].std() == 0:
+                        corr_rows.append({'品項名稱': item, '分析結果': '週數不足或無波動，無法計算', '相關係數': None})
+                        continue
+
+                    try:
+                        r = merged['guest_count'].corr(merged['purchase_qty'])
+                        r = round(r, 3)
+                        if r > 0.6:
+                            label = f"r={r} ✅ 採購跟著客數走（核心食材行為）"
+                        elif r > 0.3:
+                            label = f"r={r} 🟡 弱相關，可觀察"
+                        elif r >= 0:
+                            label = f"r={r} ⚪ 幾乎無相關（固定備量行為）"
+                        else:
+                            label = f"r={r} ⚠️ 負相關，請確認是否為預購行為"
+                        corr_rows.append({'品項名稱': item, '分析結果': label, '相關係數': r})
+                    except Exception:
+                        corr_rows.append({'品項名稱': item, '分析結果': '計算失敗', '相關係數': None})
+
+                df_corr_result = pd.DataFrame(corr_rows)
+                if not df_corr_result.empty:
+                    st.dataframe(df_corr_result[['品項名稱', '分析結果']], hide_index=True, use_container_width=True)
+
+                # ── 模組三：跨月 UPG 波動分析 ──
+                st.markdown("---")
+                st.markdown("#### 📊 跨月採購效率波動分析（UPG 比較）")
+                st.caption("💡 比較同一品項在不同月份的每客耗用量（UPG）波動，找出採購量相對偏高的月份。需至少 2 個月數據。")
+
+                # 計算各月來客數
+                _monthly_guests = {}
+                try:
+                    _fb_all = _df_fb_hist.copy() if '_df_fb_hist' in dir() and not _df_fb_hist.empty else pd.DataFrame()
+                    if not _fb_all.empty and '_d' in _fb_all.columns:
+                        _fb_all['_ym'] = pd.to_datetime(_fb_all['_d'], errors='coerce').dt.strftime('%Y-%m')
+                        _g_col = 'effective_peak_guests' if is_peak_area else 'rest_hh_guests'
+                        if _g_col in _fb_all.columns:
+                            _monthly_guests = _fb_all.groupby('_ym')[_g_col].apply(
+                                lambda x: pd.to_numeric(x, errors='coerce').fillna(0).sum()
+                            ).to_dict()
+                except Exception:
+                    pass
+
+                if len(_monthly_guests) < 2:
+                    st.info("💡 需要至少 2 個月的來客數數據，才能進行跨月 UPG 波動分析。")
+                else:
+                    # 計算各品項各月 UPG
+                    _all_purchase = df_purchase_all_clean[df_purchase_all_clean['_item'].isin(candidate_items)].copy()
+                    _all_purchase['_ym'] = pd.to_datetime(_all_purchase['_date_str'], errors='coerce').dt.strftime('%Y-%m')
+                    _all_purchase = _all_purchase.dropna(subset=['_ym'])
+
+                    monthly_qty = _all_purchase.groupby(['_item', '_ym'])['_qty'].sum().reset_index()
+                    monthly_qty['guest_count'] = monthly_qty['_ym'].map(_monthly_guests).fillna(0)
+                    monthly_qty = monthly_qty[monthly_qty['guest_count'] > 0]
+                    monthly_qty['upg'] = monthly_qty['_qty'] / monthly_qty['guest_count']
+
+                    # 取得最新單價（用 total_col 除以 qty 估算，若無則不顯示金額）
+                    _price_col = next((c for c in df_purchase_all_clean.columns if any(k in c for k in ['單價', 'Price', 'price'])), None)
+                    _total_col_disc = next((c for c in df_purchase_all_clean.columns if any(k in c for k in ['小計', '總計', 'Total'])), None)
+
+                    upg_wave_rows = []
+                    for item in candidate_items:
+                        item_monthly = monthly_qty[monthly_qty['_item'] == item]
+                        if len(item_monthly) < 2:
+                            upg_wave_rows.append({
+                                '品項名稱': item, '月份數': len(item_monthly),
+                                'UPG 中位數': None, '本月 UPG': None,
+                                '超採指數': None, '判定': '數據不足（需≥2個月）'
+                            })
+                            continue
+
+                        upg_median = item_monthly['upg'].median()
+                        latest_ym = item_monthly['_ym'].max()
+                        latest_upg = item_monthly[item_monthly['_ym'] == latest_ym]['upg'].values[0]
+
+                        if upg_median > 0:
+                            overstock_idx = (latest_upg - upg_median) / upg_median * 100
+                        else:
+                            overstock_idx = 0
+
+                        if overstock_idx > 30:
+                            verdict = "🔴 本月採購量偏高（值得調查）"
+                        elif overstock_idx > 10:
+                            verdict = "🟡 略偏高"
+                        elif overstock_idx >= -10:
+                            verdict = "✅ 正常波動"
+                        else:
+                            verdict = "⬇️ 本月採購量低於歷史（庫存消化中）"
+
+                        upg_wave_rows.append({
+                            '品項名稱': item,
+                            '月份數': len(item_monthly),
+                            'UPG 中位數': round(upg_median, 4),
+                            '最新月份': latest_ym,
+                            '本月 UPG': round(latest_upg, 4),
+                            '超採指數 (%)': round(overstock_idx, 1),
+                            '判定': verdict
+                        })
+
+                    df_upg_wave = pd.DataFrame(upg_wave_rows)
+                    if not df_upg_wave.empty:
+                        signal_order2 = {'🔴': 0, '🟡': 1, '⬇️': 2, '✅': 3, '數': 9}
+                        df_upg_wave['_so'] = df_upg_wave['判定'].apply(lambda s: signal_order2.get(s[:2], 9))
+                        df_upg_wave = df_upg_wave.sort_values('_so').drop(columns='_so')
+
+                        high_wave = df_upg_wave[df_upg_wave['判定'].str.startswith('🔴')]
+                        st.dataframe(
+                            df_upg_wave.drop(columns=['品項名稱']).assign(**{'品項名稱': df_upg_wave['品項名稱']}).reindex(
+                                columns=['品項名稱', '月份數', 'UPG 中位數', '最新月份', '本月 UPG', '超採指數 (%)', '判定']
+                            ),
+                            hide_index=True, use_container_width=True,
+                            column_config={
+                                'UPG 中位數': st.column_config.NumberColumn(format='%.4f'),
+                                '本月 UPG': st.column_config.NumberColumn(format='%.4f'),
+                                '超採指數 (%)': st.column_config.NumberColumn(format='%.1f'),
+                            }
+                        )
+
+                        if not high_wave.empty:
+                            st.warning(f"⚠️ 共 {len(high_wave)} 個品項本月 UPG 超過歷史中位數 30% 以上，建議逐一確認是否有備量過多的情況。")
+
         # ── E. 單品進階盤點與預測 ──
         st.markdown("---")
         st.markdown("#### 🔍 單品進階盤點與預測")
