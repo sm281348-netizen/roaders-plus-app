@@ -5080,7 +5080,60 @@ if selected_page == "💰 採購分析":
 
             if _date_col_inv and _item_col_inv and _qty_col_inv:
                 df_purchase_all_clean = df_purchase_all.copy()
+                
+                # ─── 合入 thepeak_daily_purchase_report（日報請購單）───
+                # 這裡包含的採購紀錄可能比正式採購單更即時，需要一起計入
+                try:
+                    _daily_peak_inv = fetch_thepeak_daily_purchase_report()
+                    if not _daily_peak_inv.empty:
+                        # 找日期欄
+                        _daily_date_col = next((c for c in _daily_peak_inv.columns if '日期' in c or 'Date' in c), None)
+                        # 找品名欄
+                        _daily_item_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['品名', '品項', '規格', 'Item'])), None)
+                        # 找數量欄
+                        _daily_qty_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['數量', 'Qty'])), None)
+                        # 找單位欄
+                        _daily_unit_col = next((c for c in _daily_peak_inv.columns if '單位' in c or 'Unit' in c), None)
+
+                        if _daily_date_col and _daily_item_col and _daily_qty_col:
+                            _daily_append = pd.DataFrame()
+                            _daily_append[_date_col_inv]    = _daily_peak_inv[_daily_date_col]
+                            _daily_append[_item_col_inv]    = _daily_peak_inv[_daily_item_col].astype(str).str.strip()
+                            _daily_append[_qty_col_inv]     = pd.to_numeric(
+                                _daily_peak_inv[_daily_qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            _daily_append[_unit_col_inv if _unit_col_inv else '單位'] = (
+                                _daily_peak_inv[_daily_unit_col].astype(str) if _daily_unit_col else '')
+                            if _dept_col_inv:
+                                _daily_append[_dept_col_inv] = 'The Peak'
+                            df_purchase_all = pd.concat([df_purchase_all, _daily_append], ignore_index=True)
+                except Exception:
+                    pass
+
+                # ─── 合入 4FHH_daily_purchase_report（HH 日報請購單）───
+                try:
+                    _daily_hh_inv = fetch_4fhh_daily_purchase_report()
+                    if not _daily_hh_inv.empty:
+                        _daily_date_col_hh = next((c for c in _daily_hh_inv.columns if '日期' in c or 'Date' in c), None)
+                        _daily_item_col_hh = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['品名', '品項', '規格', 'Item'])), None)
+                        _daily_qty_col_hh  = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['數量', 'Qty'])), None)
+                        _daily_unit_col_hh = next((c for c in _daily_hh_inv.columns if '單位' in c or 'Unit' in c), None)
+
+                        if _daily_date_col_hh and _daily_item_col_hh and _daily_qty_col_hh:
+                            _daily_append_hh = pd.DataFrame()
+                            _daily_append_hh[_date_col_inv]   = _daily_hh_inv[_daily_date_col_hh]
+                            _daily_append_hh[_item_col_inv]   = _daily_hh_inv[_daily_item_col_hh].astype(str).str.strip()
+                            _daily_append_hh[_qty_col_inv]    = pd.to_numeric(
+                                _daily_hh_inv[_daily_qty_col_hh].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            _daily_append_hh[_unit_col_inv if _unit_col_inv else '單位'] = (
+                                _daily_hh_inv[_daily_unit_col_hh].astype(str) if _daily_unit_col_hh else '')
+                            if _dept_col_inv:
+                                _daily_append_hh[_dept_col_inv] = 'HH'
+                            df_purchase_all = pd.concat([df_purchase_all, _daily_append_hh], ignore_index=True)
+                except Exception:
+                    pass
+
                 # 統一日期格式
+                df_purchase_all_clean = df_purchase_all.copy()
                 df_purchase_all_clean['_date_parsed'] = df_purchase_all_clean[_date_col_inv].apply(robust_date_parse)
                 df_purchase_all_clean = df_purchase_all_clean[df_purchase_all_clean['_date_parsed'].notna()]
                 df_purchase_all_clean['_date_str'] = df_purchase_all_clean['_date_parsed'].apply(lambda d: d.strftime('%Y-%m-%d') if d else None)
