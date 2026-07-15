@@ -163,9 +163,25 @@ def _get_all_purchase_clean():
     if not (_date_col and _item_col and _qty_col):
         return pd.DataFrame()
     df = df_raw.copy()
-    df['_date_parsed'] = df[_date_col].apply(robust_date_parse)
+    # 直接用 pd.to_datetime 解析，不依賴後段定義的 robust_date_parse
+    df['_date_parsed'] = pd.to_datetime(df[_date_col], errors='coerce')
+    # 嘗試民國年格式（如 0115/04/08）
+    mask_failed = df['_date_parsed'].isna()
+    if mask_failed.any():
+        def _parse_minguo(val):
+            s = str(val).strip()
+            import re as _re
+            m = _re.match(r'^0*(\d{2,3})[/-](\d{1,2})[/-](\d{1,2})$', s)
+            if m:
+                try:
+                    y = int(m.group(1)) + 1911
+                    return pd.Timestamp(f'{y}-{int(m.group(2)):02d}-{int(m.group(3)):02d}')
+                except Exception:
+                    return pd.NaT
+            return pd.NaT
+        df.loc[mask_failed, '_date_parsed'] = df.loc[mask_failed, _date_col].apply(_parse_minguo)
     df = df[df['_date_parsed'].notna()]
-    df['_date_str'] = df['_date_parsed'].apply(lambda d: d.strftime('%Y-%m-%d') if d else None)
+    df['_date_str'] = df['_date_parsed'].dt.strftime('%Y-%m-%d')
     df['_qty']    = pd.to_numeric(df[_qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
     df['_item']   = df[_item_col].astype(str).str.strip()
     df['_unit']   = df[_unit_col].astype(str).str.strip() if _unit_col else ''
