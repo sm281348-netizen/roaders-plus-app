@@ -137,6 +137,377 @@ def fetch_supplier_prices():
         return pd.DataFrame()
 
 
+
+
+# ══════════════════════════════════════════════════════════
+# 非 F&B 部門採購紀律模組（房務 / 工務 / 櫃台 共用）
+# ══════════════════════════════════════════════════════════
+@st.cache_data(ttl=300)
+def _get_all_purchase_clean():
+    """
+    讀取 purchase_data，回傳清理後的 DataFrame。
+    欄位：_date_str, _item, _qty, _unit, _dept, _vendor
+    注意：此函數不合入 thepeak/4FHH daily reports（F&B 專用）。
+    """
+    df_raw = get_purchase_data_cached()
+    if df_raw is None or df_raw.empty:
+        return pd.DataFrame()
+    df_raw = df_raw.copy()
+    df_raw.columns = df_raw.columns.astype(str).str.strip()
+    _date_col = next((c for c in df_raw.columns if '日期' in c or 'Date' in c), None)
+    _item_col = next((c for c in df_raw.columns if any(k in c for k in ['品名', '品項', '項目', 'Item'])), None)
+    _qty_col  = next((c for c in df_raw.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+    _unit_col = next((c for c in df_raw.columns if any(k in c for k in ['單位', 'Unit'])), None)
+    _dept_col = next((c for c in df_raw.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
+    _vend_col = next((c for c in df_raw.columns if any(k in c for k in ['供應商', '廠商', 'Vendor'])), None)
+    if not (_date_col and _item_col and _qty_col):
+        return pd.DataFrame()
+    df = df_raw.copy()
+    df['_date_parsed'] = df[_date_col].apply(robust_date_parse)
+    df = df[df['_date_parsed'].notna()]
+    df['_date_str'] = df['_date_parsed'].apply(lambda d: d.strftime('%Y-%m-%d') if d else None)
+    df['_qty']    = pd.to_numeric(df[_qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+    df['_item']   = df[_item_col].astype(str).str.strip()
+    df['_unit']   = df[_unit_col].astype(str).str.strip() if _unit_col else ''
+    df['_dept']   = df[_dept_col].astype(str).str.strip() if _dept_col else ''
+    df['_vendor'] = df[_vend_col].astype(str).str.strip() if _vend_col else ''
+    return df
+
+
+def _render_dept_procurement_modules(
+    df_dept: pd.DataFrame,
+    dept_label: str,
+    occ_df: pd.DataFrame,
+    enable_prediction: bool = True,
+):
+    """
+    渲染非 F&B 部門採購紀律模組（①②③④，enable_prediction=True 時含⑤）。
+    df_dept: 已按部門過濾的採購 DataFrame（含 _date_str, _item, _qty, _unit）
+    occ_df:  occ_data DataFrame（含 date, sold_rooms）
+    """
+    import datetime as _dt_dept
+
+    today_dept = _dt_dept.date.today()
+    w90_start  = (today_dept - _dt_dept.timedelta(days=90)).strftime('%Y-%m-%d')
+
+    # 篩選近 90 天
+    df_90 = df_dept[df_dept['_date_str'] >= w90_start].copy()
+
+    if df_90.empty:
+        st.info(f"📭 近 90 天內「{dept_label}」尚無採購記錄，請確認 purchase_data 中的部門欄位是否正確填寫。")
+        return
+
+    candidate_items = sorted(df_90['_item'].dropna().unique().tolist())
+    if not candidate_items:
+        st.info("📭 近 90 天無有效品項資料。")
+        return
+
+    # ── ① 全品項稽核表 ──
+    st.markdown(f"#### 📊 全品項採購慣性稽核表 — 近 90 天（{dept_label}）")
+    daily_all = df_90.groupby(['_item', '_date_str'])['_qty'].sum().reset_index()
+    summary_rows = []
+    for item in candidate_items:
+        item_d = daily_all[daily_all['_item'] == item]
+        n = len(item_d)
+        if n == 0:
+            continue
+        total_qty  = item_d['_qty'].sum()
+        burn_rate  = total_qty / 90
+        freq_days  = 90 / n
+        median_qty = item_d['_qty'].median()
+        summary_rows.append({
+            '品項名稱': item,
+            '採購天數': n,
+            '總採購量': round(total_qty, 1),
+            '日均消耗速度': round(burn_rate, 3),
+            '平均叫貨頻率 (天/次)': round(freq_days, 1),
+            '單次叫貨中位數': round(median_qty, 1),
+        })
+    df_summary = pd.DataFrame(summary_rows)
+    if not df_summary.empty:
+        st.dataframe(df_summary, hide_index=True, use_container_width=True,
+            column_config={
+                '日均消耗速度': st.column_config.NumberColumn(format='%.3f'),
+                '平均叫貨頻率 (天/次)': st.column_config.NumberColumn(format='%.1f'),
+            })
+
+    # ── ② 採購節奏燈號 ──
+    st.markdown("---")
+    st.markdown("#### 🚦 採購節奏燈號（依採購頻率分級）")
+    st.caption("💡 依品項採購頻率分四類，各自套用不同燈號邏輯。低頻品（D類）僅顯示資訊。")
+    freq_base = daily_all.groupby('_item').agg(
+        採購天數=('_date_str', 'nunique'),
+        最後採購日=('_date_str', 'max')
+    ).reset_index()
+    rhythm_rows = []
+    for _, row in freq_base.iterrows():
+        item      = row['_item']
+        n_days    = row['採購天數']
+        last_str  = row['最後採購日']
+        try:
+            last_date = _dt_dept.date.fromisoformat(last_str)
+            days_since = (today_dept - last_date).days
+        except Exception:
+            days_since = None
+        std_interval = round(90 / n_days, 1) if n_days > 0 else 90
+        if std_interval <= 10:
+            category = "A 類（週採）"
+        elif std_interval <= 21:
+            category = "B 類（雙週採）"
+        elif std_interval <= 45:
+            category = "C 類（月採）"
+        else:
+            category = "D 類（低頻）"
+        if n_days < 2:
+            signal = "⚪ 樣本不足"
+        elif category.startswith("D"):
+            signal = "ℹ️ 僅供參考"
+        elif days_since is None:
+            signal = "⚪ 日期異常"
+        else:
+            ratio = days_since / std_interval if std_interval > 0 else 1
+            if category.startswith("A") or category.startswith("B"):
+                if ratio > 1.5:
+                    signal = "🔴 採購過晚（斷貨風險）"
+                elif ratio > 1.2:
+                    signal = "🟡 略慢，請留意"
+                elif ratio < 0.5:
+                    signal = "🔴 採購過早（可能囤積）"
+                elif ratio < 0.7:
+                    signal = "🟡 略早，輕度囤積"
+                else:
+                    signal = "✅ 節奏正常"
+            else:
+                if ratio > 1.1:
+                    signal = "🟡 採購已略有延遲"
+                elif ratio > 0.8:
+                    signal = "⏳ 即將進入補貨週期"
+                else:
+                    signal = "✅ 尚在週期內"
+        rhythm_rows.append({
+            '品項名稱': item, '分類': category,
+            '上次採購日': last_str,
+            '距今天數': days_since if days_since is not None else '-',
+            '標準間隔（天）': std_interval, '燈號': signal,
+        })
+    df_rhythm = pd.DataFrame(rhythm_rows)
+    if not df_rhythm.empty:
+        sig_order = {'🔴': 0, '🟡': 1, '⏳': 2, '✅': 3, 'ℹ️': 4, '⚪': 5}
+        df_rhythm['_so'] = df_rhythm['燈號'].apply(lambda s: sig_order.get(s[:2], 9))
+        df_rhythm = df_rhythm.sort_values('_so').drop(columns='_so')
+        st.dataframe(df_rhythm, hide_index=True, use_container_width=True)
+
+    # ── ③ 採購行為與入住數同步分析 ──
+    st.markdown("---")
+    st.markdown("#### 📈 採購行為與入住房數同步分析")
+    st.caption("💡 僅對近 90 天採購天數 ≥ 8 次的品項計算週度相關係數。其他品項標示為固定備量型。")
+
+    # 建立週入住數序列
+    weekly_rooms = pd.DataFrame()
+    if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
+        try:
+            occ_copy = occ_df.copy()
+            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce')
+            occ_copy = occ_copy.dropna(subset=['_date_p'])
+            occ_copy['week_start'] = occ_copy['_date_p'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+            occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'], errors='coerce').fillna(0)
+            weekly_rooms = occ_copy.groupby('week_start')['sold_rooms'].sum().reset_index()
+            weekly_rooms.columns = ['week_start', 'room_count']
+        except Exception:
+            weekly_rooms = pd.DataFrame()
+
+    corr_rows = []
+    for item in candidate_items:
+        item_df = df_90[df_90['_item'] == item].copy()
+        n_order_days = item_df['_date_str'].nunique()
+        if n_order_days < 8:
+            corr_rows.append({'品項名稱': item, '分析結果': '固定備量型，不適用相關分析', '相關係數': None})
+            continue
+        if weekly_rooms.empty:
+            corr_rows.append({'品項名稱': item, '分析結果': '入住數據不足，無法計算', '相關係數': None})
+            continue
+        item_df['_date_p'] = pd.to_datetime(item_df['_date_str'], errors='coerce')
+        item_df = item_df.dropna(subset=['_date_p'])
+        item_df['week_start'] = item_df['_date_p'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+        weekly_purchase = item_df.groupby('week_start')['_qty'].sum().reset_index()
+        weekly_purchase.columns = ['week_start', 'purchase_qty']
+        merged = weekly_rooms.merge(weekly_purchase, on='week_start', how='left').fillna(0)
+        if len(merged) < 4 or merged['purchase_qty'].std() == 0:
+            corr_rows.append({'品項名稱': item, '分析結果': '週數不足或無波動，無法計算', '相關係數': None})
+            continue
+        try:
+            r = round(merged['room_count'].corr(merged['purchase_qty']), 3)
+            if r > 0.6:
+                label = f"r={r} ✅ 採購跟著入住數走"
+            elif r > 0.3:
+                label = f"r={r} 🟡 弱相關，可觀察"
+            elif r >= 0:
+                label = f"r={r} ⚪ 幾乎無相關（固定備量行為）"
+            else:
+                label = f"r={r} ⚠️ 負相關，請確認是否為預購行為"
+            corr_rows.append({'品項名稱': item, '分析結果': label, '相關係數': r})
+        except Exception:
+            corr_rows.append({'品項名稱': item, '分析結果': '計算失敗', '相關係數': None})
+    df_corr = pd.DataFrame(corr_rows)
+    if not df_corr.empty:
+        st.dataframe(df_corr[['品項名稱', '分析結果']], hide_index=True, use_container_width=True)
+
+    # ── ④ 跨月 UPR 波動分析 ──
+    st.markdown("---")
+    st.markdown("#### 📊 跨月採購效率波動分析（UPR 比較）")
+    st.caption("💡 UPR = 月採購量 ÷ 月入住房數。比較同品項不同月份的 UPR，找出採購量偏高的月份。需至少 2 個月數據。")
+
+    monthly_rooms = {}
+    if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
+        try:
+            occ_m = occ_df.copy()
+            occ_m['_date_p'] = pd.to_datetime(occ_m['date'] if 'date' in occ_m.columns else occ_m.iloc[:, 0], errors='coerce')
+            occ_m = occ_m.dropna(subset=['_date_p'])
+            occ_m['_ym'] = occ_m['_date_p'].dt.strftime('%Y-%m')
+            occ_m['sold_rooms'] = pd.to_numeric(occ_m['sold_rooms'], errors='coerce').fillna(0)
+            monthly_rooms = occ_m.groupby('_ym')['sold_rooms'].sum().to_dict()
+        except Exception:
+            monthly_rooms = {}
+
+    if len(monthly_rooms) < 2:
+        st.info("💡 需至少 2 個月的入住數據才能進行跨月 UPR 波動分析。")
+    else:
+        all_dept_purchase = df_dept.copy()
+        all_dept_purchase['_ym'] = pd.to_datetime(all_dept_purchase['_date_str'], errors='coerce').dt.strftime('%Y-%m')
+        all_dept_purchase = all_dept_purchase.dropna(subset=['_ym'])
+        monthly_qty = all_dept_purchase.groupby(['_item', '_ym'])['_qty'].sum().reset_index()
+        monthly_qty['room_count'] = monthly_qty['_ym'].map(monthly_rooms).fillna(0)
+        monthly_qty = monthly_qty[monthly_qty['room_count'] > 0]
+        monthly_qty['upr'] = monthly_qty['_qty'] / monthly_qty['room_count']
+
+        upr_rows = []
+        for item in candidate_items:
+            item_m = monthly_qty[monthly_qty['_item'] == item]
+            if len(item_m) < 2:
+                upr_rows.append({'品項名稱': item, '月份數': len(item_m), 'UPR 中位數': None, '最新月份': None, '本月 UPR': None, '超採指數 (%)': None, '判定': '數據不足（需≥2個月）'})
+                continue
+            upr_median  = item_m['upr'].median()
+            latest_ym   = item_m['_ym'].max()
+            latest_upr  = item_m[item_m['_ym'] == latest_ym]['upr'].values[0]
+            overstock_idx = (latest_upr - upr_median) / upr_median * 100 if upr_median > 0 else 0
+            if overstock_idx > 30:
+                verdict = "🔴 本月採購量偏高（值得調查）"
+            elif overstock_idx > 10:
+                verdict = "🟡 略偏高"
+            elif overstock_idx >= -10:
+                verdict = "✅ 正常波動"
+            else:
+                verdict = "⬇️ 本月採購量低於歷史（庫存消化中）"
+            upr_rows.append({'品項名稱': item, '月份數': len(item_m), 'UPR 中位數': round(upr_median, 4), '最新月份': latest_ym, '本月 UPR': round(latest_upr, 4), '超採指數 (%)': round(overstock_idx, 1), '判定': verdict})
+
+        df_upr = pd.DataFrame(upr_rows)
+        if not df_upr.empty:
+            sig_order2 = {'🔴': 0, '🟡': 1, '⬇️': 2, '✅': 3, '數': 9}
+            df_upr['_so'] = df_upr['判定'].apply(lambda s: sig_order2.get(s[:2], 9))
+            df_upr = df_upr.sort_values('_so').drop(columns='_so')
+            st.dataframe(
+                df_upr.reindex(columns=['品項名稱', '月份數', 'UPR 中位數', '最新月份', '本月 UPR', '超採指數 (%)', '判定']),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    'UPR 中位數': st.column_config.NumberColumn(format='%.4f'),
+                    '本月 UPR': st.column_config.NumberColumn(format='%.4f'),
+                    '超採指數 (%)': st.column_config.NumberColumn(format='%.1f'),
+                })
+            high_wave = df_upr[df_upr['判定'].str.startswith('🔴')]
+            if not high_wave.empty:
+                st.warning(f"⚠️ 共 {len(high_wave)} 個品項本月 UPR 超過歷史中位數 30% 以上，建議逐一確認是否備量過多。")
+
+    # ── ⑤ 決策雙引擎預測（工務停用）──
+    if not enable_prediction:
+        st.markdown("---")
+        st.info("💡 **工務採購屬維修事件驅動型**，不適用依入住房數的量化預測模組。\n建議搭配「節奏燈號」確認各品項補貨節奏，當燈號轉為 🔴 時再進行採購。")
+        return
+
+    st.markdown("---")
+    st.markdown("#### 🚚 單品決策雙引擎預測模組（預測未來 7 天）")
+    st.caption("💡 選擇品項後，系統將依據歷史每房耗用率（UPR）與叫貨慣性，估算建議採購量。")
+
+    if candidate_items:
+        selected_dept_item = st.selectbox(
+            "選擇欲預測的品項",
+            options=candidate_items,
+            key=f"dept_item_select_{dept_label}"
+        )
+        item_df_sel = df_90[df_90['_item'] == selected_dept_item].copy()
+        daily_item  = item_df_sel.groupby('_date_str')['_qty'].sum().reset_index().sort_values('_date_str')
+        order_count = len(daily_item)
+
+        if order_count < 2:
+            st.warning(f"⚠️ 近 90 天「{selected_dept_item}」的採購天數僅 {order_count} 天，樣本不足，無法預測。")
+        else:
+            total_qty_90d = daily_item['_qty'].sum()
+            freq_days_sel  = 90 / order_count
+            median_qty_sel = daily_item['_qty'].median()
+
+            # 未來 7 天預估入住房數
+            future_rooms = 0
+            if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
+                try:
+                    occ_fut = occ_df.copy()
+                    occ_fut['_date_p'] = pd.to_datetime(occ_fut['date'] if 'date' in occ_fut.columns else occ_fut.iloc[:, 0], errors='coerce')
+                    occ_fut = occ_fut.dropna(subset=['_date_p'])
+                    occ_fut['sold_rooms'] = pd.to_numeric(occ_fut['sold_rooms'], errors='coerce').fillna(0)
+                    fut_start = pd.Timestamp(today_dept)
+                    fut_end   = pd.Timestamp(today_dept + _dt_dept.timedelta(days=7))
+                    future_rows = occ_fut[(occ_fut['_date_p'] >= fut_start) & (occ_fut['_date_p'] < fut_end)]
+                    future_rooms = float(future_rows['sold_rooms'].sum())
+                except Exception:
+                    future_rooms = 0
+
+            # 若無未來資料，用過去 7 天平均代替
+            if future_rooms == 0:
+                try:
+                    past7_start = pd.Timestamp(today_dept - _dt_dept.timedelta(days=7))
+                    past7_end   = pd.Timestamp(today_dept)
+                    past7_rows  = occ_df.copy()
+                    past7_rows['_date_p'] = pd.to_datetime(past7_rows['date'] if 'date' in past7_rows.columns else past7_rows.iloc[:, 0], errors='coerce')
+                    past7_rows['sold_rooms'] = pd.to_numeric(past7_rows['sold_rooms'], errors='coerce').fillna(0)
+                    past7_rows = past7_rows[(past7_rows['_date_p'] >= past7_start) & (past7_rows['_date_p'] < past7_end)]
+                    future_rooms = float(past7_rows['sold_rooms'].sum())
+                except Exception:
+                    future_rooms = 0
+
+            # 近 90 天入住總房數
+            total_rooms_90d = sum(v for k, v in monthly_rooms.items()) if monthly_rooms else 0
+            upr_sel = total_qty_90d / total_rooms_90d if total_rooms_90d > 0 else 0
+
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            fc1.metric("歷史每房耗用率 (UPR)", f"{upr_sel:.4f} /房")
+            fc2.metric("單次叫貨中位數", f"{median_qty_sel:,.1f}")
+            fc3.metric("歷史平均頻率", f"約 {freq_days_sel:.1f} 天/次")
+            fc4.metric("未來 7 天預估入住房數", f"{int(future_rooms):,} 房" if future_rooms > 0 else "無資料")
+
+            if future_rooms > 0 and upr_sel > 0:
+                core_qty = upr_sel * future_rooms * 1.05
+                habit_orders = 7 / freq_days_sel
+                habit_qty = habit_orders * median_qty_sel * 1.05
+                eng_a, eng_b = st.columns(2)
+                with eng_a:
+                    st.markdown(f"""
+<div style='background:linear-gradient(135deg,#1e3c72,#2a5298); padding:18px; border-radius:12px;'>
+<p style='margin:0; color:#b0bec5; font-size:14px;'>🏨 <b>模式 A【入住驅動預估】</b></p>
+<p style='margin:5px 0 8px; color:#90caf9; font-size:11px;'>依入住房數 × UPR 推算，適合消耗型備品（茶包、紙張、備品）</p>
+<h2 style='color:#fff; font-size:2rem; margin:5px 0;'>{core_qty:,.1f}</h2>
+<p style='color:#b0bec5; font-size:11px; margin:0;'>基礎：UPR {upr_sel:.4f} × {int(future_rooms)} 房 + 5% 緩衝</p>
+</div>""", unsafe_allow_html=True)
+                with eng_b:
+                    st.markdown(f"""
+<div style='background:linear-gradient(135deg,#2c3e50,#1a252f); padding:18px; border-radius:12px;'>
+<p style='margin:0; color:#b0bec5; font-size:14px;'>📦 <b>模式 B【歷史慣性推估】</b></p>
+<p style='margin:5px 0 8px; color:#a5d6a7; font-size:11px;'>依叫貨週期 × 中位數推算，適合固定週期補貨的品項</p>
+<h2 style='color:#fff; font-size:2rem; margin:5px 0;'>{habit_qty:,.1f}</h2>
+<p style='color:#b0bec5; font-size:11px; margin:0;'>基礎：{habit_orders:.2f} 次 × {median_qty_sel:.1f} + 5% 緩衝</p>
+</div>""", unsafe_allow_html=True)
+            elif upr_sel == 0:
+                st.info("💡 近 90 天入住房數資料不足，無法計算 UPR，跳過模式 A 預測。")
+
+
+
 @st.cache_data(ttl=3600)
 def fetch_thepeak_daily_purchase_report():
     """讀取 thepeak_daily_purchase_report 分頁，使用 60s 快取以避免 API 限制"""
@@ -2068,7 +2439,7 @@ else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
         "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", 
-        "🍽️ 餐廳數據", "🔧 工務數據", "👥 人事概況", 
+        "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
         "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
@@ -3353,6 +3724,19 @@ if current_hotel != "採購":
                 sync_st_to_db(date_str)
                 st.success("✅ 房務數據已儲存！")
 
+        st.markdown("---")
+        st.subheader("📦 房務採購紀律分析")
+        st.caption("資料來源：purchase_data 中部門欄位 = 「房務」的採購紀錄，以入住房數（sold_rooms）為驅動指標。")
+        _df_all_purch_hk = _get_all_purchase_clean()
+        _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
+        _occ_hk = _get_occ_data_cached_v2()
+        _render_dept_procurement_modules(
+            df_dept=_df_hk_dept,
+            dept_label="房務部",
+            occ_df=_occ_hk,
+            enable_prediction=True,
+        )
+
 if current_hotel != "採購":
     if selected_page == "🍽️ 餐廳數據":
         st.header("🍽️ 餐廳數據")
@@ -3464,6 +3848,36 @@ if current_hotel != "採購":
             if st.form_submit_button("💾 儲存工務數據", type="primary", use_container_width=True):
                 sync_st_to_db(date_str)
                 st.success("✅ 工務數據已儲存！")
+
+        st.markdown("---")
+        st.subheader("📦 工務採購紀律分析")
+        st.caption("資料來源：purchase_data 中部門欄位 = 「工務」的採購紀錄。工務採購屬維修事件驅動型，停用雙引擎預測模組。")
+        _df_all_purch_eng = _get_all_purchase_clean()
+        _df_eng_dept = _df_all_purch_eng[_df_all_purch_eng['_dept'].str.strip() == '工務'] if not _df_all_purch_eng.empty else pd.DataFrame()
+        _occ_eng = _get_occ_data_cached_v2()
+        _render_dept_procurement_modules(
+            df_dept=_df_eng_dept,
+            dept_label="工務部",
+            occ_df=_occ_eng,
+            enable_prediction=False,
+        )
+
+
+if current_hotel != "採購":
+    if selected_page == "🏢 櫃台數據":
+        st.header("🏢 櫃台數據")
+        st.markdown("---")
+        st.subheader("📦 櫃台採購紀律分析")
+        st.caption("資料來源：purchase_data 中部門欄位 = 「櫃台」的採購紀錄，以入住房數（sold_rooms）為驅動指標。")
+        _df_all_purch_ct = _get_all_purchase_clean()
+        _df_ct_dept = _df_all_purch_ct[_df_all_purch_ct['_dept'].str.strip() == '櫃台'] if not _df_all_purch_ct.empty else pd.DataFrame()
+        _occ_ct = _get_occ_data_cached_v2()
+        _render_dept_procurement_modules(
+            df_dept=_df_ct_dept,
+            dept_label="櫃台",
+            occ_df=_occ_ct,
+            enable_prediction=True,
+        )
 
 if current_hotel != "採購":
     if selected_page == "📝 每日營運紀錄":
