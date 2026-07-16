@@ -308,13 +308,16 @@ def _render_dept_procurement_modules(
         df_daily_converted['_item'] = df_daily_report[item_col].astype(str).str.strip() if item_col else ''
         df_daily_converted['_qty'] = pd.to_numeric(df_daily_report[qty_col], errors='coerce').fillna(0) if qty_col else 0
         df_daily_converted['_unit'] = df_daily_report[unit_col].astype(str).str.strip() if unit_col else ''
+        df_daily_converted['_dept'] = dept_label
         
-        # 為了防重複，找出 purchase_data 中該部門最後入帳日期
+        # 為了防重複，找出 purchase_data 中該部門已入帳的 (日期, 品名)
         if not df_dept.empty:
-            last_official_date = df_dept['_date_str'].max()
-            # 只有晚於官方最後入帳日期的即時資料才會被匯入
-            if pd.notna(last_official_date):
-                df_daily_converted = df_daily_converted[df_daily_converted['_date_str'] > last_official_date]
+            official_records = set(zip(df_dept['_date_str'], df_dept['_item']))
+            
+            # 過濾掉已經存在於官方紀錄中的 (日期, 品名) 組合
+            # 這樣就算同一天，只要品名不同，購物車裡的紀錄依然會被匯入
+            mask = df_daily_converted.apply(lambda row: (row['_date_str'], row['_item']) not in official_records, axis=1)
+            df_daily_converted = df_daily_converted[mask]
                 
         if not df_daily_converted.empty:
             df_dept = pd.concat([df_dept, df_daily_converted], ignore_index=True)
