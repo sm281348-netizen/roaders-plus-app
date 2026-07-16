@@ -730,7 +730,7 @@ def append_4fhh_daily_purchase_report(new_rows_df):
         return False
 
 # --- Auto-generated functions for non-F&B daily purchase reports ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def fetch_fd_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -759,7 +759,7 @@ def append_fd_daily_purchase_report(new_rows_df):
         st.error(f"寫入失敗: {e}")
         return False
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def fetch_hk_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -788,7 +788,7 @@ def append_hk_daily_purchase_report(new_rows_df):
         st.error(f"寫入失敗: {e}")
         return False
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def fetch_cs_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
