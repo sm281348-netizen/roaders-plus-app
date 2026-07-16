@@ -196,11 +196,85 @@ def _get_all_purchase_clean():
 
 
 
+
+def render_dept_shopping_cart(dept_label, fetch_func, append_func):
+    import datetime as _dt_cart
+    st.subheader(f"🛒 {dept_label} - 採購與請購車")
+    st.markdown("在此新增每日請購項目，資料將即時寫入專屬日報表，並無縫匯入下方採購分析中。")
+
+    # Define standard columns
+    columns = ['請購日期', '品項名稱', '當期單價', '單位', '請購數量', '總價', '建檔時間']
+
+    # Session state initialization for the cart
+    ss_key = f"cart_{dept_label}"
+    if ss_key not in st.session_state:
+        st.session_state[ss_key] = pd.DataFrame(columns=columns)
+
+    def add_blank_row():
+        new_row = pd.DataFrame([[
+            _dt_cart.date.today().strftime('%Y-%m-%d'),
+            "", 0.0, "", 1.0, 0.0, ""
+        ]], columns=columns)
+        st.session_state[ss_key] = pd.concat([st.session_state[ss_key], new_row], ignore_index=True)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.button("➕ 新增請購品項", on_click=add_blank_row, key=f"btn_add_{dept_label}")
+
+    def update_totals():
+        df = st.session_state[ss_key]
+        for i in range(len(df)):
+            try:
+                price = float(df.at[i, '當期單價']) if pd.notna(df.at[i, '當期單價']) and df.at[i, '當期單價'] != "" else 0.0
+                qty = float(df.at[i, '請購數量']) if pd.notna(df.at[i, '請購數量']) and df.at[i, '請購數量'] != "" else 0.0
+                df.at[i, '總價'] = price * qty
+            except:
+                pass
+
+    edited_df = st.data_editor(
+        st.session_state[ss_key],
+        num_rows="dynamic",
+        column_config={
+            "請購日期": st.column_config.DateColumn("請購日期", required=True),
+            "品項名稱": st.column_config.TextColumn("品項名稱", required=True),
+            "當期單價": st.column_config.NumberColumn("單價", required=True, min_value=0.0),
+            "單位": st.column_config.TextColumn("單位 (斤/包/箱)"),
+            "請購數量": st.column_config.NumberColumn("數量", required=True, min_value=0.0),
+            "總價": st.column_config.NumberColumn("小計 (自動計算)", disabled=True),
+            "建檔時間": st.column_config.TextColumn("系統建檔時間", disabled=True),
+        },
+        use_container_width=True,
+        key=f"editor_{dept_label}",
+        on_change=update_totals
+    )
+    st.session_state[ss_key] = edited_df
+
+    if st.button("🚀 送出請購單", type="primary", key=f"btn_submit_{dept_label}"):
+        valid_rows = edited_df[edited_df['品項名稱'].astype(str).str.strip() != ""]
+        if valid_rows.empty:
+            st.warning("請填寫品項名稱後再送出。")
+        else:
+            now_str = _dt_cart.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            valid_rows['建檔時間'] = now_str
+            # 計算總價
+            valid_rows['總價'] = pd.to_numeric(valid_rows['當期單價'], errors='coerce').fillna(0) * pd.to_numeric(valid_rows['請購數量'], errors='coerce').fillna(0)
+            
+            with st.spinner("正在寫入 Google Sheets..."):
+                success = append_func(valid_rows)
+                if success:
+                    st.success("✅ 請購單已成功寫入！")
+                    st.session_state[ss_key] = pd.DataFrame(columns=columns)
+                    fetch_func.clear() # Clear cache so new data is loaded
+                    st.rerun()
+
+    st.divider()
+
 def _render_dept_procurement_modules(
     df_dept: pd.DataFrame,
     dept_label: str,
     occ_df: pd.DataFrame,
     enable_prediction: bool = True,
+    df_daily_report: pd.DataFrame = None,
 ):
     """
     渲染非 F&B 部門採購紀律模組（①②③④，enable_prediction=True 時含⑤）。
@@ -211,6 +285,39 @@ def _render_dept_procurement_modules(
 
     today_dept = _dt_dept.date.today()
     w90_start  = (today_dept - _dt_dept.timedelta(days=90)).strftime('%Y-%m-%d')
+
+    # === 無縫匯入即時日報表 (Shopping Cart) ===
+    if df_daily_report is not None and not df_daily_report.empty:
+        # 將日報表欄位對齊 purchase_data 格式 (_date_str, _item, _qty, _unit)
+        df_daily_converted = pd.DataFrame()
+        
+        # 處理日期
+        date_col = next((c for c in df_daily_report.columns if '日期' in c), None)
+        if date_col:
+            df_daily_converted['_date_parsed'] = pd.to_datetime(df_daily_report[date_col], errors='coerce')
+            df_daily_converted = df_daily_converted[df_daily_converted['_date_parsed'].notna()].copy()
+            df_daily_converted['_date_str'] = df_daily_converted['_date_parsed'].dt.strftime('%Y-%m-%d')
+        else:
+            df_daily_converted['_date_str'] = pd.Series(dtype=str)
+            
+        # 處理品名、數量、單位
+        item_col = next((c for c in df_daily_report.columns if '品項' in c or '品名' in c), None)
+        qty_col = next((c for c in df_daily_report.columns if '數量' in c), None)
+        unit_col = next((c for c in df_daily_report.columns if '單位' in c), None)
+        
+        df_daily_converted['_item'] = df_daily_report[item_col].astype(str).str.strip() if item_col else ''
+        df_daily_converted['_qty'] = pd.to_numeric(df_daily_report[qty_col], errors='coerce').fillna(0) if qty_col else 0
+        df_daily_converted['_unit'] = df_daily_report[unit_col].astype(str).str.strip() if unit_col else ''
+        
+        # 為了防重複，找出 purchase_data 中該部門最後入帳日期
+        if not df_dept.empty:
+            last_official_date = df_dept['_date_str'].max()
+            # 只有晚於官方最後入帳日期的即時資料才會被匯入
+            if pd.notna(last_official_date):
+                df_daily_converted = df_daily_converted[df_daily_converted['_date_str'] > last_official_date]
+                
+        if not df_daily_converted.empty:
+            df_dept = pd.concat([df_dept, df_daily_converted], ignore_index=True)
 
     # 篩選近 90 天
     df_90 = df_dept[df_dept['_date_str'] >= w90_start].copy()
@@ -618,6 +725,96 @@ def append_4fhh_daily_purchase_report(new_rows_df):
     except Exception as e:
         st.error(f"寫入失敗: {e}")
         return False
+
+# --- Auto-generated functions for non-F&B daily purchase reports ---
+@st.cache_data(ttl=3600)
+def fetch_fd_daily_purchase_report():
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "fd_daily_purchase_report"
+        df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        return df if df is not None else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def append_fd_daily_purchase_report(new_rows_df):
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "fd_daily_purchase_report"
+        try:
+            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        except Exception:
+            df_old = pd.DataFrame()
+        df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
+        raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"寫入失敗: {e}")
+        return False
+
+@st.cache_data(ttl=3600)
+def fetch_hk_daily_purchase_report():
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "hk_daily_purchase_report"
+        df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        return df if df is not None else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def append_hk_daily_purchase_report(new_rows_df):
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "hk_daily_purchase_report"
+        try:
+            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        except Exception:
+            df_old = pd.DataFrame()
+        df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
+        raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"寫入失敗: {e}")
+        return False
+
+@st.cache_data(ttl=3600)
+def fetch_cs_daily_purchase_report():
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "cs_daily_purchase_report"
+        df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        return df if df is not None else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+def append_cs_daily_purchase_report(new_rows_df):
+    try:
+        from streamlit_gsheets import GSheetsConnection
+        raw_st = st.connection("gsheets_station", type=GSheetsConnection)
+        url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        target_ws = "cs_daily_purchase_report"
+        try:
+            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
+        except Exception:
+            df_old = pd.DataFrame()
+        df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
+        raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        return True
+    except Exception as e:
+        st.error(f"寫入失敗: {e}")
+        return False
+# --------------------------------------------------------------------
+
 def get_market_index_df(sp_df, weights_dict=None):
     """將 supplier_prices DataFrame 轉換為大盤指數 (Market Price Index) DataFrame
     使用連鎖法 (Chain-linking) 以支援品項新增與淘汰。
