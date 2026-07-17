@@ -739,7 +739,9 @@ def fetch_fd_daily_purchase_report():
         target_ws = "fd_daily_purchase_report"
         df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         return df if df is not None else pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        if "WorksheetNotFound" in str(type(e)) or target_ws in str(e):
+            st.warning(f"⚠️ 找不到名為 '{target_ws}' 的分頁。請確認 Google Sheets 中是否已建立該分頁且名稱完全相符（大小寫須一致）。")
         return pd.DataFrame()
 
 def append_fd_daily_purchase_report(new_rows_df):
@@ -768,7 +770,9 @@ def fetch_hk_daily_purchase_report():
         target_ws = "hk_daily_purchase_report"
         df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         return df if df is not None else pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        if "WorksheetNotFound" in str(type(e)) or target_ws in str(e):
+            st.warning(f"⚠️ 找不到名為 '{target_ws}' 的分頁。請確認 Google Sheets 中是否已建立該分頁且名稱完全相符（大小寫須一致）。")
         return pd.DataFrame()
 
 def append_hk_daily_purchase_report(new_rows_df):
@@ -797,7 +801,9 @@ def fetch_cs_daily_purchase_report():
         target_ws = "cs_daily_purchase_report"
         df = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         return df if df is not None else pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        if "WorksheetNotFound" in str(type(e)) or target_ws in str(e):
+            st.warning(f"⚠️ 找不到名為 '{target_ws}' 的分頁。請確認 Google Sheets 中是否已建立該分頁且名稱完全相符（大小寫須一致）。")
         return pd.DataFrame()
 
 def append_cs_daily_purchase_report(new_rows_df):
