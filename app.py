@@ -160,6 +160,7 @@ def _get_all_purchase_clean():
     _unit_col = next((c for c in df_raw.columns if any(k in c for k in ['單位', 'Unit'])), None)
     _dept_col = next((c for c in df_raw.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
     _vend_col = next((c for c in df_raw.columns if any(k in c for k in ['供應商', '廠商', 'Vendor'])), None)
+    _price_col = next((c for c in df_raw.columns if any(k in c for k in ['總價', '金額', 'Total', 'Amount', '小計'])), None)
     if not (_date_col and _item_col and _qty_col):
         return pd.DataFrame()
     df = df_raw.copy()
@@ -188,6 +189,7 @@ def _get_all_purchase_clean():
     df = df[df['_date_parsed'].notna()]
     df['_date_str'] = df['_date_parsed'].dt.strftime('%Y-%m-%d')
     df['_qty']    = pd.to_numeric(df[_qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+    df['_price']  = pd.to_numeric(df[_price_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0) if _price_col else 0.0
     df['_item']   = df[_item_col].astype(str).str.strip()
     df['_unit']   = df[_unit_col].astype(str).str.strip() if _unit_col else ''
     df['_dept']   = df[_dept_col].astype(str).str.strip() if _dept_col else ''
@@ -209,77 +211,115 @@ def _get_all_purchase_clean():
 
 
 
-def render_dept_shopping_cart(dept_label, fetch_func, append_func):
-    import datetime as _dt_cart
-    st.subheader(f"🛒 {dept_label} - 採購與請購車")
-    st.markdown("在此新增每日請購項目，資料將即時寫入專屬日報表，並無縫匯入下方採購分析中。")
-
-    # Define standard columns
-    columns = ['請購日期', '品項名稱', '當期單價', '單位', '請購數量', '總價', '建檔時間']
-
-    # Session state initialization for the cart
-    ss_key = f"cart_{dept_label}"
-    if ss_key not in st.session_state:
-        st.session_state[ss_key] = pd.DataFrame(columns=columns)
-
-    def add_blank_row():
-        new_row = pd.DataFrame([[
-            _dt_cart.date.today().strftime('%Y-%m-%d'),
-            "", 0.0, "", 1.0, 0.0, ""
-        ]], columns=columns)
-        st.session_state[ss_key] = pd.concat([st.session_state[ss_key], new_row], ignore_index=True)
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.button("➕ 新增請購品項", on_click=add_blank_row, key=f"btn_add_{dept_label}")
-
-    def update_totals():
-        df = st.session_state[ss_key]
-        for i in range(len(df)):
-            try:
-                price = float(df.at[i, '當期單價']) if pd.notna(df.at[i, '當期單價']) and df.at[i, '當期單價'] != "" else 0.0
-                qty = float(df.at[i, '請購數量']) if pd.notna(df.at[i, '請購數量']) and df.at[i, '請購數量'] != "" else 0.0
-                df.at[i, '總價'] = price * qty
-            except:
-                pass
-
-    edited_df = st.data_editor(
-        st.session_state[ss_key],
-        num_rows="dynamic",
-        column_config={
-            "請購日期": st.column_config.DateColumn("請購日期", required=True),
-            "品項名稱": st.column_config.TextColumn("品項名稱", required=True),
-            "當期單價": st.column_config.NumberColumn("單價", required=True, min_value=0.0),
-            "單位": st.column_config.TextColumn("單位 (斤/包/箱)"),
-            "請購數量": st.column_config.NumberColumn("數量", required=True, min_value=0.0),
-            "總價": st.column_config.NumberColumn("小計 (自動計算)", disabled=True),
-            "建檔時間": st.column_config.TextColumn("系統建檔時間", disabled=True),
-        },
-        use_container_width=True,
-        key=f"editor_{dept_label}",
-        on_change=update_totals
-    )
-    st.session_state[ss_key] = edited_df
-
-    if st.button("🚀 送出請購單", type="primary", key=f"btn_submit_{dept_label}"):
-        valid_rows = edited_df[edited_df['品項名稱'].astype(str).str.strip() != ""]
-        if valid_rows.empty:
-            st.warning("請填寫品項名稱後再送出。")
-        else:
-            now_str = _dt_cart.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            valid_rows['建檔時間'] = now_str
-            # 計算總價
-            valid_rows['總價'] = pd.to_numeric(valid_rows['當期單價'], errors='coerce').fillna(0) * pd.to_numeric(valid_rows['請購數量'], errors='coerce').fillna(0)
-            
-            with st.spinner("正在寫入 Google Sheets..."):
-                success = append_func(valid_rows)
-                if success:
-                    st.success("✅ 請購單已成功寫入！")
-                    st.session_state[ss_key] = pd.DataFrame(columns=columns)
-                    fetch_func.clear() # Clear cache so new data is loaded
-                    st.rerun()
-
     st.divider()
+
+def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
+    """計算特定部門的 CPR (每房成本) 相關指標"""
+    import datetime as _dt
+    import calendar
+    
+    # 預設回傳值
+    res = {
+        'mtd_cost': 0.0,
+        'mtd_rooms': 0,
+        'mtd_cpr': 0.0,
+        'velocity_30d_cpr': 0.0,
+        'eom_forecast_cost': 0.0,
+        'eom_rooms': 0,
+        'eom_forecast_cpr': 0.0,
+        'is_past_month': False,
+        'mtd_adr': 0.0
+    }
+    
+    today = _dt.date.today()
+    target_ym = selected_date.strftime('%Y-%m')
+    current_ym = today.strftime('%Y-%m')
+    
+    if target_ym < current_ym:
+        res['is_past_month'] = True
+        
+    # --- MTD 計算 (本月至今) ---
+    if target_ym > current_ym:
+        # 未來月份無 MTD，直接跳至 EOM 計算
+        pass
+    else:
+        # 計算範圍：該月 1 號 ~ 今日 (若是過去月份，則是該月 1 號 ~ 月底)
+        if res['is_past_month']:
+            end_date = _dt.date(selected_date.year, selected_date.month, calendar.monthrange(selected_date.year, selected_date.month)[1])
+        else:
+            end_date = today
+            
+        start_date = _dt.date(selected_date.year, selected_date.month, 1)
+        
+        # MTD Rooms & ADR
+        if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
+            occ_copy = occ_df.copy()
+            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
+            mask_mtd = (occ_copy['_date_p'] >= start_date) & (occ_copy['_date_p'] <= end_date)
+            res['mtd_rooms'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'sold_rooms'], errors='coerce').sum())
+            
+            # Calculate MTD ADR
+            rev_sum = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'rev'], errors='coerce').sum()) if 'rev' in occ_copy.columns else 0
+            if res['mtd_rooms'] > 0 and rev_sum > 0:
+                res['mtd_adr'] = rev_sum / res['mtd_rooms']
+            elif 'adr' in occ_copy.columns and res['mtd_rooms'] > 0:
+                res['mtd_adr'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'adr'], errors='coerce').mean())
+                
+        # MTD Cost
+        if not df_dept.empty:
+            df_copy = df_dept.copy()
+            df_copy['_date_p'] = pd.to_datetime(df_copy['_date_str'], errors='coerce').dt.date
+            mask_cost = (df_copy['_date_p'] >= start_date) & (df_copy['_date_p'] <= end_date)
+            res['mtd_cost'] = float(df_copy.loc[mask_cost, '_price'].sum())
+            
+        if res['mtd_rooms'] > 0:
+            res['mtd_cpr'] = res['mtd_cost'] / res['mtd_rooms']
+            
+    # --- EOM Forecast (月底預估) ---
+    if res['is_past_month']:
+        res['eom_forecast_cost'] = res['mtd_cost']
+        res['eom_rooms'] = res['mtd_rooms']
+        res['eom_forecast_cpr'] = res['mtd_cpr']
+    else:
+        past_30_start = today - _dt.timedelta(days=30)
+        past_30_end = today - _dt.timedelta(days=1)
+        
+        velocity_cost = 0.0
+        velocity_rooms = 0.0
+        
+        if not df_dept.empty:
+            df_copy = df_dept.copy()
+            df_copy['_date_p'] = pd.to_datetime(df_copy['_date_str'], errors='coerce').dt.date
+            mask_30d = (df_copy['_date_p'] >= past_30_start) & (df_copy['_date_p'] <= past_30_end)
+            velocity_cost = float(df_copy.loc[mask_30d, '_price'].sum())
+            
+        if occ_df is not None and not occ_df.empty:
+            occ_copy = occ_df.copy()
+            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
+            mask_30d = (occ_copy['_date_p'] >= past_30_start) & (occ_copy['_date_p'] <= past_30_end)
+            velocity_rooms = float(pd.to_numeric(occ_copy.loc[mask_30d, 'sold_rooms'], errors='coerce').sum())
+            
+        if velocity_rooms > 0:
+            res['velocity_30d_cpr'] = velocity_cost / velocity_rooms
+            
+        # 計算 EOM Rooms
+        start_date = _dt.date(selected_date.year, selected_date.month, 1)
+        end_date = _dt.date(selected_date.year, selected_date.month, calendar.monthrange(selected_date.year, selected_date.month)[1])
+        
+        if occ_df is not None and not occ_df.empty:
+            occ_copy = occ_df.copy()
+            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
+            mask_eom = (occ_copy['_date_p'] >= start_date) & (occ_copy['_date_p'] <= end_date)
+            res['eom_rooms'] = float(pd.to_numeric(occ_copy.loc[mask_eom, 'sold_rooms'], errors='coerce').sum())
+            
+        remaining_rooms = max(0, res['eom_rooms'] - res['mtd_rooms'])
+        remaining_cost = remaining_rooms * res['velocity_30d_cpr']
+        
+        res['eom_forecast_cost'] = res['mtd_cost'] + remaining_cost
+        if res['eom_rooms'] > 0:
+            res['eom_forecast_cpr'] = res['eom_forecast_cost'] / res['eom_rooms']
+            
+    return res
 
 def _render_dept_procurement_modules(
     df_dept: pd.DataFrame,
@@ -320,6 +360,10 @@ def _render_dept_procurement_modules(
         df_daily_converted['_item'] = df_daily_report[item_col].astype(str).str.strip() if item_col else ''
         df_daily_converted['_qty'] = pd.to_numeric(df_daily_report[qty_col], errors='coerce').fillna(0) if qty_col else 0
         df_daily_converted['_unit'] = df_daily_report[unit_col].astype(str).str.strip() if unit_col else ''
+        
+        price_col = next((c for c in df_daily_report.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+        df_daily_converted['_price'] = pd.to_numeric(df_daily_report[price_col], errors='coerce').fillna(0) if price_col else 0.0
+        
         df_daily_converted['_dept'] = dept_label
         
         # 為了防重複，找出 purchase_data 中該部門已入帳的 (日期, 品名)
@@ -654,6 +698,61 @@ def _render_dept_procurement_modules(
 </div>""", unsafe_allow_html=True)
             elif upr_sel == 0:
                 st.info("💡 近 90 天入住房數資料不足，無法計算 UPR，跳過模式 A 預測。")
+
+    # ── ⑥ 部門成本與每房預算分析 (CPR Forecast) ──
+    if dept_label in ['房務', '櫃台'] and 'selected_date' in globals():
+        st.markdown("---")
+        st.markdown(f"#### 💰 部門成本與每房預算分析 ({dept_label} CPR)")
+        st.caption("💡 結合 PMS 每日住房數與近期採購慣性，動態推算每房成本 (Cost per Room)。預算目標待後續建立基準後調整。")
+        
+        cpr_metrics = compute_dept_cpr_metrics(df_dept, occ_df, globals()['selected_date'])
+        
+        cpr_c1, cpr_c2 = st.columns(2)
+        
+        with cpr_c1:
+            mtd_label = "本月至今實際 (MTD)" if not cpr_metrics['is_past_month'] else "該月最終結算 (Total)"
+            adr_info = f"佔該期 ADR (NT$ {cpr_metrics['mtd_adr']:.0f}) 約 **{(cpr_metrics['mtd_cpr'] / cpr_metrics['mtd_adr'] * 100):.1f}%**" if cpr_metrics['mtd_adr'] > 0 else "ADR 資料不足"
+            st.markdown(f"""
+<div style='background:linear-gradient(135deg,#34495e,#2c3e50); padding:20px; border-radius:12px; height:100%;'>
+<p style='margin:0; font-size:15px; color:#b0bec5;'>📊 <b>{mtd_label}</b></p>
+<h2 style='margin:10px 0; color:#ffffff; font-size:2.2rem;'>
+NT$ {cpr_metrics['mtd_cpr']:.1f} <span style='font-size:1rem; color:#90caf9;'>/ 房</span>
+</h2>
+<div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1);'>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>累計總花費：<b>NT$ {int(cpr_metrics['mtd_cost']):,}</b></p>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>累計住房數：<b>{int(cpr_metrics['mtd_rooms']):,} 房</b></p>
+<p style='margin:0; font-size:12px; color:#b0bec5;'>{adr_info}</p>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+        with cpr_c2:
+            if cpr_metrics['is_past_month']:
+                eom_label = "歷史月份已結算"
+                velocity_info = "過去月份無須進行預測。"
+                eom_cost = cpr_metrics['mtd_cost']
+                eom_cpr = cpr_metrics['mtd_cpr']
+                eom_rooms = cpr_metrics['mtd_rooms']
+            else:
+                eom_label = "月底預估落點 (EOM Forecast)"
+                velocity_info = f"依過去 30 天慣性 <b>NT$ {cpr_metrics['velocity_30d_cpr']:.1f} / 房</b> 推算"
+                eom_cost = cpr_metrics['eom_forecast_cost']
+                eom_cpr = cpr_metrics['eom_forecast_cpr']
+                eom_rooms = cpr_metrics['eom_rooms']
+                
+            st.markdown(f"""
+<div style='background:linear-gradient(135deg,#3f4c6b,#606c88); padding:20px; border-radius:12px; height:100%;'>
+<p style='margin:0; font-size:15px; color:#e0e0e0;'>🔮 <b>{eom_label}</b></p>
+<h2 style='margin:10px 0; color:#ffffff; font-size:2.2rem;'>
+NT$ {eom_cpr:.1f} <span style='font-size:1rem; color:#a5d6a7;'>/ 房</span>
+</h2>
+<div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1);'>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>預估總花費：<b>NT$ {int(eom_cost):,}</b></p>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>全月總住房數：<b>{int(eom_rooms):,} 房</b></p>
+<p style='margin:0; font-size:12px; color:#b0bec5;'>{velocity_info}</p>
+</div>
+</div>
+""", unsafe_allow_html=True)
 
 
 
@@ -3977,7 +4076,6 @@ if current_hotel != "採購":
         _df_all_purch_hk = _get_all_purchase_clean()
         _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
         _occ_hk = _get_occ_data_cached_v2()
-        render_dept_shopping_cart("房務", fetch_hk_daily_purchase_report, append_hk_daily_purchase_report)
         _df_hk_daily = fetch_hk_daily_purchase_report()
         _render_dept_procurement_modules(
             df_dept=_df_hk_dept,
@@ -4105,7 +4203,7 @@ if current_hotel != "採購":
         _df_all_purch_eng = _get_all_purchase_clean()
         _df_eng_dept = _df_all_purch_eng[_df_all_purch_eng['_dept'].str.strip() == '工務'] if not _df_all_purch_eng.empty else pd.DataFrame()
         _occ_eng = _get_occ_data_cached_v2()
-        render_dept_shopping_cart("工務", fetch_cs_daily_purchase_report, append_cs_daily_purchase_report)
+
         _df_cs_daily = fetch_cs_daily_purchase_report()
         _render_dept_procurement_modules(
             df_dept=_df_eng_dept,
@@ -4125,7 +4223,6 @@ if current_hotel != "採購":
         _df_all_purch_ct = _get_all_purchase_clean()
         _df_ct_dept = _df_all_purch_ct[_df_all_purch_ct['_dept'].str.strip() == '櫃台'] if not _df_all_purch_ct.empty else pd.DataFrame()
         _occ_ct = _get_occ_data_cached_v2()
-        render_dept_shopping_cart("櫃台", fetch_fd_daily_purchase_report, append_fd_daily_purchase_report)
         _df_fd_daily = fetch_fd_daily_purchase_report()
         st.info(f"🛠️ [系統除錯] 櫃台即時請購單共抓取到 {len(_df_fd_daily) if _df_fd_daily is not None else 0} 筆資料。如果為 0，代表讀取失敗或試算表內無資料。")
         _render_dept_procurement_modules(
