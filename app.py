@@ -191,6 +191,18 @@ def _get_all_purchase_clean():
     df['_item']   = df[_item_col].astype(str).str.strip()
     df['_unit']   = df[_unit_col].astype(str).str.strip() if _unit_col else ''
     df['_dept']   = df[_dept_col].astype(str).str.strip() if _dept_col else ''
+    
+    # 部門名稱正規化防呆機制
+    def normalize_dept(d):
+        if d in ['橋台', '楠台', '櫃台', '櫃檯']:
+            return '櫃台'
+        if d in ['房務部', '房務']:
+            return '房務'
+        if d in ['工務部', '工務']:
+            return '工務'
+        return d
+    df['_dept'] = df['_dept'].apply(normalize_dept)
+    
     df['_vendor'] = df[_vend_col].astype(str).str.strip() if _vend_col else ''
     return df
 
@@ -735,7 +747,7 @@ def append_4fhh_daily_purchase_report(new_rows_df):
         return False
 
 # --- Auto-generated functions for non-F&B daily purchase reports ---
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=3600)
 def fetch_fd_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -768,7 +780,7 @@ def append_fd_daily_purchase_report(new_rows_df):
         st.error(f"寫入失敗: {e}")
         return False
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=3600)
 def fetch_hk_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -799,7 +811,7 @@ def append_hk_daily_purchase_report(new_rows_df):
         st.error(f"寫入失敗: {e}")
         return False
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=3600)
 def fetch_cs_daily_purchase_report():
     try:
         from streamlit_gsheets import GSheetsConnection
