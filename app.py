@@ -321,6 +321,11 @@ def _render_dept_procurement_modules(
                 
         if not df_daily_converted.empty:
             df_dept = pd.concat([df_dept, df_daily_converted], ignore_index=True)
+            if dept_label == "櫃台":
+                st.info(f"🛠️ [系統除錯] 成功將 {len(df_daily_converted)} 筆即時請購紀錄與官方資料合併！")
+        else:
+            if dept_label == "櫃台":
+                st.warning("🛠️ [系統除錯] 日報表資料經過解析與過濾後，剩下 0 筆可合併的資料。")
 
     # 篩選近 90 天
     df_90 = df_dept[df_dept['_date_str'] >= w90_start].copy()
@@ -742,6 +747,8 @@ def fetch_fd_daily_purchase_report():
     except Exception as e:
         if "WorksheetNotFound" in str(type(e)) or target_ws in str(e):
             st.warning(f"⚠️ 找不到名為 '{target_ws}' 的分頁。請確認 Google Sheets 中是否已建立該分頁且名稱完全相符（大小寫須一致）。")
+        else:
+            st.warning(f"⚠️ 讀取分頁 '{target_ws}' 時發生錯誤: {e}")
         return pd.DataFrame()
 
 def append_fd_daily_purchase_report(new_rows_df):
@@ -4108,6 +4115,7 @@ if current_hotel != "採購":
         _occ_ct = _get_occ_data_cached_v2()
         render_dept_shopping_cart("櫃台", fetch_fd_daily_purchase_report, append_fd_daily_purchase_report)
         _df_fd_daily = fetch_fd_daily_purchase_report()
+        st.info(f"🛠️ [系統除錯] 櫃台即時請購單共抓取到 {len(_df_fd_daily) if _df_fd_daily is not None else 0} 筆資料。如果為 0，代表讀取失敗或試算表內無資料。")
         _render_dept_procurement_modules(
             df_dept=_df_ct_dept,
             dept_label="櫃台",
