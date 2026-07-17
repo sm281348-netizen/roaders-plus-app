@@ -3948,15 +3948,18 @@ if current_hotel != "採購":
 
         st.markdown("---")
         st.subheader("📦 房務採購紀律分析")
-        st.caption("資料來源：purchase_data 中部門欄位 = 「房務」的採購紀錄，以入住房數（sold_rooms）為驅動指標。")
+        st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
         _df_all_purch_hk = _get_all_purchase_clean()
         _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
         _occ_hk = _get_occ_data_cached_v2()
+        render_dept_shopping_cart("房務", fetch_hk_daily_purchase_report, append_hk_daily_purchase_report)
+        _df_hk_daily = fetch_hk_daily_purchase_report()
         _render_dept_procurement_modules(
             df_dept=_df_hk_dept,
-            dept_label="房務部",
+            dept_label="房務",
             occ_df=_occ_hk,
             enable_prediction=True,
+            df_daily_report=_df_hk_daily,
         )
 
 if current_hotel != "採購":
@@ -4073,15 +4076,18 @@ if current_hotel != "採購":
 
         st.markdown("---")
         st.subheader("📦 工務採購紀律分析")
-        st.caption("資料來源：purchase_data 中部門欄位 = 「工務」的採購紀錄。工務採購屬維修事件驅動型，停用雙引擎預測模組。")
+        st.caption("資料來源：purchase_data（官方會計大表）＋ cs_daily_purchase_report（即時請購）無縫縫合。工務採購屬維修事件驅動型，停用雙引擎預測模組。")
         _df_all_purch_eng = _get_all_purchase_clean()
         _df_eng_dept = _df_all_purch_eng[_df_all_purch_eng['_dept'].str.strip() == '工務'] if not _df_all_purch_eng.empty else pd.DataFrame()
         _occ_eng = _get_occ_data_cached_v2()
+        render_dept_shopping_cart("工務", fetch_cs_daily_purchase_report, append_cs_daily_purchase_report)
+        _df_cs_daily = fetch_cs_daily_purchase_report()
         _render_dept_procurement_modules(
             df_dept=_df_eng_dept,
-            dept_label="工務部",
+            dept_label="工務",
             occ_df=_occ_eng,
             enable_prediction=False,
+            df_daily_report=_df_cs_daily,
         )
 
 
@@ -4090,15 +4096,18 @@ if current_hotel != "採購":
         st.header("🏢 櫃台數據")
         st.markdown("---")
         st.subheader("📦 櫃台採購紀律分析")
-        st.caption("資料來源：purchase_data 中部門欄位 = 「櫃台」的採購紀錄，以入住房數（sold_rooms）為驅動指標。")
+        st.caption("資料來源：purchase_data（官方會計大表）＋ fd_daily_purchase_report（即時請購）無縫縫合。")
         _df_all_purch_ct = _get_all_purchase_clean()
         _df_ct_dept = _df_all_purch_ct[_df_all_purch_ct['_dept'].str.strip() == '櫃台'] if not _df_all_purch_ct.empty else pd.DataFrame()
         _occ_ct = _get_occ_data_cached_v2()
+        render_dept_shopping_cart("櫃台", fetch_fd_daily_purchase_report, append_fd_daily_purchase_report)
+        _df_fd_daily = fetch_fd_daily_purchase_report()
         _render_dept_procurement_modules(
             df_dept=_df_ct_dept,
             dept_label="櫃台",
             occ_df=_occ_ct,
             enable_prediction=True,
+            df_daily_report=_df_fd_daily,
         )
 
 if current_hotel != "採購":
