@@ -2981,7 +2981,7 @@ if current_hotel != "採購":
 
         # --- 全館即時動態成本 (Rolling CPOR) 計算 ---
         st.subheader("💎 即時利潤戰情看板 (Rolling CPOR)")
-        st.caption("💡 系統自動撈取各部門 (房務/櫃台/工務)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。")
+        st.caption("💡 系統自動撈取全館各部門 (含餐飲)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。")
         
         _df_all_purch = _get_all_purchase_clean()
         _occ = _get_occ_data_cached_v2()
@@ -2989,7 +2989,15 @@ if current_hotel != "採購":
         total_forecast_cost = 0.0
         eom_rooms_base = 0
         
-        for dept in ['房務', '櫃台', '工務']:
+        all_purch_depts = _df_all_purch['_dept'].dropna().astype(str).unique().tolist() if not _df_all_purch.empty else []
+        target_depts = ['房務', '櫃台', '工務']
+        for d in all_purch_depts:
+            d_up = d.upper()
+            if any(k in d_up for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲', 'HH', 'HAPPY HOUR', '4FHH', 'HAPPYHOUR', '歡樂時光']):
+                if d not in target_depts:
+                    target_depts.append(d)
+        
+        for dept in target_depts:
             df_d = _df_all_purch[_df_all_purch['_dept'].str.strip() == dept] if not _df_all_purch.empty else pd.DataFrame()
             metrics = compute_dept_cpr_metrics(df_d, _occ, selected_date, dept_label=dept)
             total_forecast_cost += metrics.get('eom_forecast_cost', 0.0)
@@ -3015,6 +3023,8 @@ if current_hotel != "採購":
             live_spend += get_live_spend(fetch_hk_daily_purchase_report())
             live_spend += get_live_spend(fetch_fd_daily_purchase_report())
             live_spend += get_live_spend(fetch_cs_daily_purchase_report())
+            live_spend += get_live_spend(fetch_thepeak_daily_purchase_report())
+            live_spend += get_live_spend(fetch_4fhh_daily_purchase_report())
         except:
             pass
 
