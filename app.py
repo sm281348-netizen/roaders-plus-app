@@ -213,12 +213,13 @@ def _get_all_purchase_clean():
 
     st.divider()
 
-def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
-    """計算特定部門的 CPR (每房成本) 相關指標"""
+def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
+    """計算特定部門的 CPR (每房成本) 相關指標 - IMP V4.1"""
     import datetime as _dt
     import calendar
+    import pandas as pd
+    import re
     
-    # 預設回傳值
     res = {
         'mtd_cost': 0.0,
         'mtd_rooms': 0,
@@ -228,7 +229,8 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
         'eom_rooms': 0,
         'eom_forecast_cpr': 0.0,
         'is_past_month': False,
-        'mtd_adr': 0.0
+        'mtd_adr': 0.0,
+        'dept_target_cpr': 0.0
     }
     
     today = _dt.date.today()
@@ -237,13 +239,41 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
     
     if target_ym < current_ym:
         res['is_past_month'] = True
+
+    # --- 1. 計算 occ_df 的標準佈品客數 (Capacity_Pax) ---
+    if occ_df is not None and not occ_df.empty:
+        occ_copy = occ_df.copy()
+        occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
         
+        # 定義房型與人數乘數
+        pax_limits = {
+            'DF': 4, 'F': 4, 'DTP': 3, 'LDT': 2, 'DT': 2,
+            'E': 2, 'DR': 2, 'ER': 2, 'PD': 2, 'PT': 2,
+            'SP': 2, 'S': 2, 'SD': 2
+        }
+        
+        occ_copy['Capacity_Pax'] = 0.0
+        # 尋找 V 欄到 AH 欄的房型數量 (包含括號的欄位，如 DF(8))
+        for col in occ_copy.columns:
+            match = re.match(r'^([A-Z]+)\(\d+\)$', str(col).strip())
+            if match:
+                room_type = match.group(1)
+                if room_type in pax_limits:
+                    multiplier = pax_limits[room_type]
+                    occ_copy['Capacity_Pax'] += pd.to_numeric(occ_copy[col], errors='coerce').fillna(0) * multiplier
+        
+        # 確保有 sold_rooms
+        occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'] if 'sold_rooms' in occ_copy.columns else 0, errors='coerce').fillna(0)
+    else:
+        occ_copy = pd.DataFrame()
+
+    # 決定分母欄位
+    denom_col = 'Capacity_Pax' if dept_label == "房務" and 'Capacity_Pax' in occ_copy.columns and occ_copy['Capacity_Pax'].sum() > 0 else 'sold_rooms'
+
     # --- MTD 計算 (本月至今) ---
     if target_ym > current_ym:
-        # 未來月份無 MTD，直接跳至 EOM 計算
         pass
     else:
-        # 計算範圍：該月 1 號 ~ 今日 (若是過去月份，則是該月 1 號 ~ 月底)
         if res['is_past_month']:
             end_date = _dt.date(selected_date.year, selected_date.month, calendar.monthrange(selected_date.year, selected_date.month)[1])
         else:
@@ -251,21 +281,16 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
             
         start_date = _dt.date(selected_date.year, selected_date.month, 1)
         
-        # MTD Rooms & ADR
-        if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
-            occ_copy = occ_df.copy()
-            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
+        if not occ_copy.empty:
             mask_mtd = (occ_copy['_date_p'] >= start_date) & (occ_copy['_date_p'] <= end_date)
-            res['mtd_rooms'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'sold_rooms'], errors='coerce').sum())
+            res['mtd_rooms'] = float(occ_copy.loc[mask_mtd, denom_col].sum())
             
-            # Calculate MTD ADR
             rev_sum = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'rev'], errors='coerce').sum()) if 'rev' in occ_copy.columns else 0
             if res['mtd_rooms'] > 0 and rev_sum > 0:
                 res['mtd_adr'] = rev_sum / res['mtd_rooms']
             elif 'adr' in occ_copy.columns and res['mtd_rooms'] > 0:
                 res['mtd_adr'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'adr'], errors='coerce').mean())
                 
-        # MTD Cost
         if not df_dept.empty:
             df_copy = df_dept.copy()
             df_copy['_date_p'] = pd.to_datetime(df_copy['_date_str'], errors='coerce').dt.date
@@ -274,46 +299,76 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date):
             
         if res['mtd_rooms'] > 0:
             res['mtd_cpr'] = res['mtd_cost'] / res['mtd_rooms']
+
+    # --- 2. 實作 V4.1 IMP 演算法 ---
+    dept_target_cpr = 0.0
+    if not df_dept.empty and not occ_copy.empty:
+        df_all = df_dept.copy()
+        df_all['_date_p'] = pd.to_datetime(df_all['_date_str'], errors='coerce').dt.date
+        df_all = df_all.dropna(subset=['_date_p']).sort_values('_date_p')
+        
+        # 只抓取過去 180 天內有採購的品項 (活躍品項)
+        past_180_start = today - _dt.timedelta(days=180)
+        active_items = df_all[df_all['_date_p'] >= past_180_start]['_item'].unique()
+        
+        # 建立 occ_copy 的累積 sum 字典，加速查詢區間
+        occ_sorted = occ_copy.sort_values('_date_p').reset_index(drop=True)
+        
+        def get_interval_denom(d1, d2):
+            if d1 > d2: d1, d2 = d2, d1
+            # 取 d1 <= date < d2 的總和 (消耗是發生在兩次採購之間)
+            mask = (occ_sorted['_date_p'] >= d1) & (occ_sorted['_date_p'] < d2)
+            return occ_sorted.loc[mask, denom_col].sum()
             
+        for item in active_items:
+            item_df = df_all[df_all['_item'] == item]
+            
+            # 處理同日或極近期的合併訂單
+            grouped = item_df.groupby('_date_p').agg({'_qty':'sum', '_price':'sum'}).reset_index()
+            grouped = grouped.sort_values('_date_p')
+            n = len(grouped)
+            
+            if n >= 2:
+                intervals = []
+                for i in range(n - 1):
+                    d1 = grouped.iloc[i]['_date_p']
+                    d2 = grouped.iloc[i+1]['_date_p']
+                    denom_sum = get_interval_denom(d1, d2)
+                    if denom_sum > 0:
+                        intervals.append(denom_sum)
+                        
+                if len(intervals) > 0:
+                    rt = pd.Series(intervals).median()
+                    median_value = grouped['_price'].median()
+                    if rt > 0:
+                        dept_target_cpr += (median_value / rt)
+            elif n == 1:
+                # 只有一次採購，算從那次到今天的總消耗
+                d1 = grouped.iloc[0]['_date_p']
+                denom_sum = get_interval_denom(d1, today)
+                if denom_sum > 0:
+                    value = grouped.iloc[0]['_price']
+                    dept_target_cpr += (value / denom_sum)
+                    
+    res['dept_target_cpr'] = dept_target_cpr
+    res['velocity_30d_cpr'] = dept_target_cpr  # 覆蓋原本的 30 天平均以相容舊系統
+
     # --- EOM Forecast (月底預估) ---
     if res['is_past_month']:
         res['eom_forecast_cost'] = res['mtd_cost']
         res['eom_rooms'] = res['mtd_rooms']
         res['eom_forecast_cpr'] = res['mtd_cpr']
     else:
-        past_30_start = today - _dt.timedelta(days=30)
-        past_30_end = today - _dt.timedelta(days=1)
-        
-        velocity_cost = 0.0
-        velocity_rooms = 0.0
-        
-        if not df_dept.empty:
-            df_copy = df_dept.copy()
-            df_copy['_date_p'] = pd.to_datetime(df_copy['_date_str'], errors='coerce').dt.date
-            mask_30d = (df_copy['_date_p'] >= past_30_start) & (df_copy['_date_p'] <= past_30_end)
-            velocity_cost = float(df_copy.loc[mask_30d, '_price'].sum())
-            
-        if occ_df is not None and not occ_df.empty:
-            occ_copy = occ_df.copy()
-            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
-            mask_30d = (occ_copy['_date_p'] >= past_30_start) & (occ_copy['_date_p'] <= past_30_end)
-            velocity_rooms = float(pd.to_numeric(occ_copy.loc[mask_30d, 'sold_rooms'], errors='coerce').sum())
-            
-        if velocity_rooms > 0:
-            res['velocity_30d_cpr'] = velocity_cost / velocity_rooms
-            
         # 計算 EOM Rooms
         start_date = _dt.date(selected_date.year, selected_date.month, 1)
         end_date = _dt.date(selected_date.year, selected_date.month, calendar.monthrange(selected_date.year, selected_date.month)[1])
         
-        if occ_df is not None and not occ_df.empty:
-            occ_copy = occ_df.copy()
-            occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce').dt.date
+        if not occ_copy.empty:
             mask_eom = (occ_copy['_date_p'] >= start_date) & (occ_copy['_date_p'] <= end_date)
-            res['eom_rooms'] = float(pd.to_numeric(occ_copy.loc[mask_eom, 'sold_rooms'], errors='coerce').sum())
+            res['eom_rooms'] = float(occ_copy.loc[mask_eom, denom_col].sum())
             
         remaining_rooms = max(0, res['eom_rooms'] - res['mtd_rooms'])
-        remaining_cost = remaining_rooms * res['velocity_30d_cpr']
+        remaining_cost = remaining_rooms * res['dept_target_cpr']
         
         res['eom_forecast_cost'] = res['mtd_cost'] + remaining_cost
         if res['eom_rooms'] > 0:
@@ -334,6 +389,31 @@ def _render_dept_procurement_modules(
     occ_df:  occ_data DataFrame（含 date, sold_rooms）
     """
     import datetime as _dt_dept
+    import pandas as pd
+    import re
+
+    # === 動態計算房務客數 (Capacity_Pax) 覆寫 sold_rooms ===
+    if occ_df is not None and not occ_df.empty:
+        occ_copy = occ_df.copy()
+        if dept_label == "房務":
+            pax_limits = {
+                'DF': 4, 'F': 4, 'DTP': 3, 'LDT': 2, 'DT': 2,
+                'E': 2, 'DR': 2, 'ER': 2, 'PD': 2, 'PT': 2,
+                'SP': 2, 'S': 2, 'SD': 2
+            }
+            occ_copy['Capacity_Pax'] = 0.0
+            for col in occ_copy.columns:
+                match = re.match(r'^([A-Z]+)\(\d+\)$', str(col).strip())
+                if match:
+                    room_type = match.group(1)
+                    if room_type in pax_limits:
+                        multiplier = pax_limits[room_type]
+                        occ_copy['Capacity_Pax'] += pd.to_numeric(occ_copy[col], errors='coerce').fillna(0) * multiplier
+            
+            if occ_copy['Capacity_Pax'].sum() > 0:
+                occ_copy['sold_rooms'] = occ_copy['Capacity_Pax']
+        
+        occ_df = occ_copy
 
     today_dept = _dt_dept.date.today()
     w90_start  = (today_dept - _dt_dept.timedelta(days=90)).strftime('%Y-%m-%d')
@@ -705,9 +785,13 @@ def _render_dept_procurement_modules(
         st.markdown(f"#### 💰 部門成本與每房預算分析 ({dept_label} CPR)")
         st.caption("💡 結合 PMS 每日住房數與近期採購慣性，動態推算每房成本 (Cost per Room)。預算目標待後續建立基準後調整。")
         
-        cpr_metrics = compute_dept_cpr_metrics(df_dept, occ_df, globals()['selected_date'])
+        cpr_metrics = compute_dept_cpr_metrics(df_dept, occ_df, globals()['selected_date'], dept_label=dept_label)
         
         cpr_c1, cpr_c2 = st.columns(2)
+        
+        # 動態判斷單位
+        unit_str = "客" if dept_label == "房務" else "房"
+        unit_desc = "入客總數" if dept_label == "房務" else "住房數"
         
         with cpr_c1:
             mtd_label = "本月至今實際 (MTD)" if not cpr_metrics['is_past_month'] else "該月最終結算 (Total)"
@@ -716,11 +800,11 @@ def _render_dept_procurement_modules(
 <div style='background:linear-gradient(135deg,#34495e,#2c3e50); padding:20px; border-radius:12px; height:100%;'>
 <p style='margin:0; font-size:15px; color:#b0bec5;'>📊 <b>{mtd_label}</b></p>
 <h2 style='margin:10px 0; color:#ffffff; font-size:2.2rem;'>
-NT$ {cpr_metrics['mtd_cpr']:.1f} <span style='font-size:1rem; color:#90caf9;'>/ 房</span>
+NT$ {cpr_metrics['mtd_cpr']:.1f} <span style='font-size:1rem; color:#90caf9;'>/ {unit_str}</span>
 </h2>
 <div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1);'>
 <p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>累計總花費：<b>NT$ {int(cpr_metrics['mtd_cost']):,}</b></p>
-<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>累計住房數：<b>{int(cpr_metrics['mtd_rooms']):,} 房</b></p>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>累計{unit_desc}：<b>{int(cpr_metrics['mtd_rooms']):,} {unit_str}</b></p>
 <p style='margin:0; font-size:12px; color:#b0bec5;'>{adr_info}</p>
 </div>
 </div>
@@ -735,7 +819,7 @@ NT$ {cpr_metrics['mtd_cpr']:.1f} <span style='font-size:1rem; color:#90caf9;'>/ 
                 eom_rooms = cpr_metrics['mtd_rooms']
             else:
                 eom_label = "月底預估落點 (EOM Forecast)"
-                velocity_info = f"依過去 30 天慣性 <b>NT$ {cpr_metrics['velocity_30d_cpr']:.1f} / 房</b> 推算"
+                velocity_info = f"依 P2P 動態精算基準 (Target CPR) <b>NT$ {cpr_metrics['dept_target_cpr']:.1f} / {unit_str}</b> 推算"
                 eom_cost = cpr_metrics['eom_forecast_cost']
                 eom_cpr = cpr_metrics['eom_forecast_cpr']
                 eom_rooms = cpr_metrics['eom_rooms']
@@ -744,11 +828,11 @@ NT$ {cpr_metrics['mtd_cpr']:.1f} <span style='font-size:1rem; color:#90caf9;'>/ 
 <div style='background:linear-gradient(135deg,#3f4c6b,#606c88); padding:20px; border-radius:12px; height:100%;'>
 <p style='margin:0; font-size:15px; color:#e0e0e0;'>🔮 <b>{eom_label}</b></p>
 <h2 style='margin:10px 0; color:#ffffff; font-size:2.2rem;'>
-NT$ {eom_cpr:.1f} <span style='font-size:1rem; color:#a5d6a7;'>/ 房</span>
+NT$ {eom_cpr:.1f} <span style='font-size:1rem; color:#a5d6a7;'>/ {unit_str}</span>
 </h2>
 <div style='margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1);'>
 <p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>預估總花費：<b>NT$ {int(eom_cost):,}</b></p>
-<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>全月總住房數：<b>{int(eom_rooms):,} 房</b></p>
+<p style='margin:0 0 5px 0; font-size:13px; color:#e0e0e0;'>全月總{unit_desc}：<b>{int(eom_rooms):,} {unit_str}</b></p>
 <p style='margin:0; font-size:12px; color:#b0bec5;'>{velocity_info}</p>
 </div>
 </div>
@@ -4061,14 +4145,6 @@ if current_hotel != "採購":
 if current_hotel != "採購":
     if selected_page == "🧹 房務數據":
         st.header("🧹 房務數據")
-        with st.form(f"form_hk_{date_str}"):
-            st.number_input("今日總清消房數", min_value=0, step=1, key="input_cleaned")
-            st.number_input("退/續數量", min_value=0, step=1, key="input_hk_co")
-            st.number_input("每人平均掃房數", min_value=0.0, step=0.1, key="input_hk_avg")
-            st.number_input("房務請購費用", min_value=0, step=100, key="input_hk_exp")
-            if st.form_submit_button("💾 儲存房務數據", type="primary", use_container_width=True):
-                sync_st_to_db(date_str)
-                st.success("✅ 房務數據已儲存！")
 
         st.markdown("---")
         st.subheader("📦 房務採購紀律分析")
@@ -4088,114 +4164,11 @@ if current_hotel != "採購":
 if current_hotel != "採購":
     if selected_page == "🍽️ 餐廳數據":
         st.header("🍽️ 餐廳數據")
-        st.subheader("📁 數據報表上傳")
-        rest_file = st.file_uploader("上傳餐廳報表 (Excel)，會自動把整份報表寫入資料庫！", type=[
-                                     "xls", "xlsx"], key="rest_uploader")
-
-        if rest_file:
-            # 在寫入前增加預覽區
-            try:
-                # 暫時執行解析 (不存入資料庫)
-                # 為了效率與介面，我們在這裡做個簡化的預覽
-                df_preview = pd.read_excel(rest_file, header=None)
-                st.info("🔍 **報表內容初步掃描：**")
-
-                p_month_rev = 0
-                p_avg_spent = 0
-                found_days = 0
-
-                for i, row in df_preview.iterrows():
-                    row_str = " ".join([str(v) for v in row if pd.notna(v)])
-                    if ('已結算營收' in row_str or '月營收' in row_str) and '早餐' not in row_str and '下午茶' not in row_str:
-                        for v in row:
-                            if any(c.isdigit() for c in str(v)) and not any(k in str(v) for k in ['已結算營收', '月營收']):
-                                try:
-                                    p_month_rev = int(float(str(v).replace(
-                                        'NT$', '').replace('$', '').replace(',', '').strip()))
-                                    break
-                                except:
-                                    pass
-                    if '客單價' in row_str:
-                        for v in row:
-                            if any(c.isdigit() for c in str(v)) and '客單價' not in str(v):
-                                try:
-                                    p_avg_spent = int(float(str(v).replace(
-                                        'NT$', '').replace('$', '').replace(',', '').strip()))
-                                    break
-                                except:
-                                    pass
-                    if re.search(r'\d{1,2}/\d{1,2}', str(row[0])):
-                        found_days += 1
-
-                pv_col1, pv_col2, pv_col3 = st.columns(3)
-                pv_col1.metric("辨識出月結算營收", f"NT$ {p_month_rev:,}")
-                pv_col2.metric("辨識出平均客單價", f"NT$ {p_avg_spent:,}")
-                pv_col3.metric("辨識出每日明細", f"{found_days} 筆")
-
-                if p_month_rev == 0:
-                    st.warning("⚠️ 系統未能從報表中自動找到「月結算營收」，請確認報表格式或手動檢查。")
-
-                if st.button("📥 確認無誤，寫入系統資料庫", key="rest_btn"):
-                    saved_count = parse_and_save_restaurant(
-                        rest_file, selected_date.year)
-                    if saved_count:
-                        st.success(f"✅ 成功更新 {saved_count} 筆每日餐廳資料！")
-                        time.sleep(1)
-                        st.rerun()
-            except Exception as ex:
-                st.error(f"預覽失敗: {ex}")
-
-        st.divider()
-        st.subheader(f"餐廳手動確認區 ({date_str})")
-
-        with st.form(f"form_rest_{date_str}"):
-            st.markdown("#### 🌞 早餐數據")
-            b1, b2, b3 = st.columns(3)
-            b1.number_input("【主題】預估來客", min_value=0, step=1, key="input_bf_theme_est")
-            b1.number_input("【主題】實際來客", min_value=0, step=1, key="input_bf_theme_act")
-
-            b2.number_input("【站前】預估來客", min_value=0, step=1, key="input_bf_zq_est")
-            b2.number_input("【站前】實際來客", min_value=0, step=1, key="input_bf_zq_act")
-
-            b3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_bf_total_est")
-            b3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_bf_total_act")
-
-            st.markdown("#### 🍰 下午茶數據")
-            a1, a2, a3 = st.columns(3)
-            a1.number_input("【主題】預估來客", min_value=0, step=1, key="input_af_theme_est")
-            a1.number_input("【主題】實際來客", min_value=0, step=1, key="input_af_theme_act")
-
-            a2.number_input("【站前】預估來客", min_value=0, step=1, key="input_af_zq_est")
-            a2.number_input("【站前】實際來客", min_value=0, step=1, key="input_af_zq_act")
-
-            a3.number_input("【兩館總和】預估", min_value=0, step=1, key="input_af_total_est")
-            a3.number_input("【兩館總和】實際", min_value=0, step=1, key="input_af_total_act")
-
-            st.markdown("#### 📊 月報結算總數與雜項")
-            c1, c2, c3 = st.columns(3)
-            c1.number_input("已結算營收 (全月)", min_value=0, step=100, key="input_rest_mrev")
-            c2.number_input("平均客單價", min_value=0, step=10, key="input_rest_aspent")
-            c3.number_input("THE PEAK 請購費用", min_value=0, step=100, key="input_rest_exp")
-
-            col_rest1, col_rest2 = st.columns(2)
-            col_rest1.number_input("The Peak 當日來客數", min_value=0, step=1, key="input_peak_act")
-            col_rest2.number_input("Happy Hour 當日來客數", min_value=0, step=1, key="input_hh_act")
-
-            if st.form_submit_button("💾 儲存餐廳數據", type="primary", use_container_width=True):
-                sync_st_to_db(date_str)
-                st.success("✅ 餐廳數據已儲存！")
 
 
 if current_hotel != "採購":
     if selected_page == "🔧 工務數據":
         st.header("🔧 工務數據")
-        with st.form(f"form_maint_{date_str}"):
-            st.number_input("今日待修房數", min_value=0, step=1, key="input_repair")
-            st.text_area("修繕紀錄", key="input_maint_rec")
-            st.number_input("工務請購費用", min_value=0, step=100, key="input_maint_exp")
-            if st.form_submit_button("💾 儲存工務數據", type="primary", use_container_width=True):
-                sync_st_to_db(date_str)
-                st.success("✅ 工務數據已儲存！")
 
         st.markdown("---")
         st.subheader("📦 工務採購紀律分析")
@@ -4236,21 +4209,6 @@ if current_hotel != "採購":
 if current_hotel != "採購":
     if selected_page == "📝 每日營運紀錄":
         st.header("📝 每日營運紀錄")
-
-        st.subheader(f"📋 當日數字手動確認 ({date_str})")
-        with st.form(f"form_daily_{date_str}"):
-            rc1, rc2, rc3 = st.columns(3)
-            rc1.number_input("訂房率 (%)", min_value=0.0, max_value=100.0,
-                             step=0.1, key="input_occ")
-            rc2.number_input("ADR (平均房價)", min_value=0, step=10, key="input_adr")
-            rc3.number_input("總營收", min_value=0, step=100, key="input_rev")
-            rc4, rc5 = st.columns(2)
-            rc4.number_input("總住房數", min_value=0, step=1, key="input_rooms")
-            rc5.number_input("櫃台請購費用", min_value=0, step=100, key="input_counter_exp")
-            st.text_area("負評客訴", key="input_complaints")
-            if st.form_submit_button("💾 儲存當日數據", type="primary", use_container_width=True):
-                sync_st_to_db(date_str)
-                st.success("✅ 當日數據已儲存！")
 
         if selected_week != "--- 關閉週預覽 ---":
             import calendar
