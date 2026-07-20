@@ -2979,149 +2979,7 @@ if current_hotel != "採購":
 
         st.divider()
 
-        # -- 月度累計模式 (MTD Analysis) --
-        st.subheader(f"📅 本月累計分析 (MTD: {selected_date.strftime('%Y-%m')})")
-        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
 
-        try:
-            df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
-            if df_all is not None and not df_all.empty:
-                df_all = standardize_df_dates(df_all)
-                df_all = df_all.drop_duplicates(subset='date', keep='last')
-                df_mtd = df_all[(df_all['date'] >= start_of_month)
-                                & (df_all['date'] <= date_str)].copy()
-            else:
-                df_mtd = pd.DataFrame()
-        except Exception as e:
-            st.sidebar.error(f"⚠️ 讀取數據時發生錯誤: {e}")
-            df_mtd = pd.DataFrame()
-
-        if not df_mtd.empty:
-            for col in ['occ_rate', 'adr', 'revenue', 'total_rooms']:
-                if col in df_mtd.columns:
-                    df_mtd[col] = pd.to_numeric(df_mtd[col].astype(
-                        str).str.replace(',', '').str.replace('%', ''), errors='coerce').fillna(0)
-
-            mtd_rooms = 0.0
-            mtd_rev = 0.0
-            total_sellable = 0.0
-
-            for _, r in df_mtd.iterrows():
-                def clean_num(val):
-                    if pd.isna(val):
-                        return 0.0
-                    try:
-                        return float(str(val).replace(',', '').replace('%', ''))
-                    except:
-                        return 0.0
-
-                o = clean_num(r.get('occ_rate'))
-                adr = clean_num(r.get('adr'))
-                rev = clean_num(r.get('revenue'))
-                rm = clean_num(r.get('total_rooms'))
-
-                if rev == 0 and adr > 0 and rm > 0:
-                    rev = adr * rm
-                if rm == 0 and rev > 0 and adr > 0:
-                    rm = rev / adr
-
-                if rm > 0 or rev > 0:
-                    mtd_rooms += rm
-                    mtd_rev += rev
-                    if o > 0:
-                        total_sellable += (rm / (o / 100.0))
-
-            mtd_occ = (mtd_rooms / total_sellable * 100.0) if total_sellable > 0 else 0.0
-            mtd_adr = (mtd_rev / mtd_rooms) if mtd_rooms > 0 else 0.0
-
-            # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
-            fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
-            rest_mrev = fb['revenue']
-            grand_total_rev = mtd_rev + rest_mrev
-
-            # 顯示四大指標
-            st.write("##### 🏨 房務營運 MTD")
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(make_card(
-                "MTD 累計住房率", f"{mtd_occ:.1f}%", "card-theme-blue", "card-bg-dark", "🏨"), unsafe_allow_html=True)
-            c2.markdown(make_card("MTD 累計 ADR", f"NT$ {int(mtd_adr):,}",
-                        "card-theme-green", "card-bg-dark", "💳"), unsafe_allow_html=True)
-            c3.markdown(make_card("MTD 房務累計營收", f"NT$ {int(mtd_rev):,}",
-                        "card-theme-orange", "card-bg-dark", "💰"), unsafe_allow_html=True)
-
-            st.write("##### 🏁 全館合併營收 (MTD)")
-            g1, g2 = st.columns([1, 2])
-            g1.markdown(make_card("餐廳結算營收", f"NT$ {int(rest_mrev):,}",
-                        "card-theme-purple", "card-bg-dark", "🍽️"), unsafe_allow_html=True)
-            g2.markdown(make_card("✨ 全館 MTD 總營收", f"NT$ {int(grand_total_rev):,}",
-                        "card-theme-red", "card-bg-dark", "🚀"), unsafe_allow_html=True)
-
-            st.markdown(
-                "<br><hr style='margin: 5px 0; border: 1px dashed #ddd;'>", unsafe_allow_html=True)
-            st.write("##### 🍽️ 餐廳營運累計 (MTD)")
-
-            if fb['error']:
-                st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
-
-            mtd_bf_theme = fb['bf_theme_act']
-            mtd_bf_zq    = fb['bf_zq_act']
-            mtd_af_theme = fb['af_theme_act']
-            mtd_af_zq    = fb['af_zq_act']
-            mtd_total_bf_act = fb['total_act_bf']
-            mtd_total_af_act = fb['total_act_af']
-
-            active_bf_days = fb['matched_days']
-            active_af_days = fb.get('active_af_days', active_bf_days)
-            avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
-            avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
-            mtd_avg_total = avg_total_bf + avg_total_af
-
-            rest_avg_spent = fb['avg_spent']
-
-            st.markdown(
-                "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
-            sz1, sz2, sz3 = st.columns(3)
-            sz1.markdown(make_card(
-                "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-            sz2.markdown(make_card(
-                "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-            sz3.markdown(make_card(
-                "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
-
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
-            st1, st2, st3 = st.columns(3)
-            st1.markdown(make_card(
-                "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-            st2.markdown(make_card(
-                "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-            st3.markdown(make_card(
-                "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
-
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
-                        "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
-            m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
-                        "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
-            m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
-                        "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
-            m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
-                        "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
-
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
-            a1, a2, a3 = st.columns(3)
-            a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
-                        "card-theme-orange", "", "✨"), unsafe_allow_html=True)
-            a2.markdown(make_card(
-                "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
-            a3.markdown(make_card(
-                "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
-
-        else:
-            st.info("💡 資料庫中目前尚未有這個月的記錄。")
 
 
 if current_hotel != "採購":
@@ -4164,7 +4022,73 @@ if current_hotel != "採購":
 if current_hotel != "採購":
     if selected_page == "🍽️ 餐廳數據":
         st.header("🍽️ 餐廳數據")
+        
+        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
+        # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
+        fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
+        rest_mrev = fb['revenue']
 
+        st.write("##### 🍽️ 餐廳營運累計 (MTD)")
+
+        if fb['error']:
+            st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
+
+        mtd_bf_theme = fb['bf_theme_act']
+        mtd_bf_zq    = fb['bf_zq_act']
+        mtd_af_theme = fb['af_theme_act']
+        mtd_af_zq    = fb['af_zq_act']
+        mtd_total_bf_act = fb['total_act_bf']
+        mtd_total_af_act = fb['total_act_af']
+
+        active_bf_days = fb['matched_days']
+        active_af_days = fb.get('active_af_days', active_bf_days)
+        avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
+        avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
+        mtd_avg_total = avg_total_bf + avg_total_af
+
+        rest_avg_spent = fb['avg_spent']
+
+        st.markdown(
+            "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
+        sz1, sz2, sz3 = st.columns(3)
+        sz1.markdown(make_card(
+            "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+        sz2.markdown(make_card(
+            "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+        sz3.markdown(make_card(
+            "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
+        st1, st2, st3 = st.columns(3)
+        st1.markdown(make_card(
+            "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+        st2.markdown(make_card(
+            "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+        st3.markdown(make_card(
+            "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
+                    "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
+        m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
+                    "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
+        m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
+                    "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
+        m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
+                    "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
+
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
+        a1, a2, a3 = st.columns(3)
+        a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
+                    "card-theme-orange", "", "✨"), unsafe_allow_html=True)
+        a2.markdown(make_card(
+            "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
+        a3.markdown(make_card(
+            "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
 
 if current_hotel != "採購":
     if selected_page == "🔧 工務數據":
