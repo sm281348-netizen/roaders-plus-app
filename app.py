@@ -2986,6 +2986,42 @@ if current_hotel != "採購":
         _df_all_purch = _get_all_purchase_clean()
         _occ = _get_occ_data_cached_v2()
         
+        # --- 將各部門即時日報表 (Live Carts) 併入母體數據，確保 CPOR 是最即時的 ---
+        all_live = []
+        try:
+            carts = [
+                (fetch_hk_daily_purchase_report(), '房務'),
+                (fetch_fd_daily_purchase_report(), '櫃台'),
+                (fetch_cs_daily_purchase_report(), '工務'),
+                (fetch_thepeak_daily_purchase_report(), 'The Peak'),
+                (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
+            ]
+            for df_daily, default_dept in carts:
+                if df_daily is not None and not df_daily.empty:
+                    d_col = next((c for c in df_daily.columns if '日期' in c), None)
+                    i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
+                    p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                    if d_col and i_col and p_col:
+                        df_conv = pd.DataFrame()
+                        df_conv['_date_parsed'] = pd.to_datetime(df_daily[d_col], errors='coerce')
+                        df_conv = df_conv[df_conv['_date_parsed'].notna()].copy()
+                        df_conv['_date_str'] = df_conv['_date_parsed'].dt.strftime('%Y-%m-%d')
+                        df_conv['_item'] = df_daily[i_col].astype(str).str.strip()
+                        df_conv['_price'] = pd.to_numeric(df_daily[p_col], errors='coerce').fillna(0.0)
+                        df_conv['_dept'] = default_dept
+                        all_live.append(df_conv)
+            if all_live:
+                df_live_combined = pd.concat(all_live, ignore_index=True)
+                if not _df_all_purch.empty:
+                    official_records = set(zip(_df_all_purch['_date_str'], _df_all_purch['_item']))
+                    mask = df_live_combined.apply(lambda row: (row['_date_str'], row['_item']) not in official_records, axis=1)
+                    df_live_combined = df_live_combined[mask]
+                    _df_all_purch = pd.concat([_df_all_purch, df_live_combined], ignore_index=True)
+                else:
+                    _df_all_purch = df_live_combined
+        except Exception:
+            pass
+        
         total_forecast_cost = 0.0
         eom_rooms_base = 0
         
