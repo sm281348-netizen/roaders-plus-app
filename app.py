@@ -2979,8 +2979,49 @@ if current_hotel != "採購":
 
         st.divider()
 
+        # --- 全館即時動態成本 (Rolling CPOR) 計算 ---
+        st.subheader("💎 即時利潤戰情看板 (Rolling CPOR)")
+        st.caption("💡 系統自動撈取各部門 (房務/櫃台/工務)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。")
+        
+        _df_all_purch = _get_all_purchase_clean()
+        _occ = _get_occ_data_cached_v2()
+        
+        total_forecast_cost = 0.0
+        eom_rooms_base = 0
+        
+        for dept in ['房務', '櫃台', '工務']:
+            df_d = _df_all_purch[_df_all_purch['_dept'].str.strip() == dept] if not _df_all_purch.empty else pd.DataFrame()
+            metrics = compute_dept_cpr_metrics(df_d, _occ, selected_date, dept_label=dept)
+            total_forecast_cost += metrics.get('eom_forecast_cost', 0.0)
+            if dept == '櫃台': # 櫃台是用純房間數計算的，適合當作全館除數
+                eom_rooms_base = metrics.get('eom_rooms', 0)
+                
+        cpor_val = (total_forecast_cost / eom_rooms_base) if eom_rooms_base > 0 else 0
+        net_profit = adr_val - cpor_val if adr_val > 0 else 0
+        
+        live_spend = 0
+        today_str = date_str
+        
+        def get_live_spend(df_report):
+            if df_report is None or df_report.empty: return 0
+            date_col = next((c for c in df_report.columns if '日期' in c), None)
+            price_col = next((c for c in df_report.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+            if not date_col or not price_col: return 0
+            df_rep = df_report.copy()
+            df_rep['_dt'] = pd.to_datetime(df_rep[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+            return pd.to_numeric(df_rep[df_rep['_dt'] == today_str][price_col], errors='coerce').fillna(0).sum()
 
+        try:
+            live_spend += get_live_spend(fetch_hk_daily_purchase_report())
+            live_spend += get_live_spend(fetch_fd_daily_purchase_report())
+            live_spend += get_live_spend(fetch_cs_daily_purchase_report())
+        except:
+            pass
 
+        r1, r2, r3 = st.columns(3)
+        r1.markdown(make_card("動態單房成本 (Rolling CPOR)", f"NT$ {int(cpor_val):,}", "card-theme-red", "card-bg-dark", "📉"), unsafe_allow_html=True)
+        r2.markdown(make_card("單房即時淨利 (Net RevPOR)", f"NT$ {int(net_profit):,}", "card-theme-green", "card-bg-dark", "💎"), unsafe_allow_html=True)
+        r3.markdown(make_card("今日各部採購 (Live Spend)", f"NT$ {int(live_spend):,}", "card-theme-orange", "card-bg-dark", "💸"), unsafe_allow_html=True)
 
 if current_hotel != "採購":
     if selected_page == "📈 月分析專區":
