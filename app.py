@@ -4370,70 +4370,48 @@ if selected_page == "💰 採購分析":
                 zip(df_purchase[dept_col].astype(str).str.strip(), _ym_series.fillna(''))
             )
 
-            # --- 新增：將 thepeak_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
-            df_daily_report = fetch_thepeak_daily_purchase_report()
-            if not df_daily_report.empty and '總價' in df_daily_report.columns:
-                append_df = pd.DataFrame()
-                if '請購日期' in df_daily_report.columns:
-                    append_df['日期'] = pd.to_datetime(df_daily_report['請購日期'], errors='coerce').dt.date
-                elif '叫貨日' in df_daily_report.columns:
-                    append_df['日期'] = pd.to_datetime(df_daily_report['叫貨日'], errors='coerce').dt.date
-                append_df[dept_col] = "The Peak"
-                append_df[total_col] = pd.to_numeric(df_daily_report['總價'], errors='coerce').fillna(0)
+            # --- 新增：將所有部門的即時日報表 (Live Carts) 無縫匯入 df_purchase 以供全域呈現 ---
+            try:
+                carts = [
+                    (fetch_hk_daily_purchase_report(), '房務'),
+                    (fetch_fd_daily_purchase_report(), '櫃台'),
+                    (fetch_cs_daily_purchase_report(), '工務'),
+                    (fetch_thepeak_daily_purchase_report(), 'The Peak'),
+                    (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
+                ]
                 
-                # 只排除「The Peak」這個部門在官方總表中已有的月份，不影響其他部門
-                append_df['ym'] = pd.to_datetime(append_df['日期'], errors='coerce').dt.strftime('%Y-%m')
-                append_df['_dept_ym'] = list(zip(append_df[dept_col].astype(str), append_df['ym'].fillna('')))
-                append_df = append_df[~append_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
-
-                if not append_df.empty:
-                    # 嘗試對應品名欄位以顯示在明細中
-                    item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
-                    if '品項名稱' in df_daily_report.columns:
-                        item_str = df_daily_report['品項名稱'].astype(str)
-                        if '請購數量' in df_daily_report.columns and '單位' in df_daily_report.columns:
-                            item_str += " (" + df_daily_report['請購數量'].astype(str) + " " + df_daily_report['單位'].astype(str) + ")"
-                        
-                        if item_desc_col:
-                            append_df[item_desc_col] = item_str
-                        else:
-                            append_df['備註(系統生成)'] = item_str
-                    
-                    df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
-                    df_purchase = df_purchase[df_purchase['日期'].notna()]
-
-            # --- 新增：將 4FHH_daily_purchase_report 無縫匯入 df_purchase 以供全域呈現 ---
-            df_hh_report = fetch_4fhh_daily_purchase_report()
-            if not df_hh_report.empty and '總價' in df_hh_report.columns:
-                append_hh_df = pd.DataFrame()
-                if '請購日期' in df_hh_report.columns:
-                    append_hh_df['日期'] = pd.to_datetime(df_hh_report['請購日期'], errors='coerce').dt.date
-                elif '叫貨日' in df_hh_report.columns:
-                    append_hh_df['日期'] = pd.to_datetime(df_hh_report['叫貨日'], errors='coerce').dt.date
-                append_hh_df[dept_col] = "Happy Hour"
-                append_hh_df[total_col] = pd.to_numeric(df_hh_report['總價'], errors='coerce').fillna(0)
-                
-                # 只排除「Happy Hour」這個部門在官方總表中已有的月份，不影響其他部門
-                append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期'], errors='coerce').dt.strftime('%Y-%m')
-                append_hh_df['_dept_ym'] = list(zip(append_hh_df[dept_col].astype(str), append_hh_df['ym'].fillna('')))
-                append_hh_df = append_hh_df[~append_hh_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
-
-                if not append_hh_df.empty:
-                    # 嘗試對應品名欄位以顯示在明細中
-                    item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
-                    if '品項名稱' in df_hh_report.columns:
-                        item_str = df_hh_report['品項名稱'].astype(str)
-                        if '請購數量' in df_hh_report.columns and '單位' in df_hh_report.columns:
-                            item_str += " (" + df_hh_report['請購數量'].astype(str) + " " + df_hh_report['單位'].astype(str) + ")"
-                        
-                        if item_desc_col:
-                            append_hh_df[item_desc_col] = item_str
-                        else:
-                            append_hh_df['備註(系統生成)'] = item_str
-                    
-                    df_purchase = pd.concat([df_purchase, append_hh_df], ignore_index=True)
-                    df_purchase = df_purchase[df_purchase['日期'].notna()]
-
+                for df_daily, default_dept in carts:
+                    if df_daily is not None and not df_daily.empty:
+                        d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '叫貨日' in c), None)
+                        i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
+                        p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                        if d_col and p_col:
+                            append_df = pd.DataFrame()
+                            append_df['日期'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.date
+                            append_df[dept_col] = default_dept
+                            append_df[total_col] = pd.to_numeric(df_daily[p_col], errors='coerce').fillna(0)
+                            
+                            append_df['ym'] = pd.to_datetime(append_df['日期'], errors='coerce').dt.strftime('%Y-%m')
+                            append_df['_dept_ym'] = list(zip(append_df[dept_col].astype(str), append_df['ym'].fillna('')))
+                            append_df = append_df[~append_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
+                            
+                            if not append_df.empty:
+                                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                                if i_col and i_col in df_daily.columns:
+                                    item_str = df_daily[i_col].astype(str)
+                                    q_col = next((c for c in df_daily.columns if '數量' in c), None)
+                                    u_col = next((c for c in df_daily.columns if '單位' in c), None)
+                                    if q_col and u_col:
+                                        item_str += " (" + df_daily[q_col].astype(str) + " " + df_daily[u_col].astype(str) + ")"
+                                    if item_desc_col:
+                                        append_df[item_desc_col] = item_str
+                                    else:
+                                        append_df['備註(系統生成)'] = item_str
+                                
+                                df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+                                df_purchase = df_purchase[df_purchase['日期'].notna()]
+            except Exception:
+                pass
 
             # 過濾當月數據
             m_start = selected_date.replace(day=1)
