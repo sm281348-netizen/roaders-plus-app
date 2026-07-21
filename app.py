@@ -2981,7 +2981,7 @@ if current_hotel != "採購":
 
         # --- 全館即時動態成本 (Rolling CPOR) 計算 ---
         st.subheader("💎 即時利潤戰情看板 (Rolling CPOR)")
-        st.caption("💡 系統自動撈取全館各部門 (含餐飲)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。")
+        st.caption("💡 系統自動撈取全館各部門 (含餐飲)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。\\n⚠️ **提醒：房務耗品受「客數(Pax)」驅動，若今日 CPOR 偏高，通常是因為四人房等多客數房型賣得較多。**")
         
         _df_all_purch = _get_all_purchase_clean()
         _occ = _get_occ_data_cached_v2()
@@ -3024,9 +3024,10 @@ if current_hotel != "採購":
         
         total_forecast_cost = 0.0
         eom_rooms_base = 0
+        mtd_rooms_base = 0
         
         all_purch_depts = _df_all_purch['_dept'].dropna().astype(str).unique().tolist() if not _df_all_purch.empty else []
-        target_depts = ['房務', '櫃台', '工務']
+        target_depts = ['房務', '櫃台'] # 漏洞二修補：工務部不列入常態均攤成本
         for d in all_purch_depts:
             d_up = d.upper()
             if any(k in d_up for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲', 'HH', 'HAPPY HOUR', '4FHH', 'HAPPYHOUR', '歡樂時光']):
@@ -3039,9 +3040,18 @@ if current_hotel != "採購":
             total_forecast_cost += metrics.get('eom_forecast_cost', 0.0)
             if dept == '櫃台': # 櫃台是用純房間數計算的，適合當作全館除數
                 eom_rooms_base = metrics.get('eom_rooms', 0)
+                mtd_rooms_base = metrics.get('mtd_rooms', 0)
                 
         cpor_val = (total_forecast_cost / eom_rooms_base) if eom_rooms_base > 0 else 0
-        net_profit = adr_val - cpor_val if adr_val > 0 else 0
+        
+        # 漏洞一修補：計算 TRevPOR (總營收 = 客房 ADR + 餐廳均攤營收)
+        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
+        fb_data = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
+        rest_mrev = fb_data.get('revenue', 0) if fb_data else 0
+        fb_revpor = (rest_mrev / mtd_rooms_base) if mtd_rooms_base > 0 else 0
+        
+        trevpor_val = adr_val + fb_revpor
+        net_profit = trevpor_val - cpor_val if trevpor_val > 0 else 0
         
         live_spend = 0
         today_str = date_str
@@ -3066,7 +3076,7 @@ if current_hotel != "採購":
 
         r1, r2, r3 = st.columns(3)
         r1.markdown(make_card("動態單房成本 (Rolling CPOR)", f"NT$ {int(cpor_val):,}", "card-theme-red", "card-bg-dark", "📉"), unsafe_allow_html=True)
-        r2.markdown(make_card("單房即時淨利 (Net RevPOR)", f"NT$ {int(net_profit):,}", "card-theme-green", "card-bg-dark", "💎"), unsafe_allow_html=True)
+        r2.markdown(make_card("單房即時淨利 (Net TRevPOR)", f"NT$ {int(net_profit):,}", "card-theme-green", "card-bg-dark", "💎"), unsafe_allow_html=True)
         r3.markdown(make_card("今日各部採購 (Live Spend)", f"NT$ {int(live_spend):,}", "card-theme-orange", "card-bg-dark", "💸"), unsafe_allow_html=True)
 
 if current_hotel != "採購":
