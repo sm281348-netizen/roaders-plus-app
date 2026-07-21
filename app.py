@@ -7586,8 +7586,12 @@ if current_hotel != "採購":
             try:
                 df = conn.read(worksheet="employees", ttl="0")
                 if df is not None and not df.empty and 'employee_id' in df.columns:
-                    df['employee_id'] = df['employee_id'].astype(str)
-                    df = df[df['employee_id'] != str(e_id)]
+                    df['employee_id'] = df['employee_id'].astype(str).str.strip()
+                    df['employee_id'] = df['employee_id'].str.replace(r'\.0$', '', regex=True)
+                    target_id = str(e_id).strip()
+                    import re
+                    target_id = re.sub(r'\.0$', '', target_id)
+                    df = df[df['employee_id'] != target_id]
                     conn.update(worksheet="employees", data=df.fillna(""))
                 get_all_employees_cached.clear()
             except:
