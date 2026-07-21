@@ -3297,8 +3297,14 @@ if current_hotel != "採購":
             adr_points = base_adr.mark_circle(color='black', size=100, stroke='white', strokeWidth=1.5).encode(
                 y=alt.Y('adr:Q', scale=adr_scale)
             )
+            adr_text = base_adr.mark_text(
+                align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#ff9f43'
+            ).encode(
+                y=alt.Y('adr:Q', scale=adr_scale),
+                text=alt.Text('adr:Q', format=',.0f')
+            )
 
-            adr_layers = [adr_line, adr_points]
+            adr_layers = [adr_line, adr_points, adr_text]
 
             # 繪製全月平均 ADR 紅色基準線與右側數值標記
             if avg_adr > 0:
@@ -3390,7 +3396,7 @@ if current_hotel != "採購":
             if yoy_adr_min == yoy_adr_max:
                 yoy_adr_max += 1000
 
-            yoy_chart = alt.Chart(df_yoy).mark_line(point=True, strokeWidth=3).encode(
+            yoy_base = alt.Chart(df_yoy).encode(
                 x=alt.X('day:O', title='日期 (Day of Month)'),
                 y=alt.Y('adr:Q', title='平均房價 (NT$)', scale=alt.Scale(
                     domain=[yoy_adr_min, yoy_adr_max], zero=False)),
@@ -3399,10 +3405,18 @@ if current_hotel != "採購":
                                                 '#ff9f43', '#bdc3c7']),
                                 legend=alt.Legend(title="年份", orient="top-left")
                                 ),
-                strokeDash=alt.condition(
-                    alt.datum.year == '去年', alt.value([5, 5]), alt.value([0])),
                 tooltip=['day', 'year', 'adr']
-            ).properties(height=350)
+            )
+            yoy_line = yoy_base.mark_line(point=True, strokeWidth=3).encode(
+                strokeDash=alt.condition(
+                    alt.datum.year == '去年', alt.value([5, 5]), alt.value([0]))
+            )
+            yoy_text = yoy_base.mark_text(
+                align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold'
+            ).encode(
+                text=alt.Text('adr:Q', format=',.0f')
+            )
+            yoy_chart = alt.layer(yoy_line, yoy_text).properties(height=350)
 
             st.altair_chart(yoy_chart, use_container_width=True)
 
@@ -5323,6 +5337,11 @@ if selected_page == "💰 採購分析":
                                     'CPG:Q', title='CPG (NT$)', format=',.0f')
                             ]
                         )
+                        cpg_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
+                            x=alt.X('月份:N', sort=None),
+                            y=alt.Y('CPG:Q'),
+                            text=alt.Text('CPG:Q', format=',.0f')
+                        )
 
                         target_line = alt.Chart(pd.DataFrame({'y': [150]})).mark_rule(
                             color='#1f2c56', strokeDash=[6, 3], strokeWidth=1.5, opacity=0.5
@@ -5332,7 +5351,7 @@ if selected_page == "💰 採購分析":
                         ).encode(x='x:N', y='y:Q', text='text:N')
 
                         cpg_layer = alt.layer(
-                            cpg_line, target_line, target_label)
+                            cpg_line, cpg_text, target_line, target_label)
 
                         # 右軸：大盤指數 紅虛線
                         has_index_data = False
@@ -5350,7 +5369,12 @@ if selected_page == "💰 採購分析":
                                         'index:Q', title='菜商指數', format=',.1f')
                                 ]
                             )
-                            chart = alt.layer(cpg_layer, idx_line).resolve_scale(
+                            idx_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+                                x=alt.X('月份:N', sort=None),
+                                y=alt.Y('index:Q'),
+                                text=alt.Text('index:Q', format=',.1f')
+                            )
+                            chart = alt.layer(cpg_layer, alt.layer(idx_line, idx_text)).resolve_scale(
                                 y='independent')
 
                             if valid_idx_count < 2:
@@ -5434,7 +5458,7 @@ if selected_page == "💰 採購分析":
                         )
                         color_map = {'採購(%)': '#e67e22', '來客(%)': '#2980b9'}
 
-                        corr_chart = alt.Chart(melt_df).mark_line(point=True, strokeWidth=2.5).encode(
+                        corr_chart_line = alt.Chart(melt_df).mark_line(point=True, strokeWidth=2.5).encode(
                             x=alt.X('週次:N', title='週次', sort=None),
                             y=alt.Y('標準化數值:Q', title='相對比例 (% of max)',
                                     scale=alt.Scale(domain=[0, 110])),
@@ -5453,7 +5477,14 @@ if selected_page == "💰 採購分析":
                                     '來客人數:Q', title='來客人數 (人)', format=',.0f'),
                                 alt.Tooltip('背道而馳:N', title='健康狀態'),
                             ]
-                        ).properties(height=220)
+                        )
+                        corr_chart_text = alt.Chart(melt_df).mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+                            x=alt.X('週次:N', sort=None),
+                            y=alt.Y('標準化數值:Q'),
+                            text=alt.Text('標準化數值:Q', format=',.1f'),
+                            color=alt.Color('指標:N', scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())))
+                        )
+                        corr_chart = alt.layer(corr_chart_line, corr_chart_text).properties(height=220)
 
                         st.altair_chart(corr_chart, use_container_width=True)
 
@@ -5542,8 +5573,12 @@ if selected_page == "💰 採購分析":
                         tooltip=['日期_str', alt.Tooltip('cum_peak_guests', title='累計來客'), alt.Tooltip(
                             'cum_peak_cost', title='累計採購'), alt.Tooltip('cum_peak_cpg', format='.0f', title='累計 CPG')]
                     )
+                    peak_text = base_chart.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
+                        y=alt.Y('cum_peak_cpg:Q'),
+                        text=alt.Text('cum_peak_cpg:Q', format=',.0f')
+                    )
 
-                    st.altair_chart(peak_line.properties(
+                    st.altair_chart(alt.layer(peak_line, peak_text).properties(
                         title="The Peak 累計平均成本趨勢", height=300), use_container_width=True)
 
                     if total_hh_guests > 0:
@@ -5573,8 +5608,12 @@ if selected_page == "💰 採購分析":
                             tooltip=['日期_str', alt.Tooltip(
                                 'cum_hh_guests', title='累計人數')]
                         )
+                        hh_guest_text = hh_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e67e22').encode(
+                            y=alt.Y('cum_hh_guests:Q'),
+                            text=alt.Text('cum_hh_guests:Q', format=',.0f')
+                        )
 
-                        st.altair_chart(alt.layer(hh_bar, hh_guest_line).resolve_scale(y='independent').properties(
+                        st.altair_chart(alt.layer(hh_bar, hh_guest_line, hh_guest_text).resolve_scale(y='independent').properties(
                             title="Happy Hour 累計趨勢 (長條:成本, 虛線:人數)", height=300), use_container_width=True)
 
                     # --- 新增：雙冠日食材消耗對比分析 (Dynamic CPG Analysis) ---
@@ -6954,19 +6993,30 @@ if selected_page == "🛒 菜價分析":
                         chart_df = index_df.melt(id_vars=['period_str', 'month_label'], value_vars=['index', 'weighted_index'], var_name='index_type', value_name='index_value')
                         chart_df['index_type'] = chart_df['index_type'].map({'index': '大盤報價指數 (等權重)', 'weighted_index': '真實採購通膨指數 (用量加權)'})
                         
-                        line_chart = alt.Chart(chart_df).mark_line(point=True, strokeWidth=3).encode(
+                        line_chart_base = alt.Chart(chart_df).encode(
                             x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
                             y=alt.Y('index_value:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
                             color=alt.Color('index_type:N', legend=alt.Legend(title='指數類型', orient='bottom')),
-                            strokeDash=alt.condition(alt.datum.index_type == '大盤報價指數 (等權重)', alt.value([5, 5]), alt.value([0])),
                             tooltip=['period_str:N', 'index_type:N', alt.Tooltip('index_value:Q', title='指數', format='.1f')]
                         )
+                        line_chart_line = line_chart_base.mark_line(point=True, strokeWidth=3).encode(
+                            strokeDash=alt.condition(alt.datum.index_type == '大盤報價指數 (等權重)', alt.value([5, 5]), alt.value([0]))
+                        )
+                        line_chart_text = line_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+                            text=alt.Text('index_value:Q', format='.1f')
+                        )
+                        line_chart = alt.layer(line_chart_line, line_chart_text)
                     else:
-                        line_chart = alt.Chart(index_df).mark_line(point=True, strokeWidth=3, color='#e74c3c').encode(
+                        line_chart_base = alt.Chart(index_df).encode(
                             x=alt.X('period_str:O', title='期別', axis=alt.Axis(labelAngle=-30)),
                             y=alt.Y('index:Q', title='指數', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
                             tooltip=[alt.Tooltip('period_str:N', title='期別'), alt.Tooltip('index:Q', title='大盤指數', format='.1f')]
                         )
+                        line_chart_line = line_chart_base.mark_line(point=True, strokeWidth=3, color='#e74c3c')
+                        line_chart_text = line_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+                            text=alt.Text('index:Q', format='.1f')
+                        )
+                        line_chart = alt.layer(line_chart_line, line_chart_text)
 
                     base_line = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
                         strokeDash=[5, 5], color='gray').encode(y='y:Q')
@@ -7320,7 +7370,7 @@ if selected_page == "🛒 菜價分析":
                 trend_df['period_str'] = trend_df['period_dt'].astype(str)
                 price_min = int(trend_df['price'].min() * 0.85)
                 price_max = int(trend_df['price'].max() * 1.15)
-                trend_chart = alt.Chart(trend_df).mark_line(point=True, strokeWidth=2).encode(
+                trend_chart_base = alt.Chart(trend_df).encode(
                     x=alt.X('period_str:O', title='期別',
                             axis=alt.Axis(labelAngle=-30)),
                     y=alt.Y('price:Q', title='單價', scale=alt.Scale(
@@ -7333,7 +7383,12 @@ if selected_page == "🛒 菜價分析":
                         alt.Tooltip('price:Q', title='單價', format='.1f'),
                         alt.Tooltip('unit:N', title='單位'),
                     ]
-                ).properties(height=380)
+                )
+                trend_chart_line = trend_chart_base.mark_line(point=True, strokeWidth=2)
+                trend_chart_text = trend_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+                    text=alt.Text('price:Q', format='.0f')
+                )
+                trend_chart = alt.layer(trend_chart_line, trend_chart_text).properties(height=380)
                 st.altair_chart(trend_chart, use_container_width=True)
             st.divider()
         else:
@@ -8267,10 +8322,15 @@ def render_nationality_tab():
         )
         
         # Line chart for ADR
-        line = base.mark_line(color='#e74c3c', point=True).encode(
+        line_base = base.mark_line(color='#e74c3c', point=True).encode(
             y=alt.Y('adr:Q', title='平均房價 ADR (NTD)'),
             tooltip=['nation', 'adr']
         )
+        line_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+            y=alt.Y('adr:Q'),
+            text=alt.Text('adr:Q', format=',.0f')
+        )
+        line = alt.layer(line_base, line_text)
         
         # Layer them
         combo = alt.layer(bar, line).resolve_scale(y='independent').properties(height=350)
@@ -8779,8 +8839,19 @@ def render_report_tab():
     
     if not df_trends.empty:
         base = alt.Chart(df_trends).encode(x=alt.X('month_dt:T', title='月份', axis=alt.Axis(format='%m月')))
-        line_occ = base.mark_line(color='#3498db', point=True).encode(y=alt.Y('occ:Q', title='OCC (%)', scale=alt.Scale(domain=[0, 100])))
-        line_adr = base.mark_line(color='#e74c3c', point=True).encode(y=alt.Y('adr:Q', title='ADR (NT$)'))
+        line_occ_base = base.mark_line(color='#3498db', point=True).encode(y=alt.Y('occ:Q', title='OCC (%)', scale=alt.Scale(domain=[0, 100])))
+        line_occ_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#3498db').encode(
+            y=alt.Y('occ:Q'),
+            text=alt.Text('occ:Q', format='.1f')
+        )
+        line_occ = alt.layer(line_occ_base, line_occ_text)
+        
+        line_adr_base = base.mark_line(color='#e74c3c', point=True).encode(y=alt.Y('adr:Q', title='ADR (NT$)'))
+        line_adr_text = base.mark_text(align='center', baseline='top', dy=10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+            y=alt.Y('adr:Q'),
+            text=alt.Text('adr:Q', format=',.0f')
+        )
+        line_adr = alt.layer(line_adr_base, line_adr_text)
         
         st.altair_chart(alt.layer(line_occ, line_adr).resolve_scale(y='independent'), use_container_width=True)
         
@@ -8903,12 +8974,17 @@ def render_report_tab():
             {"月份": f"{year}-{month:02d}", "類別": "下午茶", "到客率": m_af_rate},
         ]
         df_arr = pd.DataFrame(arr_data)
-        chart = alt.Chart(df_arr).mark_line(point=True).encode(
+        chart_base = alt.Chart(df_arr).encode(
             x=alt.X('月份:N', sort=None),
             y=alt.Y('到客率:Q', title='到客率 (%)'),
             color='類別:N',
             tooltip=['月份', '類別', alt.Tooltip('到客率', format='.1f')]
-        ).properties(height=300)
+        )
+        chart_line = chart_base.mark_line(point=True)
+        chart_text = chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+            text=alt.Text('到客率:Q', format='.1f')
+        )
+        chart = alt.layer(chart_line, chart_text).properties(height=300)
         st.altair_chart(chart, use_container_width=True)
         
     with fb_tab3:
