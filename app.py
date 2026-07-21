@@ -8401,6 +8401,11 @@ def render_report_tab():
                         
                     bf_sum += (r['bf_total_act'] if r['bf_total_act'] > 0 else r['bf_act'])
                     af_sum += (r['af_total_act'] if r['af_total_act'] > 0 else r['af_act'])
+                    
+                    # Accumulate estimates for accurate Arrival Rate calculation (Actual / Est)
+                    bf_est_sum += r.get('bf_est', 0)
+                    af_est_sum += r.get('af_est', 0)
+                    
                     hh_sum += r['hh_act']
                     fb_rev += r['revenue']
                     if 'total_guests' in r: total_hotel_guests += r['total_guests']
@@ -8409,6 +8414,8 @@ def render_report_tab():
                 'total_fb_guests': g,
                 'bf': bf_sum,
                 'af': af_sum,
+                'bf_est': bf_est_sum,
+                'af_est': af_est_sum,
                 'hh': hh_sum,
                 'fb_rev': fb_rev,
                 'elapsed_days': elapsed_days,
