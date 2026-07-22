@@ -4596,6 +4596,92 @@ if selected_page == "💰 採購分析":
                     st.error(f"對帳工具發生錯誤: {e}")
             # === 結束對帳小幫手 ===
 
+            # === 新增：本月 vs 上月 採購差異分析 (MoM) ===
+            with st.expander("📈 本月 vs 上月 採購品項差異分析 (MoM Comparison)"):
+                st.markdown("比對「本月」與「上月」的官方採購明細，協助您快速找出成本增加的主因、新進品項，或已經停止叫貨的品項。")
+                try:
+                    if not df_month.empty and not df_prev_month.empty:
+                        def _get_cart_bucket_for_mom(d):
+                            d_upper = str(d).upper()
+                            if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
+                            if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
+                            return str(d).strip()
+                            
+                        # 處理本月 (The Peak)
+                        _df_m = df_month.copy()
+                        _df_m['Bucket'] = _df_m[dept_col].apply(_get_cart_bucket_for_mom)
+                        m_df = _df_m[_df_m['Bucket'] == 'The Peak'].copy()
+                        
+                        # 處理上月 (The Peak)
+                        _df_pm = df_prev_month.copy()
+                        _df_pm['Bucket'] = _df_pm[dept_col].apply(_get_cart_bucket_for_mom)
+                        pm_df = _df_pm[_df_pm['Bucket'] == 'The Peak'].copy()
+                        
+                        if not m_df.empty and not pm_df.empty:
+                            m_item_col = next((c for c in m_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                            m_df['Item_Norm'] = m_df[m_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if m_item_col else '未知品項'
+                            m_df['Price'] = pd.to_numeric(m_df[total_col], errors='coerce').fillna(0)
+                            m_grp = m_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '本月總額'})
+                            
+                            pm_item_col = next((c for c in pm_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                            pm_df['Item_Norm'] = pm_df[pm_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if pm_item_col else '未知品項'
+                            pm_df['Price'] = pd.to_numeric(pm_df[total_col], errors='coerce').fillna(0)
+                            pm_grp = pm_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '上月總額'})
+                            
+                            # 模糊對齊邏輯 (避免供應商改名字)
+                            m_items_list = m_grp['Item_Norm'].tolist()
+                            def find_fuzzy_match_mom(pm_item, m_list):
+                                if pm_item in m_list: return pm_item
+                                import difflib
+                                best_match = pm_item
+                                max_score = 0
+                                for m_item in m_list:
+                                    if pm_item in m_item or m_item in pm_item:
+                                        score = 0.8 + difflib.SequenceMatcher(None, pm_item, m_item).ratio() * 0.2
+                                    else:
+                                        score = difflib.SequenceMatcher(None, pm_item, m_item).ratio()
+                                    if score > 0.6 and score > max_score:
+                                        max_score = score
+                                        best_match = m_item
+                                return best_match
+                            
+                            pm_grp['Item_Norm'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom(x, m_items_list))
+                            pm_grp = pm_grp.groupby('Item_Norm')['上月總額'].sum().reset_index()
+                            
+                            # 雙向比對
+                            mom_df = pd.merge(m_grp, pm_grp, on='Item_Norm', how='outer').fillna(0)
+                            mom_df['MoM 差異 (本月 - 上月)'] = mom_df['本月總額'] - mom_df['上月總額']
+                            
+                            # 篩選差異大於 500 的品項，以減少雜訊
+                            mom_df_sig = mom_df[abs(mom_df['MoM 差異 (本月 - 上月)']) > 500].sort_values(by='MoM 差異 (本月 - 上月)', ascending=False)
+                            
+                            m_sum = mom_df['本月總額'].sum()
+                            pm_sum = mom_df['上月總額'].sum()
+                            diff_sum = m_sum - pm_sum
+                            trend_icon = "🔺" if diff_sum > 0 else "🔻"
+                            st.write(f"**The Peak 官方採購成本變化**：本月 `NT$ {m_sum:,.0f}` vs 上月 `NT$ {pm_sum:,.0f}` (變化：**{trend_icon} `NT$ {diff_sum:,.0f}`**)")
+                            
+                            if not mom_df_sig.empty:
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.error("📈 成本增加最多的品項 (含本月新品)")
+                                    inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0]
+                                    st.dataframe(inc_df.style.format({'本月總額': '{:,.0f}', '上月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}'}), use_container_width=True)
+                                with col2:
+                                    st.success("📉 成本減少最多的品項 (含本月未叫貨)")
+                                    dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0]
+                                    st.dataframe(dec_df.style.format({'本月總額': '{:,.0f}', '上月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}'}), use_container_width=True)
+                            else:
+                                st.info("本月與上月的品項採購金額無顯著差異 (>500)。")
+                        else:
+                            st.warning("本月或上月缺乏 The Peak 的採購資料，無法進行比對。")
+                    else:
+                        st.warning("缺乏本月或上月的官方採購資料，無法進行 MoM 比對。")
+                except Exception as e:
+                    st.error(f"MoM 分析工具發生錯誤: {e}")
+            # === 結束 MoM ===
+
+
             
             # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
             import datetime
