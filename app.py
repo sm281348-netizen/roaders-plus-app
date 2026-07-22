@@ -4512,6 +4512,67 @@ if selected_page == "💰 採購分析":
                 peak_m = [d for d in all_d_list if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in hh_m]
                 peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
                 hh_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(hh_m)]['小計'].sum()
+                
+            # === 新增：官方 vs 日報 差異對帳小幫手 ===
+            with st.expander("🔍 官方採購 vs 現場日報 差異對帳小幫手 (Data Reconciliation)"):
+                st.markdown("由於採購部正式帳單與現場日報常有落差（如漏記、稅金、價格浮動等），本工具協助您快速抓出差異品項。")
+                try:
+                    # 1. 整理官方資料
+                    off_df = pd.DataFrame()
+                    if not df_month.empty:
+                        def _get_cart_bucket_name_for_recon(d):
+                            d_upper = str(d).upper()
+                            if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
+                            if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
+                            return str(d).strip()
+                        _df_m_tmp_recon = df_month.copy()
+                        _df_m_tmp_recon['Bucket'] = _df_m_tmp_recon[dept_col].apply(_get_cart_bucket_name_for_recon)
+                        off_df = _df_m_tmp_recon[_df_m_tmp_recon['Bucket'] == 'The Peak'].copy()
+                    
+                    if not off_df.empty:
+                        off_item_col = next((c for c in off_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                        off_df['Item_Norm'] = off_df[off_item_col].astype(str).str.strip() if off_item_col else '未知品項'
+                        off_df['Price'] = pd.to_numeric(off_df[total_col], errors='coerce').fillna(0)
+                        off_grp = off_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '官方總額'})
+                    else:
+                        off_grp = pd.DataFrame(columns=['Item_Norm', '官方總額'])
+
+                    # 2. 整理現場日報 (The Peak)
+                    dr_df = fetch_thepeak_daily_purchase_report()
+                    dr_grp = pd.DataFrame(columns=['Item_Norm', '日報總額'])
+                    if dr_df is not None and not dr_df.empty:
+                        dr_item_col = next((c for c in dr_df.columns if '品名' in c or '品項' in c), None)
+                        dr_price_col = next((c for c in dr_df.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                        dr_date_col = next((c for c in dr_df.columns if '日期' in c or '叫貨' in c), None)
+                        
+                        dr_df['Date'] = pd.to_datetime(dr_df[dr_date_col], errors='coerce')
+                        dr_month = dr_df[(dr_df['Date'] >= m_start) & (dr_df['Date'] <= m_end)].copy()
+                        
+                        if not dr_month.empty:
+                            dr_month['Item_Norm'] = dr_month[dr_item_col].astype(str).str.strip() if dr_item_col else '未知品項'
+                            dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col], errors='coerce').fillna(0)
+                            dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
+
+                    # 3. 雙向比對
+                    diff_df = pd.merge(off_grp, dr_grp, on='Item_Norm', how='outer').fillna(0)
+                    diff_df['差異 (官方 - 日報)'] = diff_df['官方總額'] - diff_df['日報總額']
+                    
+                    # 顯示總和差異
+                    off_sum = diff_df['官方總額'].sum()
+                    dr_sum = diff_df['日報總額'].sum()
+                    st.write(f"**本月 The Peak 總額對比**：官方 `NT$ {off_sum:,.0f}` vs 日報 `NT$ {dr_sum:,.0f}` (總落差：**`NT$ {off_sum - dr_sum:,.0f}`**)")
+                    
+                    diff_df_sig = diff_df[abs(diff_df['差異 (官方 - 日報)']) > 50].sort_values(by='差異 (官方 - 日報)', ascending=False)
+                    if not diff_df_sig.empty:
+                        st.warning(f"⚠️ 發現 {len(diff_df_sig)} 項有顯著落差的品項！(正數代表官方金額較高或日報漏記，負數代表日報金額較高)")
+                        st.dataframe(diff_df_sig.style.format({'官方總額': '{:,.0f}', '日報總額': '{:,.0f}', '差異 (官方 - 日報)': '{:,.0f}'}), use_container_width=True)
+                    else:
+                        st.success("✅ 官方資料與現場日報金額無顯著落差！")
+                        
+                except Exception as e:
+                    st.error(f"對帳工具發生錯誤: {e}")
+            # === 結束對帳小幫手 ===
+
             
             # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
             import datetime
