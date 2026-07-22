@@ -4382,10 +4382,26 @@ if selected_page == "💰 採購分析":
             df_purchase = df_purchase[df_purchase['日期'].notna()]
             
             # --- 找出官方 purchase_data 中已經有紀錄的「部門+年月」組合（以部門為單位防重複）---
-            # 注意：這裡用 dept+ym 而非只用 ym，避免 The Peak 有官方資料時誤擋 HH 的 Daily Report
+            # 注意：這裡將官方部門名稱標準化為 Live Cart 預設名稱，以正確比對並防止重複計算
             _ym_series = pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
+            
+            def get_cart_bucket_name(d):
+                d_upper = str(d).upper()
+                if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']):
+                    return 'Happy Hour'
+                elif any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']):
+                    return 'The Peak'
+                elif '房務' in d_upper:
+                    return '房務'
+                elif any(k in d_upper for k in ['櫃台', '櫃檯']):
+                    return '櫃台'
+                elif '工務' in d_upper:
+                    return '工務'
+                return str(d).strip()
+                
+            normalized_depts = df_purchase[dept_col].apply(get_cart_bucket_name)
             official_dept_ym = set(
-                zip(df_purchase[dept_col].astype(str).str.strip(), _ym_series.fillna(''))
+                zip(normalized_depts, _ym_series.fillna(''))
             )
 
             # --- 新增：將所有部門的即時日報表 (Live Carts) 無縫匯入 df_purchase 以供全域呈現 ---
