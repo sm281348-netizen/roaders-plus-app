@@ -4553,6 +4553,29 @@ if selected_page == "💰 採購分析":
                             dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col], errors='coerce').fillna(0)
                             dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
 
+                    # === 新增：模糊比對/部分字串對齊邏輯 ===
+                    if not off_grp.empty and not dr_grp.empty:
+                        off_items_list = off_grp['Item_Norm'].tolist()
+                        def find_fuzzy_match(dr_item, off_list):
+                            if dr_item in off_list: return dr_item
+                            import difflib
+                            best_match = dr_item
+                            max_score = 0
+                            for off_item in off_list:
+                                if dr_item in off_item or off_item in dr_item:
+                                    score = 0.8 + difflib.SequenceMatcher(None, dr_item, off_item).ratio() * 0.2
+                                else:
+                                    score = difflib.SequenceMatcher(None, dr_item, off_item).ratio()
+                                if score > 0.6 and score > max_score:
+                                    max_score = score
+                                    best_match = off_item
+                            return best_match
+                        
+                        dr_grp['Item_Norm'] = dr_grp['Item_Norm'].apply(lambda x: find_fuzzy_match(x, off_items_list))
+                        # 重新 group，因為多個日報品項可能被對齊到同一個官方品項
+                        dr_grp = dr_grp.groupby('Item_Norm')['日報總額'].sum().reset_index()
+                    # ==============================
+
                     # 3. 雙向比對
                     diff_df = pd.merge(off_grp, dr_grp, on='Item_Norm', how='outer').fillna(0)
                     diff_df['差異 (官方 - 日報)'] = diff_df['官方總額'] - diff_df['日報總額']
