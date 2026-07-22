@@ -4115,6 +4115,10 @@ if current_hotel != "採購":
     if selected_page == "🧹 房務數據":
         st.header("🧹 房務數據")
 
+        import hk_procurement
+        _occ_hk = _get_occ_data_cached_v2()
+        hk_procurement.render_hk_procurement_dashboard(_occ_hk)
+
         st.markdown("---")
         st.subheader("📦 房務採購紀律分析")
         st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
