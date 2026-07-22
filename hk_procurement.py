@@ -37,42 +37,57 @@ def parse_hk_inventory(file_bytes_or_path):
     """解析房務部盤點 Excel 檔"""
     # 讀取 Excel (只抓取值，忽略公式)
     wb = openpyxl.load_workbook(file_bytes_or_path, data_only=True)
-    ws = wb.worksheets[0]
-    data = ws.values
     
-    # 找到表頭行
-    cols = None
-    for row in data:
-        row_list = list(row)
-        if row_list and isinstance(row_list[0], str) and "品名" in row_list[0]:
-            # 將 \n 替換掉
-            cols = [str(c).replace('\n', '') if c else f"Unnamed_{i}" for i, c in enumerate(row_list)]
-            break
+    all_dfs = []
+    
+    for ws in wb.worksheets:
+        data = list(ws.values)
+        if not data:
+            continue
             
-    if cols is None:
-        st.error("找不到 Excel 表頭 (必須包含 '品名')")
+        # 找到表頭行
+        cols = None
+        for row in data:
+            row_list = list(row)
+            if row_list and isinstance(row_list[0], str) and "品名" in row_list[0]:
+                # 將 \n 替換掉
+                cols = [str(c).replace('\n', '') if c else f"Unnamed_{i}" for i, c in enumerate(row_list)]
+                break
+                
+        if cols is None:
+            # 該頁籤沒有品名表頭，自動跳過 (可能是總表或空白頁)
+            continue
+            
+        df = pd.DataFrame(data, columns=cols)
+        
+        # 過濾空行與非品項列
+        df = df.dropna(subset=[cols[0]])
+        df = df[~df[cols[0]].str.contains('品名', na=False)] # 過濾掉重複的表頭
+        
+        # 重新命名欄位，使其統一
+        rename_dict = {}
+        for c in cols:
+            if '品名' in c: rename_dict[c] = 'ItemName'
+            elif '本期庫存' in c: rename_dict[c] = 'CurrentInventory'
+            elif '本期叫貨' in c: rename_dict[c] = 'CurrentOrder'
+            elif '數量' in c: rename_dict[c] = 'UOM' # 原本的規格欄位
+        
+        df = df.rename(columns=rename_dict)
+        
+        # 只保留需要的欄位
+        required_cols = ['ItemName', 'CurrentInventory', 'CurrentOrder', 'UOM']
+        available_cols = [c for c in required_cols if c in df.columns]
+        df = df[available_cols]
+        
+        # 標記來源頁籤 (可選)
+        df['SheetName'] = ws.title
+        all_dfs.append(df)
+        
+    if not all_dfs:
+        st.error("在所有頁籤中都找不到 Excel 表頭 (必須包含 '品名')")
         return pd.DataFrame()
         
-    df = pd.DataFrame(data, columns=cols)
-    
-    # 過濾空行與非品項列
-    df = df.dropna(subset=[cols[0]])
-    df = df[~df[cols[0]].str.contains('品名', na=False)] # 過濾掉重複的表頭
-    
-    # 重新命名欄位，使其統一
-    rename_dict = {}
-    for c in cols:
-        if '品名' in c: rename_dict[c] = 'ItemName'
-        elif '本期庫存' in c: rename_dict[c] = 'CurrentInventory'
-        elif '本期叫貨' in c: rename_dict[c] = 'CurrentOrder'
-        elif '數量' in c: rename_dict[c] = 'UOM' # 原本的規格欄位
-    
-    df = df.rename(columns=rename_dict)
-    
-    # 只保留需要的欄位
-    required_cols = ['ItemName', 'CurrentInventory', 'CurrentOrder', 'UOM']
-    available_cols = [c for c in required_cols if c in df.columns]
-    df = df[available_cols]
+    df = pd.concat(all_dfs, ignore_index=True)
     
     # 確保數值欄位型別
     if 'CurrentInventory' in df.columns:
