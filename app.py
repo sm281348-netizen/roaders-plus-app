@@ -4531,7 +4531,7 @@ if selected_page == "💰 採購分析":
                     
                     if not off_df.empty:
                         off_item_col = next((c for c in off_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                        off_df['Item_Norm'] = off_df[off_item_col].astype(str).str.strip() if off_item_col else '未知品項'
+                        off_df['Item_Norm'] = off_df[off_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if off_item_col else '未知品項'
                         off_df['Price'] = pd.to_numeric(off_df[total_col], errors='coerce').fillna(0)
                         off_grp = off_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '官方總額'})
                     else:
@@ -4549,7 +4549,7 @@ if selected_page == "💰 採購分析":
                         dr_month = dr_df[(dr_df['Date'] >= pd.Timestamp(m_start)) & (dr_df['Date'] <= pd.Timestamp(m_end))].copy()
                         
                         if not dr_month.empty:
-                            dr_month['Item_Norm'] = dr_month[dr_item_col].astype(str).str.strip() if dr_item_col else '未知品項'
+                            dr_month['Item_Norm'] = dr_month[dr_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if dr_item_col else '未知品項'
                             dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col], errors='coerce').fillna(0)
                             dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
 
