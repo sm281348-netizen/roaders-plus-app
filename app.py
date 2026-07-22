@@ -4738,11 +4738,11 @@ if selected_page == "💰 採購分析":
                     help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
                 )
 
-            # --- 優化版作法B: 以「上個月」或「目標值」等常態常數推估未來成本，避免月初囤貨造成的 CPG 爆衝 ---
-            if 'prev_peak_spent' in locals() and prev_peak_spent > 0 and 'prev_hist_bf' in locals() and (prev_hist_bf + k_val * prev_hist_af) > 0:
-                future_cb = prev_peak_spent / (prev_hist_bf + k_val * prev_hist_af)
+            # --- 回歸原始邏輯：嚴格區分月份，完全以「本月 MTD 實際消耗」推算未來，不跨月借用數據 ---
+            if 'peak_spent' in locals() and peak_spent > 0 and 'hist_bf' in locals() and (hist_bf + k_val * hist_af) > 0:
+                future_cb = peak_spent / (hist_bf + k_val * hist_af)
                 future_ca = k_val * future_cb
-                used_rate_source = f"上月歷史常態拆分 (早 NT${future_cb:.0f} / 午 NT${future_ca:.0f})"
+                used_rate_source = f"本月 MTD 實際消耗推算 (早 NT${future_cb:.0f} / 午 NT${future_ca:.0f})"
             else:
                 future_cb = target_cpg
                 future_ca = target_cpg
