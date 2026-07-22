@@ -4546,7 +4546,7 @@ if selected_page == "💰 採購分析":
                         dr_date_col = next((c for c in dr_df.columns if '日期' in c or '叫貨' in c), None)
                         
                         dr_df['Date'] = pd.to_datetime(dr_df[dr_date_col], errors='coerce')
-                        dr_month = dr_df[(dr_df['Date'] >= m_start) & (dr_df['Date'] <= m_end)].copy()
+                        dr_month = dr_df[(dr_df['Date'] >= pd.Timestamp(m_start)) & (dr_df['Date'] <= pd.Timestamp(m_end))].copy()
                         
                         if not dr_month.empty:
                             dr_month['Item_Norm'] = dr_month[dr_item_col].astype(str).str.strip() if dr_item_col else '未知品項'
