@@ -4726,14 +4726,42 @@ if selected_page == "💰 採購分析":
                                 sp_m_df = sp_df[sp_df['period'] == sp_m_str]
                                 sp_pm_df = sp_df[sp_df['period'] == sp_pm_str]
                                 
+                                if not sp_m_df.empty:
+                                    sp_m_df['item_name_norm'] = sp_m_df['item_name'].apply(_clean_item)
+                                if not sp_pm_df.empty:
+                                    sp_pm_df['item_name_norm'] = sp_pm_df['item_name'].apply(_clean_item)
+
+                                def get_best_sp_match(item, sp_df_sub):
+                                    if sp_df_sub.empty: return pd.DataFrame()
+                                    import difflib
+                                    best_match = None
+                                    max_score = 0
+                                    for sp_item in sp_df_sub['item_name_norm'].unique():
+                                        if len(item) < 3 or len(sp_item) < 3:
+                                            if item == sp_item: return sp_df_sub[sp_df_sub['item_name_norm'] == sp_item]
+                                            continue
+                                        
+                                        if sp_item in item or item in sp_item:
+                                            score = 0.8 + difflib.SequenceMatcher(None, item, sp_item).ratio() * 0.2
+                                        else:
+                                            score = difflib.SequenceMatcher(None, item, sp_item).ratio()
+                                        
+                                        if score > 0.6 and score > max_score:
+                                            max_score = score
+                                            best_match = sp_item
+                                    
+                                    if best_match:
+                                        return sp_df_sub[sp_df_sub['item_name_norm'] == best_match]
+                                    return pd.DataFrame()
+
                                 if not sp_m_df.empty and not sp_pm_df.empty:
                                     def check_market_audit(r):
                                         if r['上月均價'] <= 0 or r['本月均價'] <= 0: return "無資料", ""
                                         actual_infl = (r['本月均價'] - r['上月均價']) / r['上月均價']
                                         
                                         item = r['Item_Norm']
-                                        m_match = sp_m_df[sp_m_df['item_name'].str.contains(item, na=False, regex=False)]
-                                        pm_match = sp_pm_df[sp_pm_df['item_name'].str.contains(item, na=False, regex=False)]
+                                        m_match = get_best_sp_match(item, sp_m_df)
+                                        pm_match = get_best_sp_match(item, sp_pm_df)
                                         
                                         if not m_match.empty and not pm_match.empty:
                                             m_price = pd.to_numeric(m_match['price'], errors='coerce').mean()
