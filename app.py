@@ -4718,13 +4718,15 @@ if selected_page == "💰 採購分析":
                             sp_df = fetch_supplier_prices()
                             mom_df['大盤漲幅'] = "無資料"
                             mom_df['異常標記'] = ""
-                            if not sp_df.empty:
-                                sp_m_str = f"{selected_date.year}-{selected_date.month:02d}"
+                            if not sp_df.empty and 'period_dt' in sp_df.columns:
+                                sp_m_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == selected_date.year) & 
+                                                (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == selected_date.month)].copy()
                                 sp_pm_date = get_month_delta(selected_date, -1)
-                                sp_pm_str = f"{sp_pm_date.year}-{sp_pm_date.month:02d}"
-                                
-                                sp_m_df = sp_df[sp_df['period'] == sp_m_str]
-                                sp_pm_df = sp_df[sp_df['period'] == sp_pm_str]
+                                sp_pm_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == sp_pm_date.year) & 
+                                                 (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == sp_pm_date.month)].copy()
+                            else:
+                                sp_m_df = pd.DataFrame()
+                                sp_pm_df = pd.DataFrame()
                                 
                                 if not sp_m_df.empty:
                                     sp_m_df['item_name_norm'] = sp_m_df['item_name'].apply(_clean_item)
