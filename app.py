@@ -4647,15 +4647,21 @@ if selected_page == "💰 採購分析":
                             m_df['Unit_Norm'] = m_df[m_unit_col].astype(str).str.strip() if m_unit_col else ''
                             m_df['Price'] = pd.to_numeric(m_df[total_col], errors='coerce').fillna(0)
                             m_df['Qty'] = pd.to_numeric(m_df[m_qty_col], errors='coerce').fillna(0) if m_qty_col else 0
-                            m_grp = m_df.groupby(['Item_Norm', 'Unit_Norm'])[['Price', 'Qty']].sum().reset_index()
-                            m_grp.rename(columns={'Price': '本月總額', 'Qty': '本月總量'}, inplace=True)
+                            m_grp = m_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
+                                本月總額=('Price', 'sum'),
+                                本月總量=('Qty', 'sum'),
+                                本月頻率=('Price', 'count')
+                            ).reset_index()
                             
                             pm_df['Item_Norm'] = pm_df[pm_item_col].apply(_clean_item) if pm_item_col else '未知品項'
                             pm_df['Unit_Norm'] = pm_df[pm_unit_col].astype(str).str.strip() if pm_unit_col else ''
                             pm_df['Price'] = pd.to_numeric(pm_df[total_col], errors='coerce').fillna(0)
                             pm_df['Qty'] = pd.to_numeric(pm_df[pm_qty_col], errors='coerce').fillna(0) if pm_qty_col else 0
-                            pm_grp = pm_df.groupby(['Item_Norm', 'Unit_Norm'])[['Price', 'Qty']].sum().reset_index()
-                            pm_grp.rename(columns={'Price': '上月總額', 'Qty': '上月總量'}, inplace=True)
+                            pm_grp = pm_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
+                                上月總額=('Price', 'sum'),
+                                上月總量=('Qty', 'sum'),
+                                上月頻率=('Price', 'count')
+                            ).reset_index()
                             
                             # 模糊對齊邏輯 (升級防呆版)
                             m_items_list = m_grp['Item_Norm'].tolist()
@@ -4680,12 +4686,17 @@ if selected_page == "💰 採購分析":
                                 return best_match
                             
                             pm_grp['Item_Norm_Mapped'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom_v2(x, m_items_list))
-                            pm_grp = pm_grp.groupby(['Item_Norm_Mapped', 'Unit_Norm'])[['上月總額', '上月總量']].sum().reset_index()
+                            pm_grp = pm_grp.groupby(['Item_Norm_Mapped', 'Unit_Norm']).agg(
+                                上月總額=('上月總額', 'sum'),
+                                上月總量=('上月總量', 'sum'),
+                                上月頻率=('上月頻率', 'sum')
+                            ).reset_index()
                             pm_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
                             
                             # 雙向比對
                             mom_df = pd.merge(m_grp, pm_grp, on=['Item_Norm', 'Unit_Norm'], how='outer').fillna(0)
                             mom_df['MoM 差異 (本月 - 上月)'] = mom_df['本月總額'] - mom_df['上月總額']
+                            mom_df['頻率差異'] = mom_df['本月頻率'] - mom_df['上月頻率']
                             
                             # 計算單價與價量拆解
                             mom_df['本月均價'] = mom_df.apply(lambda r: r['本月總額'] / r['本月總量'] if r['本月總量'] > 0 else 0, axis=1)
@@ -4746,16 +4757,16 @@ if selected_page == "💰 採購分析":
                             st.write(f"**The Peak 官方採購成本變化**：本月 `NT$ {m_sum:,.0f}` vs 上月 `NT$ {pm_sum:,.0f}` (變化：**{trend_icon} `NT$ {diff_sum:,.0f}`**)")
                             
                             if not mom_df_sig.empty:
-                                display_cols = ['Item_Norm', 'Unit_Norm', '上月總額', '本月總額', 'MoM 差異 (本月 - 上月)', '價差影響', '量差影響', '大盤漲幅', '異常標記']
+                                display_cols = ['Item_Norm', 'Unit_Norm', '上月總額', '本月總額', 'MoM 差異 (本月 - 上月)', '價差影響', '量差影響', '本月頻率', '頻率差異', '大盤漲幅', '異常標記']
                                 col1, col2 = st.columns(2)
                                 with col1:
                                     st.error("📈 成本增加最多的品項")
                                     inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0][display_cols]
-                                    st.dataframe(inc_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}'}), use_container_width=True)
+                                    st.dataframe(inc_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
                                 with col2:
                                     st.success("📉 成本減少最多的品項")
                                     dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0][display_cols]
-                                    st.dataframe(dec_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}'}), use_container_width=True)
+                                    st.dataframe(dec_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
                             else:
                                 st.info("本月與上月的品項採購金額無顯著差異 (>500)。")
                         else:
