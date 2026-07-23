@@ -4754,55 +4754,42 @@ if selected_page == "💰 採購分析":
                             prev_fb = get_combined_fb_daily_df(sp_pm_date.year, sp_pm_date.month, current_hotel)
                             fb_2m = pd.concat([prev_fb, curr_fb], ignore_index=True) if not curr_fb.empty and not prev_fb.empty else pd.DataFrame()
                             
-                            weekly_guests = pd.DataFrame()
-                            if not fb_2m.empty and 'date' in fb_2m.columns:
-                                fb_2m['date_obj'] = pd.to_datetime(fb_2m['date'], errors='coerce')
-                                fb_2m = fb_2m.dropna(subset=['date_obj'])
-                                fb_2m['week_start'] = fb_2m['date_obj'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                            def _get_guest_sum(fb_df):
+                                if fb_df.empty: return 0
+                                if 'bf_act' in fb_df.columns and 'af_act' in fb_df.columns:
+                                    bf = pd.to_numeric(fb_df['bf_act'], errors='coerce').fillna(0)
+                                    af = pd.to_numeric(fb_df['af_act'], errors='coerce').fillna(0)
+                                    g = (bf + (af * 1.5)).sum()
+                                    if g > 0: return g
+                                g_col = 'effective_peak_guests' if 'effective_peak_guests' in fb_df.columns else 'peak_guests'
+                                if g_col in fb_df.columns:
+                                    return pd.to_numeric(fb_df[g_col], errors='coerce').fillna(0).sum()
+                                return 0
                                 
-                                if 'bf_act' in fb_2m.columns and 'af_act' in fb_2m.columns:
-                                    fb_2m['bf_act'] = pd.to_numeric(fb_2m['bf_act'], errors='coerce').fillna(0)
-                                    fb_2m['af_act'] = pd.to_numeric(fb_2m['af_act'], errors='coerce').fillna(0)
-                                    fb_2m['effective_peak_guests'] = fb_2m['bf_act'] + (fb_2m['af_act'] * 1.5)
-                                    
-                                g_col = 'effective_peak_guests' if 'effective_peak_guests' in fb_2m.columns else 'peak_guests'
-                                if g_col in fb_2m.columns:
-                                    fb_2m[g_col] = pd.to_numeric(fb_2m[g_col], errors='coerce').fillna(0)
-                                    weekly_guests = fb_2m.groupby('week_start')[g_col].sum().reset_index()
-                                    weekly_guests.rename(columns={g_col: 'guest_count'}, inplace=True)
-                            
-                            pur_2m = pd.concat([m_df, pm_df], ignore_index=True) if not m_df.empty and not pm_df.empty else pd.DataFrame()
+                            curr_guests_total = _get_guest_sum(curr_fb)
+                            prev_guests_total = _get_guest_sum(prev_fb)
                             
                             def check_sync(r):
-                                if weekly_guests.empty or pur_2m.empty: return "無資料"
-                                m_date_col = next((c for c in pur_2m.columns if '日期' in c or 'Date' in c or '叫貨' in c), None)
-                                if not m_date_col: return "無資料"
+                                if curr_guests_total == 0 or prev_guests_total == 0:
+                                    return "無客數資料"
                                 
-                                item = r['Item_Norm']
-                                item_pur = pur_2m[pur_2m['Item_Norm'] == item].copy()
-                                if item_pur.empty: return "無資料"
+                                curr_qty = r['本月總量']
+                                prev_qty = r['上月總量']
                                 
-                                item_pur['Date'] = pd.to_datetime(item_pur[m_date_col], errors='coerce')
-                                item_pur = item_pur.dropna(subset=['Date'])
-                                if item_pur.empty: return "無資料"
+                                if prev_qty <= 0: return "上月無叫貨"
+                                if curr_qty <= 0: return "本月無叫貨"
                                 
-                                item_pur['week_start'] = item_pur['Date'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
-                                weekly_pur = item_pur.groupby('week_start')['Qty'].sum().reset_index()
-                                weekly_pur.rename(columns={'Qty': 'pur_qty'}, inplace=True)
+                                curr_upg = curr_qty / curr_guests_total
+                                prev_upg = prev_qty / prev_guests_total
                                 
-                                merged = pd.merge(weekly_guests, weekly_pur, on='week_start', how='left').fillna(0)
-                                if len(merged) < 4 or merged['pur_qty'].std() == 0:
-                                    return "樣本不足"
+                                upg_growth = (curr_upg - prev_upg) / prev_upg
                                 
-                                try:
-                                    corr = merged['guest_count'].corr(merged['pur_qty'])
-                                    if pd.isna(corr): return "無相關"
-                                    if corr > 0.6: return "✅ 高度同步"
-                                    elif corr > 0.3: return "🟡 弱同步"
-                                    elif corr >= 0: return "⚪ 無相關"
-                                    else: return "⚠️ 負相關"
-                                except:
-                                    return "計算失敗"
+                                if upg_growth > 0.15:
+                                    return f"🚨 耗用暴增 {upg_growth*100:.0f}%(客少卻多買)" if curr_guests_total < prev_guests_total and curr_qty > prev_qty else f"⚠️ 耗用增加 {upg_growth*100:.0f}%"
+                                elif upg_growth < -0.15:
+                                    return f"📉 耗用減少 {abs(upg_growth)*100:.0f}%"
+                                else:
+                                    return "✅ 完美匹配客數"
                                     
                             mom_df['客數同步狀態'] = mom_df.apply(check_sync, axis=1)
                             
