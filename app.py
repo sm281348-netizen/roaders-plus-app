@@ -4530,8 +4530,14 @@ if selected_page == "💰 採購分析":
                         off_df = _df_m_tmp_recon[_df_m_tmp_recon['Bucket'] == 'The Peak'].copy()
                     
                     if not off_df.empty:
+                        def _clean_item(s):
+                            import re
+                            s = str(s).replace(' ', '').replace('　', '').lower().strip()
+                            s = re.sub(r'[\(\)\[\]\-\_\.]', '', s)
+                            return s
+                            
                         off_item_col = next((c for c in off_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                        off_df['Item_Norm'] = off_df[off_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if off_item_col else '未知品項'
+                        off_df['Item_Norm'] = off_df[off_item_col].apply(_clean_item) if off_item_col else '未知品項'
                         off_df['Price'] = pd.to_numeric(off_df[total_col], errors='coerce').fillna(0)
                         off_grp = off_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '官方總額'})
                     else:
@@ -4549,19 +4555,24 @@ if selected_page == "💰 採購分析":
                         dr_month = dr_df[(dr_df['Date'] >= pd.Timestamp(m_start)) & (dr_df['Date'] <= pd.Timestamp(m_end))].copy()
                         
                         if not dr_month.empty:
-                            dr_month['Item_Norm'] = dr_month[dr_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if dr_item_col else '未知品項'
+                            dr_month['Item_Norm'] = dr_month[dr_item_col].apply(_clean_item) if dr_item_col else '未知品項'
                             dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col], errors='coerce').fillna(0)
                             dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
 
-                    # === 新增：模糊比對/部分字串對齊邏輯 ===
+                    # === 新增：模糊比對/部分字串對齊邏輯 (升級版) ===
                     if not off_grp.empty and not dr_grp.empty:
                         off_items_list = off_grp['Item_Norm'].tolist()
-                        def find_fuzzy_match(dr_item, off_list):
+                        def find_fuzzy_match_v2(dr_item, off_list):
                             if dr_item in off_list: return dr_item
+                            if len(dr_item) < 3:
+                                for off_item in off_list:
+                                    if dr_item == off_item: return off_item
+                                return dr_item
                             import difflib
                             best_match = dr_item
                             max_score = 0
                             for off_item in off_list:
+                                if len(off_item) < 3: continue
                                 if dr_item in off_item or off_item in dr_item:
                                     score = 0.8 + difflib.SequenceMatcher(None, dr_item, off_item).ratio() * 0.2
                                 else:
@@ -4571,9 +4582,9 @@ if selected_page == "💰 採購分析":
                                     best_match = off_item
                             return best_match
                         
-                        dr_grp['Item_Norm'] = dr_grp['Item_Norm'].apply(lambda x: find_fuzzy_match(x, off_items_list))
-                        # 重新 group，因為多個日報品項可能被對齊到同一個官方品項
-                        dr_grp = dr_grp.groupby('Item_Norm')['日報總額'].sum().reset_index()
+                        dr_grp['Item_Norm_Mapped'] = dr_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_v2(x, off_items_list))
+                        dr_grp = dr_grp.groupby('Item_Norm_Mapped')['日報總額'].sum().reset_index()
+                        dr_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
                     # ==============================
 
                     # 3. 雙向比對
@@ -4619,23 +4630,46 @@ if selected_page == "💰 採購分析":
                         
                         if not m_df.empty and not pm_df.empty:
                             m_item_col = next((c for c in m_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                            m_df['Item_Norm'] = m_df[m_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if m_item_col else '未知品項'
-                            m_df['Price'] = pd.to_numeric(m_df[total_col], errors='coerce').fillna(0)
-                            m_grp = m_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '本月總額'})
+                            m_qty_col = next((c for c in m_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+                            m_unit_col = next((c for c in m_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
                             
                             pm_item_col = next((c for c in pm_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                            pm_df['Item_Norm'] = pm_df[pm_item_col].astype(str).str.replace(' ', '').str.replace('　', '').str.lower().str.strip() if pm_item_col else '未知品項'
-                            pm_df['Price'] = pd.to_numeric(pm_df[total_col], errors='coerce').fillna(0)
-                            pm_grp = pm_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '上月總額'})
+                            pm_qty_col = next((c for c in pm_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+                            pm_unit_col = next((c for c in pm_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
                             
-                            # 模糊對齊邏輯 (避免供應商改名字)
+                            def _clean_item(s):
+                                import re
+                                s = str(s).replace(' ', '').replace('　', '').lower().strip()
+                                s = re.sub(r'[\(\)\[\]\-\_\.]', '', s)
+                                return s
+
+                            m_df['Item_Norm'] = m_df[m_item_col].apply(_clean_item) if m_item_col else '未知品項'
+                            m_df['Unit_Norm'] = m_df[m_unit_col].astype(str).str.strip() if m_unit_col else ''
+                            m_df['Price'] = pd.to_numeric(m_df[total_col], errors='coerce').fillna(0)
+                            m_df['Qty'] = pd.to_numeric(m_df[m_qty_col], errors='coerce').fillna(0) if m_qty_col else 0
+                            m_grp = m_df.groupby(['Item_Norm', 'Unit_Norm'])[['Price', 'Qty']].sum().reset_index()
+                            m_grp.rename(columns={'Price': '本月總額', 'Qty': '本月總量'}, inplace=True)
+                            
+                            pm_df['Item_Norm'] = pm_df[pm_item_col].apply(_clean_item) if pm_item_col else '未知品項'
+                            pm_df['Unit_Norm'] = pm_df[pm_unit_col].astype(str).str.strip() if pm_unit_col else ''
+                            pm_df['Price'] = pd.to_numeric(pm_df[total_col], errors='coerce').fillna(0)
+                            pm_df['Qty'] = pd.to_numeric(pm_df[pm_qty_col], errors='coerce').fillna(0) if pm_qty_col else 0
+                            pm_grp = pm_df.groupby(['Item_Norm', 'Unit_Norm'])[['Price', 'Qty']].sum().reset_index()
+                            pm_grp.rename(columns={'Price': '上月總額', 'Qty': '上月總量'}, inplace=True)
+                            
+                            # 模糊對齊邏輯 (升級防呆版)
                             m_items_list = m_grp['Item_Norm'].tolist()
-                            def find_fuzzy_match_mom(pm_item, m_list):
+                            def find_fuzzy_match_mom_v2(pm_item, m_list):
                                 if pm_item in m_list: return pm_item
+                                if len(pm_item) < 3:
+                                    for m_item in m_list:
+                                        if pm_item == m_item: return m_item
+                                    return pm_item
                                 import difflib
                                 best_match = pm_item
                                 max_score = 0
                                 for m_item in m_list:
+                                    if len(m_item) < 3: continue
                                     if pm_item in m_item or m_item in pm_item:
                                         score = 0.8 + difflib.SequenceMatcher(None, pm_item, m_item).ratio() * 0.2
                                     else:
@@ -4645,14 +4679,64 @@ if selected_page == "💰 採購分析":
                                         best_match = m_item
                                 return best_match
                             
-                            pm_grp['Item_Norm'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom(x, m_items_list))
-                            pm_grp = pm_grp.groupby('Item_Norm')['上月總額'].sum().reset_index()
+                            pm_grp['Item_Norm_Mapped'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom_v2(x, m_items_list))
+                            pm_grp = pm_grp.groupby(['Item_Norm_Mapped', 'Unit_Norm'])[['上月總額', '上月總量']].sum().reset_index()
+                            pm_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
                             
                             # 雙向比對
-                            mom_df = pd.merge(m_grp, pm_grp, on='Item_Norm', how='outer').fillna(0)
+                            mom_df = pd.merge(m_grp, pm_grp, on=['Item_Norm', 'Unit_Norm'], how='outer').fillna(0)
                             mom_df['MoM 差異 (本月 - 上月)'] = mom_df['本月總額'] - mom_df['上月總額']
                             
-                            # 篩選差異大於 500 的品項，以減少雜訊
+                            # 計算單價與價量拆解
+                            mom_df['本月均價'] = mom_df.apply(lambda r: r['本月總額'] / r['本月總量'] if r['本月總量'] > 0 else 0, axis=1)
+                            mom_df['上月均價'] = mom_df.apply(lambda r: r['上月總額'] / r['上月總量'] if r['上月總量'] > 0 else 0, axis=1)
+                            
+                            def calc_price_var(r):
+                                if r['上月總量'] == 0 or r['本月總量'] == 0: return 0 
+                                return (r['本月均價'] - r['上月均價']) * r['本月總量']
+                                
+                            def calc_vol_var(r):
+                                if r['上月總量'] == 0: return r['本月總額'] 
+                                if r['本月總量'] == 0: return -r['上月總額'] 
+                                return (r['本月總量'] - r['上月總量']) * r['上月均價']
+                                
+                            mom_df['價差影響'] = mom_df.apply(calc_price_var, axis=1)
+                            mom_df['量差影響'] = mom_df.apply(calc_vol_var, axis=1)
+                            
+                            # 大盤菜價智能稽核
+                            sp_df = fetch_supplier_prices()
+                            mom_df['大盤漲幅'] = "無資料"
+                            mom_df['異常標記'] = ""
+                            if not sp_df.empty:
+                                sp_m_str = f"{selected_date.year}-{selected_date.month:02d}"
+                                sp_pm_date = get_month_delta(selected_date, -1)
+                                sp_pm_str = f"{sp_pm_date.year}-{sp_pm_date.month:02d}"
+                                
+                                sp_m_df = sp_df[sp_df['period'] == sp_m_str]
+                                sp_pm_df = sp_df[sp_df['period'] == sp_pm_str]
+                                
+                                if not sp_m_df.empty and not sp_pm_df.empty:
+                                    def check_market_audit(r):
+                                        if r['上月均價'] <= 0 or r['本月均價'] <= 0: return "無資料", ""
+                                        actual_infl = (r['本月均價'] - r['上月均價']) / r['上月均價']
+                                        
+                                        item = r['Item_Norm']
+                                        m_match = sp_m_df[sp_m_df['item_name'].str.contains(item, na=False, regex=False)]
+                                        pm_match = sp_pm_df[sp_pm_df['item_name'].str.contains(item, na=False, regex=False)]
+                                        
+                                        if not m_match.empty and not pm_match.empty:
+                                            m_price = pd.to_numeric(m_match['price'], errors='coerce').mean()
+                                            pm_price = pd.to_numeric(pm_match['price'], errors='coerce').mean()
+                                            if pd.notna(m_price) and pd.notna(pm_price) and pm_price > 0:
+                                                market_infl = (m_price - pm_price) / pm_price
+                                                warn = "🚨 漲幅異常(可能買貴)" if actual_infl > (market_infl + 0.05) else ""
+                                                return f"{market_infl*100:.1f}%", warn
+                                        return "無資料", ""
+                                    
+                                    audit_res = mom_df.apply(check_market_audit, axis=1)
+                                    mom_df['大盤漲幅'] = [x[0] for x in audit_res]
+                                    mom_df['異常標記'] = [x[1] for x in audit_res]
+                            
                             mom_df_sig = mom_df[abs(mom_df['MoM 差異 (本月 - 上月)']) > 500].sort_values(by='MoM 差異 (本月 - 上月)', ascending=False)
                             
                             m_sum = mom_df['本月總額'].sum()
@@ -4662,15 +4746,16 @@ if selected_page == "💰 採購分析":
                             st.write(f"**The Peak 官方採購成本變化**：本月 `NT$ {m_sum:,.0f}` vs 上月 `NT$ {pm_sum:,.0f}` (變化：**{trend_icon} `NT$ {diff_sum:,.0f}`**)")
                             
                             if not mom_df_sig.empty:
+                                display_cols = ['Item_Norm', 'Unit_Norm', '上月總額', '本月總額', 'MoM 差異 (本月 - 上月)', '價差影響', '量差影響', '大盤漲幅', '異常標記']
                                 col1, col2 = st.columns(2)
                                 with col1:
-                                    st.error("📈 成本增加最多的品項 (含本月新品)")
-                                    inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0]
-                                    st.dataframe(inc_df.style.format({'本月總額': '{:,.0f}', '上月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}'}), use_container_width=True)
+                                    st.error("📈 成本增加最多的品項")
+                                    inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0][display_cols]
+                                    st.dataframe(inc_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}'}), use_container_width=True)
                                 with col2:
-                                    st.success("📉 成本減少最多的品項 (含本月未叫貨)")
-                                    dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0]
-                                    st.dataframe(dec_df.style.format({'本月總額': '{:,.0f}', '上月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}'}), use_container_width=True)
+                                    st.success("📉 成本減少最多的品項")
+                                    dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0][display_cols]
+                                    st.dataframe(dec_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}'}), use_container_width=True)
                             else:
                                 st.info("本月與上月的品項採購金額無顯著差異 (>500)。")
                         else:
