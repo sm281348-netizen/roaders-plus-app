@@ -1661,8 +1661,9 @@ def fetch_fb_future_data(hotel_type="站前館"):
                         d = pd.to_datetime(s)
                         return d.strftime('%Y-%m-%d')
                     except:
-                        return s
+                        return None
                 df['date'] = df['服務日期'].apply(format_dt)
+                df = df[pd.to_datetime(df['date'], errors='coerce').notna()].copy()
             return df
     except Exception as e:
         import logging
@@ -4867,7 +4868,7 @@ if selected_page == "💰 採購分析":
             # 歷史客數 (拆分早餐/下午茶) - 使用兩館加總資料
             df_fb_hist = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
             if not df_fb_hist.empty:
-                df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date']).dt.date
+                df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date'], errors='coerce').dt.date
                 if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
                     hist_guests = df_fb_hist['peak_guests'].sum()
                     hist_bf = df_fb_hist['bf_act'].sum()
@@ -4915,7 +4916,7 @@ if selected_page == "💰 採購分析":
             if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
                 df_fb_fut = get_combined_fb_future_data()
                 if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
-                    df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
+                    df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date'], errors='coerce').dt.date
                     _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
                     m_start_dt = datetime.date(selected_date.year, selected_date.month, 1)
                     m_end_dt = datetime.date(selected_date.year, selected_date.month, last_d)
@@ -5297,7 +5298,7 @@ if selected_page == "💰 採購分析":
                 else:
                     st.markdown("**🔍 歷史預測準確度覆盤**")
                     # 篩選出已經過期的快照 (target_date_end < today)
-                    df_snapshots['target_date_end'] = pd.to_datetime(df_snapshots['target_date_end']).dt.date
+                    df_snapshots['target_date_end'] = pd.to_datetime(df_snapshots['target_date_end'], errors='coerce').dt.date
                     df_past_snaps = df_snapshots[df_snapshots['target_date_end'] < today_date].copy()
                     
                     if df_past_snaps.empty:
@@ -5543,9 +5544,9 @@ if selected_page == "💰 採購分析":
 
                     # 計算每日採購總額（改用『以週為單位均攤』修正採購日 vs 消耗日失真）
                     df_daily_rest['日期_obj'] = pd.to_datetime(
-                        df_daily_rest['date']).dt.date
+                        df_daily_rest['date'], errors='coerce').dt.date
                     df_daily_rest['日期_dt'] = pd.to_datetime(
-                        df_daily_rest['date'])
+                        df_daily_rest['date'], errors='coerce')
 
                     def spread_monthly_cost(df_purchase_input, df_daily_base, guest_col='effective_peak_guests'):
                         """將全月總費用平分到當月有來客的每一天 (保存規模經濟差異)"""
@@ -5757,7 +5758,7 @@ if selected_page == "💰 採購分析":
                         "💡 兩條線的形狀應趨近一致。若某週「採購↑ 來客↓」或「採購↓ 來客↑」，代表食材控管可能有問題。")
 
                     corr_df = analysis_df[['日期_obj', 'effective_peak_guests']].copy()
-                    corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'])
+                    corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'], errors='coerce')
                     corr_df['week_start'] = corr_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
                     
                     # 1. 每週來客數與天數 (計算日均來客)
@@ -6905,7 +6906,7 @@ if selected_page == "💰 採購分析":
         # 新邏輯：直接讀取未來的預約資料
         df_fb_fut = get_combined_fb_future_data()
         if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
-            df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date']).dt.date
+            df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date'], errors='coerce').dt.date
         else:
             df_fb_fut = pd.DataFrame()
             
