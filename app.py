@@ -7303,8 +7303,17 @@ if selected_page == "🛒 菜價分析":
         
         st.divider()
 
+        # ── 建立歷史分析專屬資料快照 ────────────────────────
+        import calendar, datetime
+        _, last_day = calendar.monthrange(selected_date.year, selected_date.month)
+        selected_month_end = datetime.date(selected_date.year, selected_date.month, last_day)
+        
+        analysis_sp_df = sp_df[sp_df['period_dt'] <= selected_month_end].copy()
+        valid_analysis_periods = sorted(analysis_sp_df['period_dt'].unique())
+        n_analysis_periods = len(valid_analysis_periods)
+
         # ── A. 菜商物價指數 ──────────────────────────────
-        if n_periods >= 2:
+        if n_analysis_periods >= 2:
             st.markdown("#### 📈 A. 菜商物價指數")
             st.info(
                 "💡 **真實成本通膨指數 (實線)**：結合您的歷史請購明細，賦予大用量食材較高的權重，真實反映 CPG 的通膨壓力。\n\n"
@@ -7325,8 +7334,8 @@ if selected_page == "🛒 菜價分析":
             except Exception as e:
                 pass
 
-            index_df = get_market_index_df(sp_df, weights_dict=weights_dict)
-            base_period = periods_available[0]
+            index_df = get_market_index_df(analysis_sp_df, weights_dict=weights_dict)
+            base_period = valid_analysis_periods[0]
 
             if not index_df.empty:
                 latest_idx = index_df.iloc[-1]['index']
@@ -7410,7 +7419,7 @@ if selected_page == "🛒 菜價分析":
 
             with bc2:
                 # 根據 latest_idx 決定配額
-                if n_periods >= 2:
+                if n_analysis_periods >= 2 and 'latest_idx' in locals():
                     if latest_idx > 105:
                         status = "🚨 市場通膨惡化 (大盤 > 105)"
                         def_pct, norm_pct, risk_pct = 0.70, 0.20, 0.10
@@ -7453,8 +7462,12 @@ if selected_page == "🛒 菜價分析":
 
         # ── C. 本期菜價總覽 ──────────────────────────────
         st.markdown("#### 📋 C. 本期菜價總覽")
-        latest_period = periods_available[-1]
-        latest_df = sp_df[sp_df['period_dt'] == latest_period].copy()
+        if valid_analysis_periods:
+            latest_period = valid_analysis_periods[-1]
+            latest_df = analysis_sp_df[analysis_sp_df['period_dt'] == latest_period].copy()
+        else:
+            latest_period = periods_available[-1] if periods_available else None
+            latest_df = pd.DataFrame(columns=['item_name', 'unit', 'price'])
 
         # ── 計算歷史請購頻率 (從 thepeak_daily_purchase_report 及 4FHH) ────────
         df_peak_hist = fetch_thepeak_daily_purchase_report()
@@ -7471,7 +7484,7 @@ if selected_page == "🛒 菜價分析":
                         freq_map[item_clean] = freq_map.get(item_clean, 0) + 1
 
         # 用品項名模糊對應到 sp_df 中的 item_name (帶寬鬆匹配)
-        all_sp_items = latest_df['item_name'].astype(str).tolist()
+        all_sp_items = latest_df['item_name'].astype(str).tolist() if not latest_df.empty else []
         frequent_items_set = set()
         item_freq_count = {}  # item_name -> total frequency
         for sp_item in all_sp_items:
@@ -7491,9 +7504,9 @@ if selected_page == "🛒 菜價分析":
         
         n_frequent = len(frequent_items_set)
         
-        if n_periods >= 2:
-            prev_period = periods_available[-2]
-            prev_df = sp_df[sp_df['period_dt'] == prev_period][['item_name', 'unit', 'price']].rename(columns={'price': 'prev_price'})
+        if n_analysis_periods >= 2:
+            prev_period = valid_analysis_periods[-2]
+            prev_df = analysis_sp_df[analysis_sp_df['period_dt'] == prev_period][['item_name', 'unit', 'price']].rename(columns={'price': 'prev_price'})
             latest_df = latest_df.merge(prev_df, on=['item_name', 'unit'], how='left')
             latest_df['change'] = latest_df['price'] - latest_df['prev_price']
             # 漏洞4修復：防止 prev_price 為 0 時產生除以零錯誤
@@ -7506,7 +7519,7 @@ if selected_page == "🛒 菜價分析":
 
             # --- 計算今年至今(全歷史)的純平基準與極值，並統計每個品項的歷史期數 ---
             current_year = selected_date.year
-            ytd_sp_df = sp_df[sp_df['period_dt'].apply(lambda x: getattr(x, 'year', None)) == current_year] if not sp_df.empty else sp_df
+            ytd_sp_df = analysis_sp_df[analysis_sp_df['period_dt'].apply(lambda x: getattr(x, 'year', None)) == current_year] if not analysis_sp_df.empty else analysis_sp_df
             ytd_stats = ytd_sp_df.groupby(['item_name', 'unit'])['price'].agg(['mean', 'max', 'min', 'count']).reset_index()
             ytd_stats.rename(columns={'mean': 'ytd_avg', 'max': 'ytd_max', 'min': 'ytd_min', 'count': 'ytd_periods'}, inplace=True)
             latest_df = latest_df.merge(ytd_stats, on=['item_name', 'unit'], how='left')
@@ -7673,11 +7686,11 @@ if selected_page == "🛒 菜價分析":
 
 
         # ── D. 本期 vs 上期漲跌排行 ──────────────────────
-        if n_periods >= 2:
+        if n_analysis_periods >= 2:
             st.markdown("#### 📊 D. 本期 vs 上期：漲跌排行")
             # 防呆：若 Section C 因異常未執行導致 full_latest_df 未定義，用基本資料代替
             if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
-                full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
+                full_latest_df = analysis_sp_df[analysis_sp_df['period_dt'] == valid_analysis_periods[-1]].copy() if not analysis_sp_df.empty else pd.DataFrame()
             
             if 'change_pct' in full_latest_df.columns:
                 ranked = full_latest_df.dropna(subset=['change_pct']).copy()
@@ -7717,9 +7730,9 @@ if selected_page == "🛒 菜價分析":
             st.divider()
 
         # ── E. 品項趨勢圖 ────────────────────────────────
-        if n_periods >= 2:
+        if n_analysis_periods >= 2:
             st.markdown("#### 📈 E. 品項歷期趨勢")
-            all_items = sorted(sp_df['item_name'].unique().tolist())
+            all_items = sorted(analysis_sp_df['item_name'].unique().tolist())
             selected_items = st.multiselect(
                 "選擇品項（可多選）",
                 options=all_items,
@@ -7727,7 +7740,7 @@ if selected_page == "🛒 菜價分析":
                 placeholder="請選擇要比對的品項"
             )
             if selected_items:
-                trend_df = sp_df[sp_df['item_name'].isin(
+                trend_df = analysis_sp_df[analysis_sp_df['item_name'].isin(
                     selected_items)].copy()
                 trend_df['period_str'] = trend_df['period_dt'].astype(str)
                 price_min = int(trend_df['price'].min() * 0.85)
@@ -7759,10 +7772,10 @@ if selected_page == "🛒 菜價分析":
 
         # ── F. 叫貨戰略建議 ──────────────────────────────
         st.markdown("#### 🎯 F. 叫貨戰略建議")
-        if n_periods >= 2:
+        if n_analysis_periods >= 2:
             # 防呆：若 full_latest_df 未定義，補上基本資料
             if 'full_latest_df' not in dir() and 'full_latest_df' not in locals():
-                full_latest_df = sp_df[sp_df['period_dt'] == periods_available[-1]].copy() if not sp_df.empty else pd.DataFrame()
+                full_latest_df = analysis_sp_df[analysis_sp_df['period_dt'] == valid_analysis_periods[-1]].copy() if not analysis_sp_df.empty else pd.DataFrame()
             
             if 'change_pct' in full_latest_df.columns:
                 ranked_all = full_latest_df.dropna(subset=['change_pct']).copy()
