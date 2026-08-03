@@ -9631,6 +9631,73 @@ def render_free_services_optimization_tab():
 
     stats_df = pd.DataFrame(item_stats)
 
+    # ── 📌 全新新增區塊：各區域與部門採購分布一覽表 ─────────────────
+    st.markdown("### 📌 站前館免費服務區域與部門採購分布一覽表")
+    st.caption("💡 彙整 9 大服務區域與各歸屬部門之品項數、7個月花費金額、月均頻率與 CPOR 占比，方便您一目瞭然掌握全貌：")
+
+    tab_cat, tab_dept = st.tabs(["🏛️ 按 9 大服務區域分布一覽", "🏢 按請購權責部門分布一覽"])
+
+    with tab_cat:
+        # 按區域 Groupby 統計
+        cat_order = ["會員禮", "生日禮", "蜜月禮", "明信片區", "茶水區", "櫃台區", "餐車區", "洗衣房", "廁所區"]
+        cat_rows = []
+        tot_all_spend = stats_df["tot_spend_7m"].sum()
+
+        for c in cat_order:
+            sub = stats_df[stats_df["cat"] == c]
+            if not sub.empty:
+                c_cnt = len(sub)
+                c_spend_7m = sub["tot_spend_7m"].sum()
+                c_m_spend = sub["m_spend"].sum()
+                c_freq_m = sub["m_count"].sum()
+                c_cpor = c_spend_7m / total_rooms_7m
+                c_ratio = (c_spend_7m / tot_all_spend * 100) if tot_all_spend > 0 else 0
+                depts = ", ".join(list(sub["dept"].unique()))
+                item_names = ", ".join(list(sub["name"]))
+
+                cat_rows.append({
+                    "服務區域": c,
+                    "主要權責部門": depts,
+                    "品項數": f"{c_cnt} 項",
+                    "2026/1~7月總花費": f"NT$ {int(c_spend_7m):,}",
+                    "月均花費": f"NT$ {int(c_m_spend):,}",
+                    "金額占比": f"{c_ratio:.1f}%",
+                    "月均採購次數": f"{c_freq_m:.1f} 次/月",
+                    "區域 CPOR": f"NT$ {c_cpor:.1f} / 房",
+                    "包含品項細節": item_names
+                })
+
+        cat_summary_df = pd.DataFrame(cat_rows)
+        st.dataframe(cat_summary_df, use_container_width=True, height=360)
+
+    with tab_dept:
+        # 按部門 Groupby 統計
+        dept_rows = []
+        for d, sub in stats_df.groupby("dept"):
+            d_cnt = len(sub)
+            d_spend_7m = sub["tot_spend_7m"].sum()
+            d_m_spend = sub["m_spend"].sum()
+            d_freq_m = sub["m_count"].sum()
+            d_cpor = d_spend_7m / total_rooms_7m
+            d_ratio = (d_spend_7m / tot_all_spend * 100) if tot_all_spend > 0 else 0
+            item_names = ", ".join(list(sub["name"]))
+
+            dept_rows.append({
+                "採購部門": d,
+                "涵蓋免費品項數": f"{d_cnt} 項",
+                "2026/1~7月總花費": f"NT$ {int(d_spend_7m):,}",
+                "月均花費": f"NT$ {int(d_m_spend):,}",
+                "總預算占比": f"{d_ratio:.1f}%",
+                "月均請購次數": f"{d_freq_m:.1f} 次/月",
+                "部門 CPOR": f"NT$ {d_cpor:.1f} / 房",
+                "主要負責物品": item_names
+            })
+
+        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="2026/1~7月總花費", ascending=False)
+        st.dataframe(dept_summary_df, use_container_width=True, height=220)
+
+    st.markdown("---")
+
     # ── 區塊 A：戰情看板與 ROI 試算器 ──────────────────────────
     st.markdown("### 📊 區塊 A：站前館 ROI 戰情看板與決策試算器")
 
@@ -9802,7 +9869,3 @@ def render_free_services_optimization_tab():
 
     st.code(markdown_report, language='markdown')
 
-
-
-if selected_page == "💡 專案：免費服務成本優化":
-    render_free_services_optimization_tab()
