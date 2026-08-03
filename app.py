@@ -9559,7 +9559,7 @@ def render_free_services_optimization_tab():
     station_p_df = pd.DataFrame()
     total_rooms_7m = 25000  # 預設估計總房數防呆值
     try:
-        raw_p_df = _get_cached_sheet_v3("purchase_data", hotel_type="站前館")
+        raw_p_df = get_purchase_data_cached()
         if raw_p_df is not None and not raw_p_df.empty:
             df = raw_p_df.copy()
             # 🔒 先過濾站前館資料（避免混入主題館數據）
