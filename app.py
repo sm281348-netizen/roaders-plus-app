@@ -9459,8 +9459,7 @@ if current_hotel != "採購":
 if selected_page == "📋 營運檢討報告":
     render_report_tab()
 
-if selected_page == "💡 專案：免費服務成本優化":
-    render_free_services_optimization_tab()
+
 
 
 
@@ -9803,3 +9802,7 @@ def render_free_services_optimization_tab():
 
     st.code(markdown_report, language='markdown')
 
+
+
+if selected_page == "💡 專案：免費服務成本優化":
+    render_free_services_optimization_tab()
