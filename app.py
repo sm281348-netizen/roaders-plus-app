@@ -8968,6 +8968,12 @@ def render_report_tab():
                     append_hh_df['ym'] = pd.to_datetime(append_hh_df['日期']).dt.strftime('%Y-%m')
                     append_hh_df = append_hh_df[~append_hh_df['ym'].isin(official_ym)].drop(columns=['ym'])
                     
+                    st.info(
+                        "💡 如何修正比對結果：\n\n"
+                        "若某品項顯示「未比對到」，請告知我該品項在 purchase_data 中的實際名稱，"
+                        "我將協助您更新關鍵字清單，確保系統可正確抓取真實採購金額。"
+                    )
+                    
                     if not append_hh_df.empty:
                         item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
                         if '品項名稱' in df_hh_report.columns:
@@ -9657,6 +9663,74 @@ def render_free_services_optimization_tab():
         })
 
     stats_df = pd.DataFrame(item_stats)
+
+    # ── 🔍 品項關鍵字查核區塊 ──────────────────────────────────────────
+    with st.expander("🔍 品項關鍵字查核工具：確認 purchase_data 實際抓到哪些品名", expanded=False):
+        st.caption(
+            "此工具列出每個免費服務品項「設定的關鍵字」以及在 `purchase_data` 中「實際比對到的品名」，"
+            "方便您確認系統是否抓到正確資料，或需要修正關鍵字。"
+        )
+
+        if station_p_df.empty:
+            st.warning("⚠️ 目前無法讀取站前館 purchase_data（可能是資料連線問題或日期區間內無資料），以下顯示僅供關鍵字參考。")
+            name_col_audit = None
+        else:
+            name_col_audit = next((c for c in station_p_df.columns if '品項' in c or 'item' in c.lower() or '名稱' in c), None)
+
+        audit_rows = []
+        for item in FREE_SERVICES_ITEMS:
+            kws = ", ".join(item["keywords"])
+            matched_names = "—（無法讀取資料）"
+            matched_count = 0
+            status = "⚪ 無法判斷"
+
+            if name_col_audit and not station_p_df.empty:
+                kw_list = item["keywords"]
+                matched_rows = station_p_df[station_p_df[name_col_audit].astype(str).apply(
+                    lambda x: any(k in x for k in kw_list)
+                )]
+                matched_count = len(matched_rows)
+                if matched_count > 0:
+                    unique_names = matched_rows[name_col_audit].astype(str).str.strip().unique()[:5].tolist()
+                    matched_names = " | ".join(unique_names)
+                    status = "✅ 已比對到"
+                else:
+                    matched_names = "❌ 無比對結果（將使用估算值）"
+                    status = "❌ 未比對到"
+
+            audit_rows.append({
+                "免費服務品項": item["name"],
+                "服務區域": item["cat"],
+                "設定的關鍵字": kws,
+                "比對狀態": status,
+                "比對到的採購單品名（最多5筆）": matched_names,
+                "2026/1~7月比對筆數": matched_count
+            })
+
+        audit_df = pd.DataFrame(audit_rows)
+
+        # 顯示統計摘要
+        total_matched = sum(1 for r in audit_rows if "✅" in r["比對狀態"])
+        total_unmatched = sum(1 for r in audit_rows if "❌" in r["比對狀態"])
+        col_a1, col_a2, col_a3 = st.columns(3)
+        col_a1.metric("總品項數", f"{len(audit_rows)} 項")
+        col_a2.metric("✅ 成功比對到真實資料", f"{total_matched} 項", delta=None)
+        col_a3.metric("❌ 未比對到（使用估算）", f"{total_unmatched} 項", delta=None)
+
+        st.dataframe(
+            audit_df,
+            use_container_width=True,
+            height=450,
+            column_config={
+                "2026/1~7月比對筆數": st.column_config.NumberColumn("比對筆數", format="%d 筆"),
+            }
+        )
+
+        st.info(
+            "💡 如何修正比對結果：\n\n"
+            "若某品項顯示「❌ 未比對到」，請告知我該品項在 `purchase_data` 中的**實際名稱**，"
+            "我將協助您更新關鍵字清單，確保系統可正確抓取真實採購金額。"
+        )
 
     # ── 📌 全新新增區塊：各區域與部門採購分布一覽表 ─────────────────
     st.markdown("### 📌 站前館免費服務區域與部門採購分布一覽表")
