@@ -9685,17 +9685,29 @@ def render_free_services_optimization_tab():
                 cat_rows.append({
                     "服務區域": c,
                     "主要權責部門": depts,
-                    "品項數": f"{c_cnt} 項",
-                    "2026/1~7月總花費": f"NT$ {int(c_spend_7m):,}",
-                    "月均花費": f"NT$ {int(c_m_spend):,}",
-                    "金額占比": f"{c_ratio:.1f}%",
-                    "月均採購次數": f"{c_freq_m:.1f} 次/月",
-                    "區域 CPOR": f"NT$ {c_cpor:.1f} / 房",
-                    "包含品項細節": item_names
+                    "品項數": c_cnt,
+                    "7個月總花費(NT$)": int(c_spend_7m),
+                    "月均花費(NT$)": int(c_m_spend),
+                    "金額占比(%)": round(c_ratio, 1),
+                    "月均採購次數": round(c_freq_m, 1),
+                    "區域CPOR(NT$/房)": round(c_cpor, 2),
+                    "包含品項": item_names
                 })
 
         cat_summary_df = pd.DataFrame(cat_rows)
-        st.dataframe(cat_summary_df, use_container_width=True, height=360)
+        st.dataframe(
+            cat_summary_df,
+            use_container_width=True,
+            height=360,
+            column_config={
+                "品項數": st.column_config.NumberColumn("品項數", format="%d 項"),
+                "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
+                "月均花費(NT$)": st.column_config.NumberColumn("月均花費", format="NT$ %d"),
+                "金額占比(%)": st.column_config.NumberColumn("金額占比", format="%.1f%%"),
+                "月均採購次數": st.column_config.NumberColumn("月均採購次數", format="%.1f 次/月"),
+                "區域CPOR(NT$/房)": st.column_config.NumberColumn("區域 CPOR", format="NT$ %.2f / 房"),
+            }
+        )
 
     with tab_dept:
         # 按部門 Groupby 統計
@@ -9711,18 +9723,29 @@ def render_free_services_optimization_tab():
 
             dept_rows.append({
                 "採購部門": d,
-                "涵蓋免費品項數": f"{d_cnt} 項",
-                "_sort_spend": d_spend_7m,
-                "2026/1~7月總花費": f"NT$ {int(d_spend_7m):,}",
-                "月均花費": f"NT$ {int(d_m_spend):,}",
-                "總預算占比": f"{d_ratio:.1f}%",
-                "月均請購次數": f"{d_freq_m:.1f} 次/月",
-                "部門 CPOR": f"NT$ {d_cpor:.1f} / 房",
+                "品項數": d_cnt,
+                "7個月總花費(NT$)": int(d_spend_7m),
+                "月均花費(NT$)": int(d_m_spend),
+                "總預算占比(%)": round(d_ratio, 1),
+                "月均請購次數": round(d_freq_m, 1),
+                "部門CPOR(NT$/房)": round(d_cpor, 2),
                 "主要負責物品": item_names
             })
 
-        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="_sort_spend", ascending=False).drop(columns=["_sort_spend"])
-        st.dataframe(dept_summary_df, use_container_width=True, height=220)
+        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="7個月總花費(NT$)", ascending=False)
+        st.dataframe(
+            dept_summary_df,
+            use_container_width=True,
+            height=220,
+            column_config={
+                "品項數": st.column_config.NumberColumn("品項數", format="%d 項"),
+                "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
+                "月均花費(NT$)": st.column_config.NumberColumn("月均花費", format="NT$ %d"),
+                "總預算占比(%)": st.column_config.NumberColumn("總預算占比", format="%.1f%%"),
+                "月均請購次數": st.column_config.NumberColumn("月均請購次數", format="%.1f 次/月"),
+                "部門CPOR(NT$/房)": st.column_config.NumberColumn("部門 CPOR", format="NT$ %.2f / 房"),
+            }
+        )
 
     st.markdown("---")
 
