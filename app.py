@@ -9562,14 +9562,17 @@ def render_free_services_optimization_tab():
         raw_p_df = get_purchase_data_cached()
         if raw_p_df is not None and not raw_p_df.empty:
             df = raw_p_df.copy()
-            # 🔒 先過濾站前館資料（避免混入主題館數據）
-            hotel_col = next((c for c in df.columns if '館' in c or 'hotel' in c.lower() or '分店' in c or '地點' in c), None)
+            # 🔒 先過濾站前館資料（避免混入主題館數據，若過濾後為空則保留全量）
+            hotel_col = next((c for c in df.columns if '館' in c or 'hotel' in c.lower() or '分店' in c or '地點' in c or '工地' in c), None)
             if hotel_col:
-                df = df[df[hotel_col].astype(str).str.contains('站前', na=False)]
-            # 轉換日期
+                filtered_df = df[df[hotel_col].astype(str).str.contains('站前|PLUS|Plus', regex=True, na=False)]
+                if not filtered_df.empty:
+                    df = filtered_df
+            # 轉換日期（使用 robust_date_parse 避免民國 115 年被誤認為公元 115 年）
             date_col = next((c for c in df.columns if '日' in c or 'date' in c.lower()), None)
             if date_col:
-                df['dt'] = pd.to_datetime(df[date_col], errors='coerce')
+                parsed_dates = df[date_col].apply(robust_date_parse)
+                df['dt'] = pd.to_datetime(parsed_dates, errors='coerce')
                 # 嚴格鎖定 2026/01/01 ~ 2026/07/31
                 station_p_df = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
 
