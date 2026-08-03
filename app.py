@@ -9869,3 +9869,5 @@ def render_free_services_optimization_tab():
 
     st.code(markdown_report, language='markdown')
 
+if selected_page == "💡 專案：免費服務成本優化":
+    render_free_services_optimization_tab()
