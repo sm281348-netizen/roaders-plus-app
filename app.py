@@ -9543,6 +9543,10 @@ def render_free_services_optimization_tab():
         raw_p_df = _get_cached_sheet_v3("purchase_data", hotel_type="站前館")
         if raw_p_df is not None and not raw_p_df.empty:
             df = raw_p_df.copy()
+            # 🔒 先過濾站前館資料（避免混入主題館數據）
+            hotel_col = next((c for c in df.columns if '館' in c or 'hotel' in c.lower() or '分店' in c or '地點' in c), None)
+            if hotel_col:
+                df = df[df[hotel_col].astype(str).str.contains('站前', na=False)]
             # 轉換日期
             date_col = next((c for c in df.columns if '日' in c or 'date' in c.lower()), None)
             if date_col:
@@ -9574,9 +9578,25 @@ def render_free_services_optimization_tab():
         "濕紙巾": 2.5, "酒精": 1.2, "衛生棉": 4.0
     }
     default_monthly_qty = {
-        "樹頂蘋果汁": 450, "果味台啤": 200, "蒸氣眼罩": 350, "金沙巧克力": 180, "迴力小汽車": 120,
-        "三合一麥片": 800, "咖啡杯": 1200, "迎賓糖果": 2500, "HH食材": 300, "熊寶貝噴霧": 25, "面膜": 300,
-        "濕紙巾": 600, "尿布": 50, "衛生棉": 60
+        # 會員禮
+        "面膜": 300, "蒸氣眼罩": 350, "迴力小汽車": 80, "樹頂蘋果汁": 450, "果味台啤": 200, "飲料杯套": 500,
+        # 生日禮
+        "小鹿商品": 15, "樹頂石榴汁": 120, "生日包材消耗品": 30, "木盒": 20, "裝飾物(假花)": 10, "裝飾燈": 8,
+        # 蜜月禮
+        "金沙巧克力": 180,
+        # 明信片區
+        "各館酷卡": 500, "免費郵寄服務": 40,
+        # 茶水區
+        "三合一麥片": 800, "玉米鬚茶": 600, "咖啡杯": 1200, "杯蓋": 1200,
+        # 櫃台區
+        "迎賓糖果": 2500, "櫃台消耗品": 50, "客用簽名筆": 30,
+        # 餐車區
+        "HH食材": 300, "餐盒": 600, "餐具": 600,
+        # 洗衣房
+        "洗衣粉": 400, "洗衣房消耗品": 80, "洗衣球": 60, "烘衣球": 4, "熊寶貝噴霧": 25,
+        "白板筆": 3, "板擦": 2, "洗衣籃": 1, "熨斗": 0, "燙板": 0, "掛燙機": 0,
+        # 廁所區
+        "尿布": 50, "濕紙巾": 600, "酒精": 800, "衛生棉": 60
     }
 
     for item in FREE_SERVICES_ITEMS:
@@ -9692,6 +9712,7 @@ def render_free_services_optimization_tab():
             dept_rows.append({
                 "採購部門": d,
                 "涵蓋免費品項數": f"{d_cnt} 項",
+                "_sort_spend": d_spend_7m,
                 "2026/1~7月總花費": f"NT$ {int(d_spend_7m):,}",
                 "月均花費": f"NT$ {int(d_m_spend):,}",
                 "總預算占比": f"{d_ratio:.1f}%",
@@ -9700,7 +9721,7 @@ def render_free_services_optimization_tab():
                 "主要負責物品": item_names
             })
 
-        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="2026/1~7月總花費", ascending=False)
+        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="_sort_spend", ascending=False).drop(columns=["_sort_spend"])
         st.dataframe(dept_summary_df, use_container_width=True, height=220)
 
     st.markdown("---")
@@ -9872,7 +9893,7 @@ def render_free_services_optimization_tab():
     for idx, row in act_summary.iterrows():
         markdown_report += f"- **{row['name']}** [{row['cat']} / {row['dept']}]：優化動作「**{row['act_val']}**」，預估每月可節省 NT$ {int(row['saving_val']):,}（原月均 NT$ {int(row['m_spend']):,}）。\n"
 
-    markdown_report += "\n---\n*請站前館客務部、房務部與餐飲部依上述決策配合執行現場擺放與請購調整。*"
+    markdown_report += "\n---\n*請站前館 **櫃台**、**房務部** 與 **Happy Hour 餐車** 依上述決策配合執行現場擺放與請購調整，相關採購申請請於系統內更新。*"
 
     st.code(markdown_report, language='markdown')
 
