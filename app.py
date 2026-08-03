@@ -9486,7 +9486,7 @@ def render_free_services_optimization_tab():
         {"name": "飲料杯套", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["杯套", "飲料杯套", "提袋"], "sub_category": "周邊禮品", "default_action": "維持現狀", "value_score": 3},
 
         # 生日禮
-        {"name": "小鹿商品", "cat": "生日禮", "dept": "行銷部", "is_request_only": False, "keywords": ["小鹿", "小鹿商品", "小鹿娃娃", "小鹿吊飾"], "sub_category": "品牌禮品", "default_action": "維持現狀", "value_score": 5},
+        {"name": "小鹿商品", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["小鹿", "小鹿商品", "小鹿娃娃", "小鹿吊飾"], "sub_category": "品牌禮品", "default_action": "維持現狀", "value_score": 5},
         {"name": "樹頂石榴汁", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂石榴汁", "石榴汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
         {"name": "生日包材消耗品", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["生日禮盒", "生日包裝", "禮品袋", "緞帶"], "sub_category": "包材耗材", "default_action": "維持現狀", "value_score": 2},
         {"name": "木盒", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["木盒", "禮品木盒"], "sub_category": "包材耗材", "default_action": "直接刪除", "value_score": 2},
@@ -9497,7 +9497,7 @@ def render_free_services_optimization_tab():
         {"name": "金沙巧克力", "cat": "蜜月禮", "dept": "櫃台", "is_request_only": False, "keywords": ["金沙", "金沙巧克力", "巧克力"], "sub_category": "食品禮品", "default_action": "平價替代", "value_score": 4},
 
         # 明信片區
-        {"name": "各館酷卡", "cat": "明信片區", "dept": "行銷部", "is_request_only": False, "keywords": ["酷卡", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "各館酷卡", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["酷卡", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
         {"name": "免費郵寄服務", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["郵資", "郵寄"], "sub_category": "郵務服務", "default_action": "維持現狀", "value_score": 3},
 
         # 茶水區
