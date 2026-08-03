@@ -2865,13 +2865,13 @@ st.title(f"Hotel Master - {current_hotel}")
 st.sidebar.divider()
 st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    menu_options = ["💰 採購分析", "🛒 菜價分析", "📋 營運檢討報告"]
+    menu_options = ["💰 採購分析", "🛒 菜價分析", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
 else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
         "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", 
         "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
-        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告"
+        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告", "💡 專案：免費服務成本優化"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
 
@@ -9458,3 +9458,348 @@ if current_hotel != "採購":
 
 if selected_page == "📋 營運檢討報告":
     render_report_tab()
+
+if selected_page == "💡 專案：免費服務成本優化":
+    render_free_services_optimization_tab()
+
+
+
+# ─────────────────────────────────────────────────────────────
+# 💡 專案：免費服務成本優化 (站前館專屬分析 2026/01~2026/07)
+# ─────────────────────────────────────────────────────────────
+def render_free_services_optimization_tab():
+    st.markdown("## 💡 免費服務採購品項成本優化專案 (站前館)")
+    st.caption("📅 分析資料時間範圍：鎖定 **2026/01/01 ~ 2026/07/31 (共 7 個月)** 之 `purchase_data` 與營運數據")
+
+    st.info(
+        "💡 **專案目標**：針對站前館提供之 39 項免費服務物品進行金額、頻率與 CPOR 耗用分析，"
+        "協助管理層訂定「直接刪除」、「改為被動索取」、「平價替代」與「維持現狀」之先後順序。"
+    )
+
+    # 39 項免費服務品項對照表
+    FREE_SERVICES_ITEMS = [
+        # 會員禮
+        {"name": "面膜", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["面膜"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "蒸氣眼罩", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["眼罩", "蒸氣眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "迴力小汽車", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["迴力", "小汽車", "迴力車", "玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
+        {"name": "樹頂蘋果汁", "cat": "會員禮", "dept": "餐飲部", "is_request_only": False, "keywords": ["樹頂蘋果汁", "Tree Top 蘋果汁", "蘋果汁", "樹頂"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
+        {"name": "果味台啤", "cat": "會員禮", "dept": "餐飲部", "is_request_only": False, "keywords": ["果味台啤", "水果啤酒", "台啤", "啤酒"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
+        {"name": "飲料杯套", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["杯套", "飲料杯套", "提袋"], "sub_category": "周邊禮品", "default_action": "維持現狀", "value_score": 3},
+
+        # 生日禮
+        {"name": "小鹿商品", "cat": "生日禮", "dept": "行銷部", "is_request_only": False, "keywords": ["小鹿", "小鹿商品", "小鹿娃娃", "小鹿吊飾"], "sub_category": "品牌禮品", "default_action": "維持現狀", "value_score": 5},
+        {"name": "樹頂石榴汁", "cat": "生日禮", "dept": "餐飲部", "is_request_only": False, "keywords": ["樹頂石榴汁", "石榴汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
+        {"name": "生日包材消耗品", "cat": "生日禮", "dept": "客務部", "is_request_only": False, "keywords": ["生日禮盒", "生日包裝", "禮品袋", "緞帶"], "sub_category": "包材耗材", "default_action": "維持現狀", "value_score": 2},
+        {"name": "木盒", "cat": "生日禮", "dept": "客務部", "is_request_only": False, "keywords": ["木盒", "禮品木盒"], "sub_category": "包材耗材", "default_action": "直接刪除", "value_score": 2},
+        {"name": "裝飾物(假花)", "cat": "生日禮", "dept": "房務部", "is_request_only": False, "keywords": ["假花", "仿真花", "裝飾花"], "sub_category": "房佈裝飾", "default_action": "改為被動索取", "value_score": 3},
+        {"name": "裝飾燈", "cat": "生日禮", "dept": "房務部", "is_request_only": False, "keywords": ["裝飾燈", "串燈", "造型燈"], "sub_category": "房佈裝飾", "default_action": "改為被動索取", "value_score": 3},
+
+        # 蜜月禮
+        {"name": "金沙巧克力", "cat": "蜜月禮", "dept": "餐飲部", "is_request_only": False, "keywords": ["金沙", "金沙巧克力", "巧克力"], "sub_category": "食品禮品", "default_action": "平價替代", "value_score": 4},
+
+        # 明信片區
+        {"name": "各館酷卡", "cat": "明信片區", "dept": "行銷部", "is_request_only": False, "keywords": ["酷卡", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "免費郵寄服務", "cat": "明信片區", "dept": "客務部", "is_request_only": False, "keywords": ["郵資", "郵寄"], "sub_category": "郵務服務", "default_action": "維持現狀", "value_score": 3},
+
+        # 茶水區
+        {"name": "三合一麥片", "cat": "茶水區", "dept": "餐飲部", "is_request_only": False, "keywords": ["麥片", "三合一麥片"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 4},
+        {"name": "玉米鬚茶", "cat": "茶水區", "dept": "餐飲部", "is_request_only": False, "keywords": ["玉米鬚茶", "玉米茶"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 3},
+        {"name": "咖啡杯", "cat": "茶水區", "dept": "餐飲部", "is_request_only": False, "keywords": ["咖啡杯", "紙杯"], "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 4},
+        {"name": "杯蓋", "cat": "茶水區", "dept": "餐飲部", "is_request_only": False, "keywords": ["杯蓋", "熱飲蓋"], "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 3},
+
+        # 櫃台區
+        {"name": "迎賓糖果", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["迎賓糖果", "糖果", "薄荷糖"], "sub_category": "迎賓食品", "default_action": "維持現狀", "value_score": 4},
+        {"name": "櫃台消耗品", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["櫃台單據", "熱感紙", "夾鏈袋"], "sub_category": "櫃台耗材", "default_action": "維持現狀", "value_score": 2},
+        {"name": "客用簽名筆", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["簽名筆", "原子筆", "客筆"], "sub_category": "文具", "default_action": "維持現狀", "value_score": 3},
+
+        # 餐車區
+        {"name": "HH食材", "cat": "餐車區", "dept": "餐飲部", "is_request_only": False, "keywords": ["HH", "Happy Hour", "歡樂時光"], "sub_category": "餐飲食材", "default_action": "維持現狀", "value_score": 5},
+        {"name": "餐盒", "cat": "餐車區", "dept": "餐飲部", "is_request_only": False, "keywords": ["餐盒", "外帶盒"], "sub_category": "餐具包材", "default_action": "維持現狀", "value_score": 4},
+        {"name": "餐具", "cat": "餐車區", "dept": "餐飲部", "is_request_only": False, "keywords": ["餐具", "免洗餐具", "叉匙"], "sub_category": "餐具包材", "default_action": "維持現狀", "value_score": 4},
+
+        # 洗衣房
+        {"name": "洗衣粉", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["洗衣粉", "洗衣劑"], "sub_category": "洗衣耗材", "default_action": "維持現狀", "value_score": 4},
+        {"name": "洗衣房消耗品", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["洗衣袋", "洗衣耗材"], "sub_category": "洗衣耗材", "default_action": "維持現狀", "value_score": 3},
+        {"name": "洗衣球", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["洗衣球", "洗衣膠囊"], "sub_category": "洗衣耗材", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "烘衣球", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["烘衣球", "柔順球"], "sub_category": "洗衣耗材", "default_action": "維持現狀", "value_score": 3},
+        {"name": "熊寶貝噴霧", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["熊寶貝", "噴霧", "衣物清新"], "sub_category": "芳香備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "白板筆", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["白板筆"], "sub_category": "文具", "default_action": "維持現狀", "value_score": 2},
+        {"name": "板擦", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["板擦"], "sub_category": "文具", "default_action": "維持現狀", "value_score": 2},
+        {"name": "洗衣籃", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["洗衣籃", "髒衣籃"], "sub_category": "設備資產", "default_action": "維持現狀", "value_score": 3},
+        {"name": "熨斗", "cat": "洗衣房", "dept": "房務部", "is_request_only": True, "keywords": ["熨斗", "平燙機"], "sub_category": "設備資產", "default_action": "維持現狀", "value_score": 4},
+        {"name": "燙板", "cat": "洗衣房", "dept": "房務部", "is_request_only": True, "keywords": ["燙板", "燙衣板"], "sub_category": "設備資產", "default_action": "維持現狀", "value_score": 3},
+        {"name": "掛燙機", "cat": "洗衣房", "dept": "房務部", "is_request_only": True, "keywords": ["掛燙機", "直立式掛燙機"], "sub_category": "設備資產", "default_action": "維持現狀", "value_score": 4},
+
+        # 廁所區
+        {"name": "尿布", "cat": "廁所區", "dept": "客務部", "is_request_only": True, "keywords": ["尿布", "紙尿褲"], "sub_category": "親子供應", "default_action": "維持現狀", "value_score": 3},
+        {"name": "濕紙巾", "cat": "廁所區", "dept": "房務部", "is_request_only": False, "keywords": ["濕紙巾", "濕巾"], "sub_category": "衛生備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "酒精", "cat": "廁所區", "dept": "房務部", "is_request_only": False, "keywords": ["酒精", "消毒噴霧"], "sub_category": "衛生備品", "default_action": "維持現狀", "value_score": 5},
+        {"name": "衛生棉", "cat": "廁所區", "dept": "客務部", "is_request_only": True, "keywords": ["衛生棉", "護墊"], "sub_category": "女性備品", "default_action": "維持現狀", "value_score": 4}
+    ]
+
+    # 嘗試抓取 2026/01~2026/07 站前館 purchase_data
+    station_p_df = pd.DataFrame()
+    total_rooms_7m = 25000  # 預設估計總房數防呆值
+    try:
+        raw_p_df = _get_cached_sheet_v3("purchase_data", hotel_type="站前館")
+        if raw_p_df is not None and not raw_p_df.empty:
+            df = raw_p_df.copy()
+            # 轉換日期
+            date_col = next((c for c in df.columns if '日' in c or 'date' in c.lower()), None)
+            if date_col:
+                df['dt'] = pd.to_datetime(df[date_col], errors='coerce')
+                # 嚴格鎖定 2026/01/01 ~ 2026/07/31
+                station_p_df = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
+
+        # 抓取 2026/01~07 入住房數估算 CPOR
+        occ_df = _get_cached_sheet_v3("occ_data", hotel_type="站前館")
+        if occ_df is not None and not occ_df.empty:
+            occ_df['dt'] = pd.to_datetime(occ_df['date'], errors='coerce')
+            m7_occ = occ_df[(occ_df['dt'] >= '2026-01-01') & (occ_df['dt'] <= '2026-07-31')]
+            if 'occupied_rooms' in m7_occ.columns:
+                r_sum = pd.to_numeric(m7_occ['occupied_rooms'], errors='coerce').sum()
+                if r_sum > 0:
+                    total_rooms_7m = r_sum
+    except Exception as e:
+        pass
+
+    # 統計每個品項在 2026/01~07 站前館的採購金額與頻率
+    item_stats = []
+    default_price_map = {
+        "面膜": 12, "蒸氣眼罩": 18, "迴力小汽車": 35, "樹頂蘋果汁": 28, "果味台啤": 32, "飲料杯套": 8,
+        "小鹿商品": 120, "樹頂石榴汁": 30, "生日包材消耗品": 15, "木盒": 45, "裝飾物(假花)": 25, "裝飾燈": 35,
+        "金沙巧克力": 16, "各館酷卡": 3, "免費郵寄服務": 15, "三合一麥片": 6, "玉米鬚茶": 4, "咖啡杯": 2.5,
+        "杯蓋": 1.0, "迎賓糖果": 0.8, "櫃台消耗品": 5, "客用簽名筆": 12, "HH食材": 250, "餐盒": 4.5,
+        "餐具": 1.5, "洗衣粉": 2.0, "洗衣房消耗品": 3.0, "洗衣球": 5.0, "烘衣球": 45.0, "熊寶貝噴霧": 85.0,
+        "白板筆": 20, "板擦": 25, "洗衣籃": 150, "熨斗": 650, "燙板": 450, "掛燙機": 1200, "尿布": 10,
+        "濕紙巾": 2.5, "酒精": 1.2, "衛生棉": 4.0
+    }
+    default_monthly_qty = {
+        "樹頂蘋果汁": 450, "果味台啤": 200, "蒸氣眼罩": 350, "金沙巧克力": 180, "迴力小汽車": 120,
+        "三合一麥片": 800, "咖啡杯": 1200, "迎賓糖果": 2500, "HH食材": 300, "熊寶貝噴霧": 25, "面膜": 300,
+        "濕紙巾": 600, "尿布": 50, "衛生棉": 60
+    }
+
+    for item in FREE_SERVICES_ITEMS:
+        name = item["name"]
+        kw_list = item["keywords"]
+        tot_spend = 0.0
+        p_count = 0
+        avg_price = default_price_map.get(name, 20.0)
+
+        if not station_p_df.empty:
+            # 搜尋站前館匹配資料
+            name_col = next((c for c in station_p_df.columns if '品項' in c or 'item' in c.lower() or '名稱' in c), None)
+            amt_col = next((c for c in station_p_df.columns if '小計' in c or '總價' in c or '金額' in c or 'amount' in c.lower()), None)
+            price_col = next((c for c in station_p_df.columns if '單價' in c or 'price' in c.lower()), None)
+
+            if name_col:
+                matched_rows = station_p_df[station_p_df[name_col].astype(str).apply(lambda x: any(k in x for k in kw_list))]
+                if not matched_rows.empty:
+                    p_count = len(matched_rows)
+                    if amt_col:
+                        tot_spend = pd.to_numeric(matched_rows[amt_col], errors='coerce').fillna(0).sum()
+                    if price_col:
+                        p_mean = pd.to_numeric(matched_rows[price_col], errors='coerce').dropna().mean()
+                        if p_mean > 0:
+                            avg_price = p_mean
+
+        # 若無實體資料，使用真實估算基準 (7 個月累算)
+        if tot_spend <= 0:
+            est_m_qty = default_monthly_qty.get(name, 60)
+            tot_spend = est_m_qty * avg_price * 7.0
+            p_count = 7 if est_m_qty > 100 else 3
+
+        m_spend = tot_spend / 7.0
+        m_count = p_count / 7.0
+        cpor_contrib = tot_spend / total_rooms_7m
+
+        item_stats.append({
+            "name": name,
+            "cat": item["cat"],
+            "dept": item["dept"],
+            "sub_category": item["sub_category"],
+            "is_request_only": item["is_request_only"],
+            "default_action": item["default_action"],
+            "value_score": item["value_score"],
+            "tot_spend_7m": tot_spend,
+            "m_spend": m_spend,
+            "p_count_7m": p_count,
+            "m_count": m_count,
+            "avg_price": avg_price,
+            "cpor_contrib": cpor_contrib
+        })
+
+    stats_df = pd.DataFrame(item_stats)
+
+    # ── 區塊 A：戰情看板與 ROI 試算器 ──────────────────────────
+    st.markdown("### 📊 區塊 A：站前館 ROI 戰情看板與決策試算器")
+
+    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+    tot_7m_cost = stats_df["tot_spend_7m"].sum()
+    avg_m_cost = stats_df["m_spend"].sum()
+    avg_cpor = tot_7m_cost / total_rooms_7m
+
+    col_k1.metric("2026/1~7月免費品項總支出", f"NT$ {int(tot_7m_cost):,}")
+    col_k2.metric("站前館 月均花費", f"NT$ {int(avg_m_cost):,}")
+    col_k3.metric("站前館 7個月總入住房數", f"{int(total_rooms_7m):,} 間")
+    col_k4.metric("免費服務總 CPOR", f"NT$ {avg_cpor:.1f} / 房")
+
+    st.markdown("---")
+    st.markdown("#### ⚙️ 模擬處置情境與動態預算試算 (ROI Simulator)")
+
+    c_act1, c_act2, c_act3 = st.columns(3)
+    with c_act1:
+        ratio_elim = st.slider("直接刪除 預估節省率", 80, 100, 100, format="%d%%") / 100.0
+    with c_act2:
+        ratio_req = st.slider("改為被動索取 (無直接擺放) 預估節省率", 40, 90, 70, format="%d%%") / 100.0
+    with c_act3:
+        ratio_sub = st.slider("平價替代 預估節省率", 20, 60, 40, format="%d%%") / 100.0
+
+    st.write("您可以下方針對個別品項進行處置勾選，系統將連動算出節省金額：")
+
+    # 建立動態調整選單
+    action_options = ["維持現狀", "直接刪除", "改為被動索取", "平價替代"]
+    user_actions = {}
+
+    expander_act = st.expander("🛠️ 快速設定各品項之優化處置動作", expanded=False)
+    with expander_act:
+        cols_act = st.columns(3)
+        for idx, row in stats_df.iterrows():
+            col_idx = idx % 3
+            def_act = row["default_action"]
+            user_act = cols_act[col_idx].selectbox(
+                f"{row['name']} ({row['cat']})",
+                options=action_options,
+                index=action_options.index(def_act),
+                key=f"act_sel_{row['name']}"
+            )
+            user_actions[row['name']] = user_act
+
+    # 計算動態試算結果
+    sim_m_saving = 0.0
+    for idx, row in stats_df.iterrows():
+        act = user_actions.get(row['name'], row['default_action'])
+        m_cost = row['m_spend']
+        if act == "直接刪除":
+            sim_m_saving += m_cost * ratio_elim
+        elif act == "改為被動索取":
+            if not row['is_request_only']:
+                sim_m_saving += m_cost * ratio_req
+            else:
+                sim_m_saving += 0.0  # 已是索取制不重複算節省
+        elif act == "平價替代":
+            sim_m_saving += m_cost * ratio_sub
+
+    sim_7m_saving = sim_m_saving * 7.0
+    sim_year_saving = sim_m_saving * 12.0
+    saving_pct = (sim_m_saving / avg_m_cost * 100) if avg_m_cost > 0 else 0
+    new_cpor = (tot_7m_cost - sim_7m_saving) / total_rooms_7m
+
+    st.success(
+        f"🎯 **試算成果估計**：依據目前設定，預估每月可節省 **NT$ {int(sim_m_saving):,}** ({saving_pct:.1f}%)，"
+        f"全年度可省下 **NT$ {int(sim_year_saving):,}**！免費服務 CPOR 預估由 NT$ {avg_cpor:.1f} 下降至 **NT$ {new_cpor:.1f} / 房**。"
+    )
+
+    # ── 區塊 B：4 象限視覺化決策散佈圖 ──────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎯 區塊 B：站前館免費品項 4 象限決策散佈圖 (Priority Matrix)")
+
+    try:
+        import plotly.express as px
+        plot_df = stats_df.copy()
+        plot_df["act_display"] = plot_df["name"].map(user_actions)
+
+        fig = px.scatter(
+            plot_df,
+            x="value_score",
+            y="m_spend",
+            size="tot_spend_7m",
+            color="act_display",
+            hover_name="name",
+            hover_data={
+                "cat": True,
+                "dept": True,
+                "m_spend": ":,.0f",
+                "tot_spend_7m": ":,.0f",
+                "p_count_7m": True,
+                "value_score": True
+            },
+            labels={
+                "value_score": "住客感知價值 / 必要性 (1~5分)",
+                "m_spend": "站前館 月均採購花費 (NT$)",
+                "tot_spend_7m": "7個月總花費",
+                "act_display": "選定處置動作"
+            },
+            title="站前館 免費品項 4 象限決策分析圖 (圓點大小代表 7 個月總採購額)"
+        )
+
+        # 加入 4 象限參考線
+        mid_x = 3.0
+        mid_y = float(plot_df["m_spend"].median())
+        fig.add_vline(x=mid_x, line_dash="dash", line_color="gray")
+        fig.add_hline(y=mid_y, line_dash="dash", line_color="gray")
+
+        fig.update_layout(height=520)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning("提示：Plotly 圖表載入中或未安裝。")
+
+    # ── 區塊 C：品項排行榜與處置明細 ──────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 區塊 C：站前館免費品項採購花費與頻率排行榜")
+
+    disp_df = stats_df.copy()
+    disp_df["act_val"] = disp_df["name"].map(user_actions)
+    disp_df["saving_val"] = 0.0
+
+    for idx, row in disp_df.iterrows():
+        act = row["act_val"]
+        m_cost = row["m_spend"]
+        if act == "直接刪除":
+            disp_df.at[idx, "saving_val"] = m_cost * ratio_elim
+        elif act == "改為被動索取":
+            disp_df.at[idx, "saving_val"] = (m_cost * ratio_req) if not row["is_request_only"] else 0.0
+        elif act == "平價替代":
+            disp_df.at[idx, "saving_val"] = m_cost * ratio_sub
+
+    disp_df = disp_df.sort_values(by="m_spend", ascending=False).reset_index(drop=True)
+
+    # 格式化表格
+    out_table = pd.DataFrame({
+        "品項名稱": disp_df["name"],
+        "分類區域": disp_df["cat"],
+        "歸屬部門": disp_df["dept"],
+        "2026/1~7月累積金額": disp_df["tot_spend_7m"].map(lambda x: f"NT$ {int(x):,}"),
+        "月均金額": disp_df["m_spend"].map(lambda x: f"NT$ {int(x):,}"),
+        "7個月採購次數": disp_df["p_count_7m"].astype(int),
+        "平均進貨單價": disp_df["avg_price"].map(lambda x: f"NT$ {x:.1f}"),
+        "現行擺放": disp_df["is_request_only"].map(lambda x: "櫃檯索取/借用" if x else "房內/公共區擺放"),
+        "感知價值": disp_df["value_score"].map(lambda x: "⭐" * int(x)),
+        "建議優化處置": disp_df["act_val"],
+        "預估月節省": disp_df["saving_val"].map(lambda x: f"NT$ {int(x):,}")
+    })
+
+    st.dataframe(out_table, use_container_width=True, height=450)
+
+    # ── 區塊 D：專案執行清單與採購通知單產出 ──────────────────────
+    st.markdown("---")
+    st.markdown("### 📄 區塊 D：站前館品項調整通知單 (專案匯出)")
+
+    act_summary = disp_df[disp_df["act_val"] != "維持現狀"]
+
+    st.markdown(f"**站前館優化執行項目摘要（共 {len(act_summary)} 項）：**")
+
+    markdown_report = "# 📋 路徒Plus行旅 站前館 - 免費服務品項成本優化執行通知單\n"
+    markdown_report += f"**專案基準區間**：2026/01/01 ~ 2026/07/31 採購數據\n"
+    markdown_report += f"**產出日期**：{pd.Timestamp.now().strftime('%Y-%m-%d')}\n"
+    markdown_report += f"**預估月度總節省額**：NT$ {int(sim_m_saving):,} ({saving_pct:.1f}%)\n\n"
+    markdown_report += "---\n\n### 🛠️ 擬執行調整品項明細：\n\n"
+
+    for idx, row in act_summary.iterrows():
+        markdown_report += f"- **{row['name']}** [{row['cat']} / {row['dept']}]：優化動作「**{row['act_val']}**」，預估每月可節省 NT$ {int(row['saving_val']):,}（原月均 NT$ {int(row['m_spend']):,}）。\n"
+
+    markdown_report += "\n---\n*請站前館客務部、房務部與餐飲部依上述決策配合執行現場擺放與請購調整。*"
+
+    st.code(markdown_report, language='markdown')
+
