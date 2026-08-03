@@ -9631,11 +9631,11 @@ def render_free_services_optimization_tab():
 
         if not station_p_df.empty:
             # 搜尋站前館匹配資料
-            name_col = next((c for c in station_p_df.columns if '品項' in c or 'item' in c.lower() or '名稱' in c), None)
-            amt_col = next((c for c in station_p_df.columns if '小計' in c or '總價' in c or '金額' in c or 'amount' in c.lower()), None)
-            price_col = next((c for c in station_p_df.columns if '單價' in c or 'price' in c.lower()), None)
+            name_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['品名', '品項', '項目', '說明', '明細', 'item', 'name'])), None)
+            amt_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['小計', '總價', '金額', 'amount', 'total'])), None)
+            price_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['單價', 'price'])), None)
 
-            dept_col = next((c for c in station_p_df.columns if '部' in c or 'dept' in c.lower() or '地' in c), None)
+            dept_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['部門', '部', 'dept', '工地'])), None)
             if name_col:
                 matched_rows = station_p_df[station_p_df[name_col].astype(str).apply(lambda x: any(k in x for k in kw_list))]
                 if not matched_rows.empty:
@@ -9691,7 +9691,7 @@ def render_free_services_optimization_tab():
             st.warning("⚠️ 目前無法讀取站前館 purchase_data（可能是資料連線問題或日期區間內無資料），以下顯示僅供關鍵字參考。")
             name_col_audit = None
         else:
-            name_col_audit = next((c for c in station_p_df.columns if '品項' in c or 'item' in c.lower() or '名稱' in c), None)
+            name_col_audit = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['品名', '品項', '項目', '說明', '明細', 'item', 'name'])), None)
 
         audit_rows = []
         for item in FREE_SERVICES_ITEMS:
