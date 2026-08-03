@@ -9585,6 +9585,7 @@ def render_free_services_optimization_tab():
         tot_spend = 0.0
         p_count = 0
         avg_price = default_price_map.get(name, 20.0)
+        real_dept = item["dept"]
 
         if not station_p_df.empty:
             # 搜尋站前館匹配資料
