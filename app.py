@@ -9478,18 +9478,18 @@ def render_free_services_optimization_tab():
     # 39 項免費服務品項對照表
     FREE_SERVICES_ITEMS = [
         # 會員禮
-        {"name": "面膜", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["面膜"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "蒸氣眼罩", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["眼罩", "蒸氣眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "迴力小汽車", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["迴力", "小汽車", "迴力車", "玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
+        {"name": "面膜", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["面膜"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "蒸氣眼罩", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["眼罩", "蒸氣眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "迴力小汽車", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["迴力", "小汽車", "迴力車", "玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
         {"name": "樹頂蘋果汁", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂蘋果汁", "Tree Top 蘋果汁", "蘋果汁", "樹頂"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
         {"name": "果味台啤", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["果味台啤", "水果啤酒", "台啤", "啤酒"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
-        {"name": "飲料杯套", "cat": "會員禮", "dept": "客務部", "is_request_only": False, "keywords": ["杯套", "飲料杯套", "提袋"], "sub_category": "周邊禮品", "default_action": "維持現狀", "value_score": 3},
+        {"name": "飲料杯套", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["杯套", "飲料杯套", "提袋"], "sub_category": "周邊禮品", "default_action": "維持現狀", "value_score": 3},
 
         # 生日禮
         {"name": "小鹿商品", "cat": "生日禮", "dept": "行銷部", "is_request_only": False, "keywords": ["小鹿", "小鹿商品", "小鹿娃娃", "小鹿吊飾"], "sub_category": "品牌禮品", "default_action": "維持現狀", "value_score": 5},
         {"name": "樹頂石榴汁", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂石榴汁", "石榴汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
-        {"name": "生日包材消耗品", "cat": "生日禮", "dept": "客務部", "is_request_only": False, "keywords": ["生日禮盒", "生日包裝", "禮品袋", "緞帶"], "sub_category": "包材耗材", "default_action": "維持現狀", "value_score": 2},
-        {"name": "木盒", "cat": "生日禮", "dept": "客務部", "is_request_only": False, "keywords": ["木盒", "禮品木盒"], "sub_category": "包材耗材", "default_action": "直接刪除", "value_score": 2},
+        {"name": "生日包材消耗品", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["生日禮盒", "生日包裝", "禮品袋", "緞帶"], "sub_category": "包材耗材", "default_action": "維持現狀", "value_score": 2},
+        {"name": "木盒", "cat": "生日禮", "dept": "櫃台", "is_request_only": False, "keywords": ["木盒", "禮品木盒"], "sub_category": "包材耗材", "default_action": "直接刪除", "value_score": 2},
         {"name": "裝飾物(假花)", "cat": "生日禮", "dept": "房務部", "is_request_only": False, "keywords": ["假花", "仿真花", "裝飾花"], "sub_category": "房佈裝飾", "default_action": "改為被動索取", "value_score": 3},
         {"name": "裝飾燈", "cat": "生日禮", "dept": "房務部", "is_request_only": False, "keywords": ["裝飾燈", "串燈", "造型燈"], "sub_category": "房佈裝飾", "default_action": "改為被動索取", "value_score": 3},
 
@@ -9498,7 +9498,7 @@ def render_free_services_optimization_tab():
 
         # 明信片區
         {"name": "各館酷卡", "cat": "明信片區", "dept": "行銷部", "is_request_only": False, "keywords": ["酷卡", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "免費郵寄服務", "cat": "明信片區", "dept": "客務部", "is_request_only": False, "keywords": ["郵資", "郵寄"], "sub_category": "郵務服務", "default_action": "維持現狀", "value_score": 3},
+        {"name": "免費郵寄服務", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["郵資", "郵寄"], "sub_category": "郵務服務", "default_action": "維持現狀", "value_score": 3},
 
         # 茶水區
         {"name": "三合一麥片", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["麥片", "三合一麥片"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 4},
@@ -9507,9 +9507,9 @@ def render_free_services_optimization_tab():
         {"name": "杯蓋", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["杯蓋", "熱飲蓋"], "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 3},
 
         # 櫃台區
-        {"name": "迎賓糖果", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["迎賓糖果", "糖果", "薄荷糖"], "sub_category": "迎賓食品", "default_action": "維持現狀", "value_score": 4},
-        {"name": "櫃台消耗品", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["櫃台單據", "熱感紙", "夾鏈袋"], "sub_category": "櫃台耗材", "default_action": "維持現狀", "value_score": 2},
-        {"name": "客用簽名筆", "cat": "櫃台區", "dept": "客務部", "is_request_only": False, "keywords": ["簽名筆", "原子筆", "客筆"], "sub_category": "文具", "default_action": "維持現狀", "value_score": 3},
+        {"name": "迎賓糖果", "cat": "櫃台區", "dept": "櫃台", "is_request_only": False, "keywords": ["迎賓糖果", "糖果", "薄荷糖"], "sub_category": "迎賓食品", "default_action": "維持現狀", "value_score": 4},
+        {"name": "櫃台消耗品", "cat": "櫃台區", "dept": "櫃台", "is_request_only": False, "keywords": ["櫃台單據", "熱感紙", "夾鏈袋"], "sub_category": "櫃台耗材", "default_action": "維持現狀", "value_score": 2},
+        {"name": "客用簽名筆", "cat": "櫃台區", "dept": "櫃台", "is_request_only": False, "keywords": ["簽名筆", "原子筆", "客筆"], "sub_category": "文具", "default_action": "維持現狀", "value_score": 3},
 
         # 餐車區
         {"name": "HH食材", "cat": "餐車區", "dept": "Happy Hour", "is_request_only": False, "keywords": ["HH", "Happy Hour", "歡樂時光"], "sub_category": "餐飲食材", "default_action": "維持現狀", "value_score": 5},
@@ -9530,10 +9530,10 @@ def render_free_services_optimization_tab():
         {"name": "掛燙機", "cat": "洗衣房", "dept": "房務部", "is_request_only": True, "keywords": ["掛燙機", "直立式掛燙機"], "sub_category": "設備資產", "default_action": "維持現狀", "value_score": 4},
 
         # 廁所區
-        {"name": "尿布", "cat": "廁所區", "dept": "客務部", "is_request_only": True, "keywords": ["尿布", "紙尿褲"], "sub_category": "親子供應", "default_action": "維持現狀", "value_score": 3},
+        {"name": "尿布", "cat": "廁所區", "dept": "櫃台", "is_request_only": True, "keywords": ["尿布", "紙尿褲"], "sub_category": "親子供應", "default_action": "維持現狀", "value_score": 3},
         {"name": "濕紙巾", "cat": "廁所區", "dept": "房務部", "is_request_only": False, "keywords": ["濕紙巾", "濕巾"], "sub_category": "衛生備品", "default_action": "改為被動索取", "value_score": 4},
         {"name": "酒精", "cat": "廁所區", "dept": "房務部", "is_request_only": False, "keywords": ["酒精", "消毒噴霧"], "sub_category": "衛生備品", "default_action": "維持現狀", "value_score": 5},
-        {"name": "衛生棉", "cat": "廁所區", "dept": "客務部", "is_request_only": True, "keywords": ["衛生棉", "護墊"], "sub_category": "女性備品", "default_action": "維持現狀", "value_score": 4}
+        {"name": "衛生棉", "cat": "廁所區", "dept": "櫃台", "is_request_only": True, "keywords": ["衛生棉", "護墊"], "sub_category": "女性備品", "default_action": "維持現狀", "value_score": 4}
     ]
 
     # 嘗試抓取 2026/01~2026/07 站前館 purchase_data
