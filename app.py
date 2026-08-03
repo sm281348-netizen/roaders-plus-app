@@ -4448,7 +4448,7 @@ if selected_page == "💰 採購分析":
             except Exception:
                 pass
 
-            # 過濾當月數據
+            # 過濾當月數據 (包含自動備援：若選定月份尚無資料，自動切換至最新資料月份)
             m_start = selected_date.replace(day=1)
             import calendar
             _, last_day = calendar.monthrange(
@@ -4457,6 +4457,19 @@ if selected_page == "💰 採購分析":
 
             df_month = df_purchase[(df_purchase['日期'] >= m_start) & (
                 df_purchase['日期'] <= m_end)].copy()
+
+            if df_month.empty and not df_purchase.empty:
+                # 找不到當月資料時，自動退回至最新有採購紀錄的月份
+                latest_date = df_purchase['日期'].max()
+                if pd.notna(latest_date):
+                    fallback_start = latest_date.replace(day=1)
+                    _, fb_last_day = calendar.monthrange(latest_date.year, latest_date.month)
+                    fallback_end = latest_date.replace(day=fb_last_day)
+                    df_month = df_purchase[(df_purchase['日期'] >= fallback_start) & (df_purchase['日期'] <= fallback_end)].copy()
+                    st.info(
+                        f"💡 **資料提示**：您所選的 **{selected_date.strftime('%Y-%m')}** 尚無採購紀錄，"
+                        f"系統已自動切換至最新有資料之月份 **{latest_date.strftime('%Y-%m')}** 進行完整分析。"
+                    )
 
             # ===== TEMP DEBUG: 強制顯示 4FHH 資料追蹤 =====
             _hh_raw = fetch_4fhh_daily_purchase_report()
@@ -6178,7 +6191,7 @@ if selected_page == "💰 採購分析":
 
     # --- 📦 5. 食材安全庫存盤點與叫貨預測模組 ---
     # (The Peak & 4F HH 專屬)
-    if 'df_month' in locals() and not df_month.empty:
+    if 'df_purchase' in locals() and df_purchase is not None and not df_purchase.empty:
         st.divider()
         st.subheader("📦 食材安全庫存盤點與叫貨預測")
         st.caption(
