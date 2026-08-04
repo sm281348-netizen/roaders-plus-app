@@ -9600,12 +9600,30 @@ def render_free_services_optimization_tab():
         # 抓取 2026/01~07 入住房數估算 CPOR
         occ_df = _get_cached_sheet_v3("occ_data", hotel_type="站前館")
         if occ_df is not None and not occ_df.empty:
-            occ_df['dt'] = pd.to_datetime(occ_df['date'], errors='coerce')
-            m7_occ = occ_df[(occ_df['dt'] >= '2026-01-01') & (occ_df['dt'] <= '2026-07-31')]
-            if 'occupied_rooms' in m7_occ.columns:
-                r_sum = pd.to_numeric(m7_occ['occupied_rooms'], errors='coerce').sum()
+            df_occ = occ_df.copy()
+            # 🔒 過濾站前館（若有館別欄位）
+            hotel_col_occ = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['hotel', '館別', '館', '分店', '地點', '店名'])), None)
+            if hotel_col_occ:
+                filtered_occ = df_occ[df_occ[hotel_col_occ].astype(str).str.contains('站前|PLUS|Plus', regex=True, na=False)]
+                if not filtered_occ.empty:
+                    df_occ = filtered_occ
+
+            # 轉換與過濾日期 (2026/01/01 ~ 2026/07/31)
+            date_col_occ = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['date', '日期', 'dt'])), None)
+            if date_col_occ:
+                df_occ['dt'] = pd.to_datetime(df_occ[date_col_occ].apply(_free_svc_parse_date), errors='coerce')
+                m7_occ = df_occ[(df_occ['dt'] >= '2026-01-01') & (df_occ['dt'] <= '2026-07-31')]
+                if m7_occ.empty:
+                    m7_occ = df_occ
+            else:
+                m7_occ = df_occ
+
+            # 比對售出房數 / 實際住房欄位名稱
+            sold_col = next((c for c in m7_occ.columns if any(k in str(c).lower() for k in ['sold_rooms', 'occupied_rooms', 'total rooms sold', 'sold', '已售', '賣出', '實際住房', '房數'])), None)
+            if sold_col:
+                r_sum = pd.to_numeric(m7_occ[sold_col], errors='coerce').fillna(0).sum()
                 if r_sum > 0:
-                    total_rooms_7m = r_sum
+                    total_rooms_7m = float(r_sum)
     except Exception as e:
         pass
 
@@ -9626,8 +9644,9 @@ def render_free_services_optimization_tab():
         "HJ-90咖啡蓋-黑色": 1200, "餐車4F(扣除紙杯蓋)": 300, "洗衣粉(單包裝)": 400, "熊寶貝自然草本衣物清新噴霧": 25
     }
 
-    # ── 🔧 開發診斷面板（確認精確比對是否正常）──────────────────────
+    # ── 🔧 開發診斷面板（確認精確比對與房數是否正常）──────────────────────
     with st.expander("🔧 [開發用] purchase_data 精確比對診斷", expanded=False):
+        st.write(f"**站前館 7個月總入住房數 (2026/1~7月)**: `{int(total_rooms_7m):,} 間` (計算自 occ_data 工作表)")
         if station_p_df.empty:
             st.error("station_p_df 為空！purchase_data 未成功載入或日期過濾後無資料。")
         else:
