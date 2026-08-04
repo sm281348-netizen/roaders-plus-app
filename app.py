@@ -10055,18 +10055,25 @@ def render_free_services_optimization_tab():
     # 計算平均每間房間的耗用率 (單品 CPOR = 7個月花費 / 7個月總房數)
     disp_df["item_cpor"] = disp_df["tot_spend_7m"] / total_rooms_7m if total_rooms_7m > 0 else 0.0
 
+    # 依單價精算服務人次 (1入 = 1片 = 1個 = 1人次)
+    disp_df["total_servings"] = (disp_df["tot_spend_7m"] / disp_df["avg_price"]).fillna(0).astype(int)
+    disp_df["monthly_servings"] = (disp_df["total_servings"] / 7.0).astype(int)
+    disp_df["per_room_servings"] = disp_df["total_servings"] / total_rooms_7m if total_rooms_7m > 0 else 0.0
+
     disp_df = disp_df.sort_values(by="m_spend", ascending=False).reset_index(drop=True)
 
     # 1. 預估月節省加總 KPI 看板
     tot_monthly_savings = disp_df["saving_val"].sum()
     tot_yearly_savings = tot_monthly_savings * 12.0
     tot_monthly_spend = disp_df["m_spend"].sum()
+    tot_servings_7m = disp_df["total_servings"].sum()
     savings_pct_tot = (tot_monthly_savings / tot_monthly_spend * 100.0) if tot_monthly_spend > 0 else 0.0
 
-    c_sum1, c_sum2, c_sum3 = st.columns(3)
+    c_sum1, c_sum2, c_sum3, c_sum4 = st.columns(4)
     c_sum1.metric("預估每月可節省總額", f"NT$ {int(tot_monthly_savings):,}", f"整體省下 {savings_pct_tot:.1f}%")
     c_sum2.metric("預估全年度累積節省額", f"NT$ {int(tot_yearly_savings):,}")
-    c_sum3.metric("免費品項整體平均 CPOR", f"NT$ {(tot_7m_cost / total_rooms_7m):.2f} / 房")
+    c_sum3.metric("7個月總服務人次(總索取量)", f"{int(tot_servings_7m):,} 人次", f"月均 {int(tot_servings_7m/7.0):,} 人次/月")
+    c_sum4.metric("免費品項整體平均 CPOR", f"NT$ {(tot_7m_cost / total_rooms_7m):.2f} / 房")
 
     # 顯示未比對到資料的品項警告
     no_data_items = disp_df[~disp_df["has_real_data"]]["name"].tolist()
@@ -10077,7 +10084,7 @@ def render_free_services_optimization_tab():
             + "、".join(no_data_items)
         )
 
-    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR 與 資料來源標示)
+    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR、服務人次與資料來源標示)
     out_table = pd.DataFrame({
         "品項名稱": disp_df["name"],
         "分類區域": disp_df["cat"],
@@ -10085,6 +10092,9 @@ def render_free_services_optimization_tab():
         "資料來源": disp_df["has_real_data"].map(lambda x: "✅ 真實採購" if x else "❌ 無採購紀錄"),
         "7個月總花費(NT$)": disp_df["tot_spend_7m"].astype(int),
         "月均金額(NT$)": disp_df["m_spend"].astype(int),
+        "7個月總服務人次": disp_df["total_servings"],
+        "月均服務人次": disp_df["monthly_servings"],
+        "每房索取人次": disp_df["per_room_servings"],
         "每房耗用成本(CPOR)": disp_df["item_cpor"],
         "7個月採購次數": disp_df["p_count_7m"].astype(int),
         "平均進貨單價(NT$)": disp_df["avg_price"],
@@ -10101,6 +10111,9 @@ def render_free_services_optimization_tab():
         column_config={
             "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
             "月均金額(NT$)": st.column_config.NumberColumn("月均金額", format="NT$ %d"),
+            "7個月總服務人次": st.column_config.NumberColumn("7個月總服務人次", format="%d 人次"),
+            "月均服務人次": st.column_config.NumberColumn("月均服務人次", format="%d 人次/月"),
+            "每房索取人次": st.column_config.NumberColumn("每房索取人次", format="%.2f 人次/房"),
             "每房耗用成本(CPOR)": st.column_config.NumberColumn("每房耗用成本 (CPOR)", format="NT$ %.2f / 房"),
             "7個月採購次數": st.column_config.NumberColumn("7個月採購次數", format="%d 次"),
             "平均進貨單價(NT$)": st.column_config.NumberColumn("平均單價", format="NT$ %.1f"),
