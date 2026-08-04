@@ -9494,41 +9494,42 @@ def render_free_services_optimization_tab():
         "協助管理層訂定「直接刪除」、「改為被動索取」、「平價替代」與「維持現狀」之先後順序。"
     )
 
-    # 39 項免費服務品項對照表
+    # 品項對照表 - exact_name 欄位為 purchase_data 中的「真實品名」（精確比對用）
+    # exact_name 為 None 表示此品項在 purchase_data 中尚無採購紀錄
     FREE_SERVICES_ITEMS = [
         # 會員禮
-        {"name": "我的美麗日記面膜(玻尿酸)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["美麗日記", "玻尿酸", "面膜"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "蒸氣眼罩(一次性)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["蒸氣眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "迷你迴力玩具車", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["迷你迴力玩具車", "迴力玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
-        {"name": "樹頂100%蘋果汁", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂100%蘋果汁", "蘋果汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
-        {"name": "台啤-芒果", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-芒果", "台啤芒果"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
-        {"name": "台啤-鳳梨", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-鳳梨", "台啤鳳梨"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
+        {"name": "我的美麗日記面膜(玻尿酸)", "exact_name": "我的美麗日記面膜(玻尿酸)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "蒸氣眼罩(一次性)", "exact_name": "蒸氣眼罩(一次性)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "迷你迴力玩具車", "exact_name": "迷你迴力玩具車", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
+        {"name": "樹頂100%蘋果汁", "exact_name": "樹頂100%蘋果汁", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
+        {"name": "台啤-芒果", "exact_name": "台啤-芒果", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
+        {"name": "台啤-鳳梨", "exact_name": "台啤-鳳梨", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
 
         # 生日禮 / 蜜月禮
-        {"name": "樹頂100%蔓越莓汁(玻璃瓶)", "cat": "生日禮 / 蜜月禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂100%蔓越莓汁", "蔓越莓汁", "石榴汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
+        {"name": "樹頂100%蔓越莓汁(玻璃瓶)", "exact_name": "樹頂100%蔓越莓汁(玻璃瓶)", "cat": "生日禮 / 蜜月禮", "dept": "櫃台", "is_request_only": False, "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
 
         # 蜜月禮
-        {"name": "金沙巧克力(心形八入組) - 12盒", "cat": "蜜月禮", "dept": "櫃台", "is_request_only": False, "keywords": ["金沙巧克力", "金沙"], "sub_category": "食品禮品", "default_action": "平價替代", "value_score": 4},
+        {"name": "金沙巧克力(心形八入組) - 12盒", "exact_name": None, "cat": "蜜月禮", "dept": "櫃台", "is_request_only": False, "sub_category": "食品禮品", "default_action": "平價替代", "value_score": 4},
 
         # 明信片區
-        {"name": "明信片(小迷鹿)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(小迷鹿)", "小迷鹿明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(府前)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(府前)", "府前明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(東門)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(東門)", "東門明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(谷墨)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(谷墨)", "谷墨明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(路徒PLUS)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(路徒PLUS)", "路徒PLUS明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(小迷鹿)", "exact_name": None, "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(府前)", "exact_name": None, "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(東門)", "exact_name": None, "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(谷墨)", "exact_name": None, "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(路徒PLUS)", "exact_name": None, "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
 
         # 茶水區
-        {"name": "三合一牛奶", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["三合一牛奶", "三合一", "牛奶"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 4},
-        {"name": "玉米鬚茶", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["玉米鬚茶", "玉米茶"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 3},
-        {"name": "205紙杯7oz(私版)", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["205紙杯7oz", "205紙杯", "紙杯"], "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 4},
-        {"name": "HJ-90咖啡蓋-黑色", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["HJ-90咖啡蓋", "咖啡蓋", "杯蓋"], "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 3},
+        {"name": "三合一牛奶", "exact_name": "三合一牛奶", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 4},
+        {"name": "玉米鬚茶", "exact_name": "玉米鬚茶", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 3},
+        {"name": "205紙杯7oz(私版)", "exact_name": "205紙杯7oz(私版)", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 4},
+        {"name": "HJ-90咖啡蓋-黑色", "exact_name": "HJ-90咖啡蓋-黑色", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "sub_category": "杯具包材", "default_action": "維持現狀", "value_score": 3},
 
         # 餐車區
-        {"name": "餐車4F(扣除紙杯蓋)", "cat": "餐車區", "dept": "Happy Hour", "is_request_only": False, "keywords": ["餐車4F", "HH", "Happy Hour", "歡樂時光"], "sub_category": "餐飲食材", "default_action": "維持現狀", "value_score": 5},
+        {"name": "餐車4F(扣除紙杯蓋)", "exact_name": None, "cat": "餐車區", "dept": "Happy Hour", "is_request_only": False, "sub_category": "餐飲食材", "default_action": "維持現狀", "value_score": 5},
 
         # 洗衣房
-        {"name": "洗衣粉(單包裝)", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["洗衣粉(單包裝)", "洗衣粉", "洗衣劑"], "sub_category": "洗衣耗材", "default_action": "維持現狀", "value_score": 4},
-        {"name": "熊寶貝自然草本衣物清新噴霧", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "keywords": ["熊寶貝自然草本", "熊寶貝", "清新噴霧"], "sub_category": "芳香備品", "default_action": "改為被動索取", "value_score": 4}
+        {"name": "洗衣粉(單包裝)", "exact_name": "洗衣粉(單包裝)", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "sub_category": "洗衣耗材", "default_action": "維持現狀", "value_score": 4},
+        {"name": "熊寶貝自然草本衣物清新噴霧", "exact_name": "熊寶貝自然草本衣物清新噴霧", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "sub_category": "芳香備品", "default_action": "改為被動索取", "value_score": 4}
     ]
 
     # 嘗試抓取 2026/01~2026/07 站前館 purchase_data
@@ -9625,24 +9626,57 @@ def render_free_services_optimization_tab():
         "HJ-90咖啡蓋-黑色": 1200, "餐車4F(扣除紙杯蓋)": 300, "洗衣粉(單包裝)": 400, "熊寶貝自然草本衣物清新噴霧": 25
     }
 
+    # ── 🔧 開發診斷面板（確認精確比對是否正常）──────────────────────
+    with st.expander("🔧 [開發用] purchase_data 精確比對診斷", expanded=False):
+        if station_p_df.empty:
+            st.error("station_p_df 為空！purchase_data 未成功載入或日期過濾後無資料。")
+        else:
+            _diag_name_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['品名','品項','項目','說明','明細','item','name'])), None)
+            _diag_amt_col  = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['小計','總價','金額','amount','total'])), None)
+            st.write(f"**總列數**: {len(station_p_df)} | **品名欄**: `{_diag_name_col}` | **金額欄**: `{_diag_amt_col}`")
+            st.write(f"**所有欄位**: {list(station_p_df.columns)}")
+
+            _diag_exact_names = [
+                "三合一牛奶","玉米鬚茶","205紙杯7oz(私版)","洗衣粉(單包裝)",
+                "樹頂100%蘋果汁","樹頂100%蔓越莓汁(玻璃瓶)","蒸氣眼罩(一次性)",
+                "台啤-芒果","台啤-鳳梨","我的美麗日記面膜(玻尿酸)","迷你迴力玩具車",
+                "HJ-90咖啡蓋-黑色","熊寶貝自然草本衣物清新噴霧"
+            ]
+
+            if _diag_name_col:
+                _rows = []
+                for _n in _diag_exact_names:
+                    _m = station_p_df[station_p_df[_diag_name_col].astype(str).str.strip() == _n.strip()]
+                    _amt = pd.to_numeric(_m[_diag_amt_col], errors='coerce').fillna(0).sum() if _diag_amt_col and len(_m)>0 else 0.0
+                    _rows.append({"品名": _n, "比對列數": len(_m), "金額總計": int(_amt), "狀態": "✅" if len(_m)>0 else "❌"})
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True, height=None)
+
+                st.write("**purchase_data 中所有不重複品名（依字母排序）：**")
+                _all_unique = sorted(station_p_df[_diag_name_col].astype(str).str.strip().unique().tolist())
+                st.text("\n".join(_all_unique))
+
     for item in FREE_SERVICES_ITEMS:
+
         name = item["name"]
-        kw_list = item["keywords"]
+        exact_name = item.get("exact_name")  # purchase_data 中的真實品名（None 代表無採購紀錄）
         tot_spend = 0.0
         p_count = 0
         avg_price = default_price_map.get(name, 20.0)
         real_dept = item["dept"]
-        has_real_data = False  # 是否有真實採購紀錄
+        has_real_data = False
 
-        if not station_p_df.empty:
-            # 搜尋站前館匹配資料
+        if not station_p_df.empty and exact_name is not None:
+            # 精確比對：只抓 purchase_data 中品名欄與 exact_name 完全相同的列
             name_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['品名', '品項', '項目', '說明', '明細', 'item', 'name'])), None)
             amt_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['小計', '總價', '金額', 'amount', 'total'])), None)
             price_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['單價', 'price'])), None)
             dept_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['部門', '部', 'dept', '工地'])), None)
 
             if name_col:
-                matched_rows = station_p_df[station_p_df[name_col].astype(str).apply(lambda x: any(k in x for k in kw_list))]
+                # 嚴格精確比對（去除前後空白後完全相同）
+                matched_rows = station_p_df[
+                    station_p_df[name_col].astype(str).str.strip() == exact_name.strip()
+                ]
                 if not matched_rows.empty:
                     has_real_data = True
                     p_count = len(matched_rows)
@@ -9652,7 +9686,6 @@ def render_free_services_optimization_tab():
                         p_mean = pd.to_numeric(matched_rows[price_col], errors='coerce').dropna().mean()
                         if p_mean > 0:
                             avg_price = p_mean
-                    # 🌟 動態從 purchase_data 比對資料中讀取真實請購部門
                     if dept_col:
                         mode_dept = matched_rows[dept_col].dropna().astype(str).str.strip().mode()
                         if not mode_dept.empty and mode_dept.iloc[0] not in ['', 'nan', 'None', '未分類']:
