@@ -9498,11 +9498,11 @@ def render_free_services_optimization_tab():
     FREE_SERVICES_ITEMS = [
         # 會員禮
         {"name": "我的美麗日記面膜(玻尿酸)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["美麗日記", "玻尿酸", "面膜"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "蒸氣眼罩(一次性)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["蒸氣眼罩", "眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
-        {"name": "迷你迴力玩具車", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["迷你迴力玩具車", "迴力", "玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
-        {"name": "樹頂100%蘋果汁", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂100%蘋果汁", "蘋果汁", "樹頂"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
-        {"name": "台啤-芒果", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-芒果", "芒果", "台啤"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
-        {"name": "台啤-鳳梨", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-鳳梨", "鳳梨", "台啤"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
+        {"name": "蒸氣眼罩(一次性)", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["蒸氣眼罩"], "sub_category": "美妝備品", "default_action": "改為被動索取", "value_score": 4},
+        {"name": "迷你迴力玩具車", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["迷你迴力玩具車", "迴力玩具車"], "sub_category": "兒童禮品", "default_action": "直接刪除", "value_score": 2},
+        {"name": "樹頂100%蘋果汁", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂100%蘋果汁", "蘋果汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
+        {"name": "台啤-芒果", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-芒果", "台啤芒果"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
+        {"name": "台啤-鳳梨", "cat": "會員禮", "dept": "櫃台", "is_request_only": False, "keywords": ["台啤-鳳梨", "台啤鳳梨"], "sub_category": "飲品", "default_action": "直接刪除", "value_score": 3},
 
         # 生日禮 / 蜜月禮
         {"name": "樹頂100%蔓越莓汁(玻璃瓶)", "cat": "生日禮 / 蜜月禮", "dept": "櫃台", "is_request_only": False, "keywords": ["樹頂100%蔓越莓汁", "蔓越莓汁", "石榴汁"], "sub_category": "飲品", "default_action": "平價替代", "value_score": 3},
@@ -9511,11 +9511,11 @@ def render_free_services_optimization_tab():
         {"name": "金沙巧克力(心形八入組) - 12盒", "cat": "蜜月禮", "dept": "櫃台", "is_request_only": False, "keywords": ["金沙巧克力", "金沙"], "sub_category": "食品禮品", "default_action": "平價替代", "value_score": 4},
 
         # 明信片區
-        {"name": "明信片(小迷鹿)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["小迷鹿", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(府前)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["府前", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(東門)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["東門", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(谷墨)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["谷墨", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
-        {"name": "明信片(路徒PLUS)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["路徒PLUS", "明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(小迷鹿)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(小迷鹿)", "小迷鹿明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(府前)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(府前)", "府前明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(東門)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(東門)", "東門明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(谷墨)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(谷墨)", "谷墨明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
+        {"name": "明信片(路徒PLUS)", "cat": "明信片區", "dept": "櫃台", "is_request_only": False, "keywords": ["明信片(路徒PLUS)", "路徒PLUS明信片"], "sub_category": "印刷品", "default_action": "維持現狀", "value_score": 2},
 
         # 茶水區
         {"name": "三合一牛奶", "cat": "茶水區", "dept": "櫃台", "is_request_only": False, "keywords": ["三合一牛奶", "三合一", "牛奶"], "sub_category": "茶水備品", "default_action": "維持現狀", "value_score": 4},
