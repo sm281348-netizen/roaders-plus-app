@@ -9917,30 +9917,27 @@ def render_free_services_optimization_tab():
             st.plotly_chart(fig, use_container_width=True)
 
         with col_b_guide:
-            st.markdown("#### 🧭 4 象限決策推導導覽對照表")
-            guide_html = f"""
-            <div style="background-color: #ffffff; padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
-                <p style="margin-bottom: 8px; font-weight: bold; color: #1e293b; font-size: 14px;">📐 分割中線基準：</p>
-                <ul style="font-size: 13px; margin-bottom: 12px; padding-left: 18px; color: #334155;">
-                    <li><b>X 軸 (感知中線)</b>：固定為 <code>3.0 分</code></li>
-                    <li><b>Y 軸 (花費中線)</b>：動態中位數 <code>NT$ {int(mid_y):,} / 月</code></li>
-                </ul>
-                <hr style="margin: 10px 0; border: None; border-top: 1px dashed #cbd5e1;">
-                
-                <p style="margin-bottom: 3px; font-weight: bold; color: #dc2626; font-size: 13.5px;">↖️ 第一象限（左上：高花費 ｜ 低感知）</p>
-                <p style="font-size: 12.5px; color: #475569; margin-bottom: 10px; line-height: 1.4;">🚨 <b>優先處置區 (成本痛點)</b>：花大錢但住客體感低。<br>➔ <b>建議處置</b>：直接刪除 / 改為被動索取。</p>
+            st.markdown("#### 🧭 4 象限決策推導指南")
+            st.info(
+                f"**📐 分割中線基準**：\n"
+                f"- **X 軸 (感知中線)**：固定 `3.0 分`\n"
+                f"- **Y 軸 (花費中線)**：動態中位數 `NT$ {int(mid_y):,} / 月`"
+            )
 
-                <p style="margin-bottom: 3px; font-weight: bold; color: #d97706; font-size: 13.5px;">↗️ 第二象限（右上：高花費 ｜ 高感知）</p>
-                <p style="font-size: 12.5px; color: #475569; margin-bottom: 10px; line-height: 1.4;">⚖️ <b>核心控制區 (質感維持)</b>：住客有感但花費大。<br>➔ <b>建議處置</b>：平價替代 / 精準控量。</p>
-
-                <p style="margin-bottom: 3px; font-weight: bold; color: #475569; font-size: 13.5px;">↙️ 第三象限（左下：低花費 ｜ 低感知）</p>
-                <p style="font-size: 12.5px; color: #475569; margin-bottom: 10px; line-height: 1.4;">🧹 <b>微幅簡化區</b>：預算影響小、住客無感。<br>➔ <b>建議處置</b>：機動精簡或維持現狀。</p>
-
-                <p style="margin-bottom: 3px; font-weight: bold; color: #059669; font-size: 13.5px;">↘️ 第四象限（右下：低花費 ｜ 高感知）</p>
-                <p style="font-size: 12.5px; color: #475569; margin-bottom: 0px; line-height: 1.4;">🌟 <b>高 CP 值亮點區</b>：成本低且住客回饋高。<br>➔ <b>建議處置</b>：維持現狀 (體驗亮點)。</p>
-            </div>
-            """
-            st.markdown(guide_html, unsafe_allow_html=True)
+            st.markdown(
+                "**↖️ 第一象限（左上：高花費 ｜ 低感知）**\n"
+                "🚨 **優先處置區 (成本痛點)**：花大錢但住客體感低。\n"
+                "➔ **建議處置**：`直接刪除` / `改為被動索取`\n\n"
+                "**↗️ 第二象限（右上：高花費 ｜ 高感知）**\n"
+                "⚖️ **核心控制區 (質感維持)**：住客有感但花費大。\n"
+                "➔ **建議處置**：`平價替代` / `精準控量`\n\n"
+                "**↙️ 第三象限（左下：低花費 ｜ 低感知）**\n"
+                "🧹 **微幅簡化區**：預算影響小、住客無感。\n"
+                "➔ **建議處置**：`機動精簡` 或 `維持現狀`\n\n"
+                "**↘️ 第四象限（右下：低花費 ｜ 高感知）**\n"
+                "🌟 **高 CP 值亮點區**：成本低且住客回饋高。\n"
+                "➔ **建議處置**：`維持現狀` (體驗亮點)"
+            )
     except Exception as e:
         st.warning(f"提示：Plotly 圖表載入中或未安裝 ({str(e)})。")
 
