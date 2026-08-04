@@ -9680,7 +9680,8 @@ def render_free_services_optimization_tab():
         exact_name = item.get("exact_name")  # purchase_data 中的真實品名（None 代表無採購紀錄）
         tot_spend = 0.0
         p_count = 0
-        avg_price = default_price_map.get(name, 20.0)
+        unit_piece_cost = default_price_map.get(name, 20.0)
+        po_box_price = 0.0
         real_dept = item["dept"]
         has_real_data = False
 
@@ -9704,14 +9705,13 @@ def render_free_services_optimization_tab():
                     if price_col:
                         p_mean = pd.to_numeric(matched_rows[price_col], errors='coerce').dropna().mean()
                         if p_mean > 0:
-                            avg_price = p_mean
+                            po_box_price = p_mean
                     if dept_col:
                         mode_dept = matched_rows[dept_col].dropna().astype(str).str.strip().mode()
                         if not mode_dept.empty and mode_dept.iloc[0] not in ['', 'nan', 'None', '未分類']:
                             real_dept = mode_dept.iloc[0]
 
         # ⚠️ 若無實體資料，保持 tot_spend=0，不使用估算數字
-        # 使用者必須透過查核工具確認並修正關鍵字，才能取得正確金額
         m_spend = tot_spend / 7.0
         m_count = p_count / 7.0
         cpor_contrib = tot_spend / total_rooms_7m if total_rooms_7m > 0 else 0.0
@@ -9729,7 +9729,8 @@ def render_free_services_optimization_tab():
             "m_spend": m_spend,
             "p_count_7m": p_count,
             "m_count": m_count,
-            "avg_price": avg_price,
+            "avg_price": unit_piece_cost,  # 鎖定單件/單片成本
+            "po_box_price": po_box_price,
             "cpor_contrib": cpor_contrib
         })
 
@@ -10096,8 +10097,8 @@ def render_free_services_optimization_tab():
         "月均服務人次": disp_df["monthly_servings"],
         "每房索取人次": disp_df["per_room_servings"],
         "每房耗用成本(CPOR)": disp_df["item_cpor"],
-        "7個月採購次數": disp_df["p_count_7m"].astype(int),
-        "平均進貨單價(NT$)": disp_df["avg_price"],
+        "7個月採購請購次數": disp_df["p_count_7m"].astype(int),
+        "單件成本(NT$)": disp_df["avg_price"],
         "現行擺放": disp_df["is_request_only"].map(lambda x: "櫃檯索取/借用" if x else "房內/公共區擺放"),
         "感知價值": disp_df["value_score"].map(lambda x: "⭐" * int(x)),
         "建議優化處置": disp_df["act_val"],
@@ -10115,8 +10116,8 @@ def render_free_services_optimization_tab():
             "月均服務人次": st.column_config.NumberColumn("月均服務人次", format="%d 人次/月"),
             "每房索取人次": st.column_config.NumberColumn("每房索取人次", format="%.2f 人次/房"),
             "每房耗用成本(CPOR)": st.column_config.NumberColumn("每房耗用成本 (CPOR)", format="NT$ %.2f / 房"),
-            "7個月採購次數": st.column_config.NumberColumn("7個月採購次數", format="%d 次"),
-            "平均進貨單價(NT$)": st.column_config.NumberColumn("平均單價", format="NT$ %.1f"),
+            "7個月採購請購次數": st.column_config.NumberColumn("7個月請購次數", format="%d 次"),
+            "單件成本(NT$)": st.column_config.NumberColumn("單件成本", format="NT$ %.2f"),
             "預估月節省(NT$)": st.column_config.NumberColumn("預估月節省", format="NT$ %d"),
         }
     )
