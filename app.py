@@ -9632,17 +9632,19 @@ def render_free_services_optimization_tab():
         p_count = 0
         avg_price = default_price_map.get(name, 20.0)
         real_dept = item["dept"]
+        has_real_data = False  # 是否有真實採購紀錄
 
         if not station_p_df.empty:
             # 搜尋站前館匹配資料
             name_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['品名', '品項', '項目', '說明', '明細', 'item', 'name'])), None)
             amt_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['小計', '總價', '金額', 'amount', 'total'])), None)
             price_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['單價', 'price'])), None)
-
             dept_col = next((c for c in station_p_df.columns if any(k in c.lower() for k in ['部門', '部', 'dept', '工地'])), None)
+
             if name_col:
                 matched_rows = station_p_df[station_p_df[name_col].astype(str).apply(lambda x: any(k in x for k in kw_list))]
                 if not matched_rows.empty:
+                    has_real_data = True
                     p_count = len(matched_rows)
                     if amt_col:
                         tot_spend = pd.to_numeric(matched_rows[amt_col], errors='coerce').fillna(0).sum()
@@ -9656,15 +9658,11 @@ def render_free_services_optimization_tab():
                         if not mode_dept.empty and mode_dept.iloc[0] not in ['', 'nan', 'None', '未分類']:
                             real_dept = mode_dept.iloc[0]
 
-        # 若無實體資料，使用真實估算基準 (7 個月累算)
-        if tot_spend <= 0:
-            est_m_qty = default_monthly_qty.get(name, 60)
-            tot_spend = est_m_qty * avg_price * 7.0
-            p_count = 7 if est_m_qty > 100 else 3
-
+        # ⚠️ 若無實體資料，保持 tot_spend=0，不使用估算數字
+        # 使用者必須透過查核工具確認並修正關鍵字，才能取得正確金額
         m_spend = tot_spend / 7.0
         m_count = p_count / 7.0
-        cpor_contrib = tot_spend / total_rooms_7m
+        cpor_contrib = tot_spend / total_rooms_7m if total_rooms_7m > 0 else 0.0
 
         item_stats.append({
             "name": name,
@@ -9674,6 +9672,7 @@ def render_free_services_optimization_tab():
             "is_request_only": item["is_request_only"],
             "default_action": item["default_action"],
             "value_score": item["value_score"],
+            "has_real_data": has_real_data,
             "tot_spend_7m": tot_spend,
             "m_spend": m_spend,
             "p_count_7m": p_count,
@@ -10018,11 +10017,21 @@ def render_free_services_optimization_tab():
     c_sum2.metric("預估全年度累積節省額", f"NT$ {int(tot_yearly_savings):,}")
     c_sum3.metric("免費品項整體平均 CPOR", f"NT$ {(tot_7m_cost / total_rooms_7m):.2f} / 房")
 
-    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR 與 數字格式化排序)
+    # 顯示未比對到資料的品項警告
+    no_data_items = disp_df[~disp_df["has_real_data"]]["name"].tolist()
+    if no_data_items:
+        st.warning(
+            f"⚠️ **以下 {len(no_data_items)} 個品項在 `purchase_data` 中未比對到任何採購紀錄，金額顯示為 NT$ 0（非估算）。"
+            f"請至「🔍 品項關鍵字查核工具」確認並修正關鍵字：**\n\n"
+            + "、".join(no_data_items)
+        )
+
+    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR 與 資料來源標示)
     out_table = pd.DataFrame({
         "品項名稱": disp_df["name"],
         "分類區域": disp_df["cat"],
         "歸屬部門": disp_df["dept"],
+        "資料來源": disp_df["has_real_data"].map(lambda x: "✅ 真實採購" if x else "❌ 無採購紀錄"),
         "7個月總花費(NT$)": disp_df["tot_spend_7m"].astype(int),
         "月均金額(NT$)": disp_df["m_spend"].astype(int),
         "每房耗用成本(CPOR)": disp_df["item_cpor"],
