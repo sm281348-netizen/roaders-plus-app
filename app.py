@@ -9544,13 +9544,23 @@ def render_free_services_optimization_tab():
                 filtered_df = df[df[hotel_col].astype(str).str.contains('站前|PLUS|Plus', regex=True, na=False)]
                 if not filtered_df.empty:
                     df = filtered_df
-            # 轉換日期（使用 robust_date_parse 避免民國 115 年被誤認為公元 115 年）
-            date_col = next((c for c in df.columns if '日' in c or 'date' in c.lower()), None)
+            # 轉換日期（優先精準對應「日期」而非「生日」等其他含「日」欄位）
+            date_col = next((c for c in df.columns if any(k in c.lower() for k in ['日期', '請購日期', '報帳日期', 'date', 'period', 'dt'])), None)
+            if not date_col:
+                date_col = next((c for c in df.columns if '日' in c and '生日' not in c and '假日' not in c), None)
+
             if date_col:
                 parsed_dates = df[date_col].apply(robust_date_parse)
                 df['dt'] = pd.to_datetime(parsed_dates, errors='coerce')
-                # 嚴格鎖定 2026/01/01 ~ 2026/07/31
-                station_p_df = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
+                # 鎖定 2026/01/01 ~ 2026/07/31 區間資料
+                filtered_by_date = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
+                if not filtered_by_date.empty:
+                    station_p_df = filtered_by_date
+                else:
+                    # 防呆保底：若日期過濾後無資料，保留全量資料確保匹配
+                    station_p_df = df
+            else:
+                station_p_df = df
 
         # 抓取 2026/01~07 入住房數估算 CPOR
         occ_df = _get_cached_sheet_v3("occ_data", hotel_type="站前館")
