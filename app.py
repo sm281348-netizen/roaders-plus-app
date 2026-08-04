@@ -9649,7 +9649,7 @@ def render_free_services_optimization_tab():
                     _m = station_p_df[station_p_df[_diag_name_col].astype(str).str.strip() == _n.strip()]
                     _amt = pd.to_numeric(_m[_diag_amt_col], errors='coerce').fillna(0).sum() if _diag_amt_col and len(_m)>0 else 0.0
                     _rows.append({"品名": _n, "比對列數": len(_m), "金額總計": int(_amt), "狀態": "✅" if len(_m)>0 else "❌"})
-                st.dataframe(pd.DataFrame(_rows), use_container_width=True, height=None)
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True)
 
                 st.write("**purchase_data 中所有不重複品名（依字母排序）：**")
                 _all_unique = sorted(station_p_df[_diag_name_col].astype(str).str.strip().unique().tolist())
