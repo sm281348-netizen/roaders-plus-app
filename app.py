@@ -9534,6 +9534,40 @@ def render_free_services_optimization_tab():
     # 嘗試抓取 2026/01~2026/07 站前館 purchase_data
     station_p_df = pd.DataFrame()
     total_rooms_7m = 25000  # 預設估計總房數防呆值
+
+    # 本地定義 robust_date_parse，確保在此函式內可見（避免 NameError）
+    def _free_svc_parse_date(val):
+        if pd.isna(val):
+            return None
+        import re as _re
+        s = str(val).strip().replace('.0', '')
+        if not s or s in ('nan', 'None', 'NaT'):
+            return None
+        if '/' in s:
+            parts = s.split('/')
+            if len(parts) == 3:
+                try:
+                    y = int(parts[0])
+                    if y < 1900:
+                        y += 1911
+                    return f"{y:04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+                except:
+                    pass
+        if _re.match(r'^\d{8}$', s):
+            try:
+                return pd.to_datetime(s, format='%Y%m%d').strftime('%Y-%m-%d')
+            except:
+                pass
+        if _re.match(r'^\d{6}$', s):
+            try:
+                return pd.to_datetime(s, format='%Y%m').strftime('%Y-%m-%d')
+            except:
+                pass
+        try:
+            return pd.to_datetime(val).strftime('%Y-%m-%d')
+        except:
+            return None
+
     try:
         raw_p_df = get_purchase_data_cached()
         if raw_p_df is not None and not raw_p_df.empty:
@@ -9550,7 +9584,7 @@ def render_free_services_optimization_tab():
                 date_col = next((c for c in df.columns if '日' in c and '生日' not in c and '假日' not in c), None)
 
             if date_col:
-                parsed_dates = df[date_col].apply(robust_date_parse)
+                parsed_dates = df[date_col].apply(_free_svc_parse_date)
                 df['dt'] = pd.to_datetime(parsed_dates, errors='coerce')
                 # 鎖定 2026/01/01 ~ 2026/07/31 區間資料
                 filtered_by_date = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
