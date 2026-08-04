@@ -9959,24 +9959,51 @@ def render_free_services_optimization_tab():
         elif act == "平價替代":
             disp_df.at[idx, "saving_val"] = m_cost * ratio_sub
 
+    # 計算平均每間房間的耗用率 (單品 CPOR = 7個月花費 / 7個月總房數)
+    disp_df["item_cpor"] = disp_df["tot_spend_7m"] / total_rooms_7m if total_rooms_7m > 0 else 0.0
+
     disp_df = disp_df.sort_values(by="m_spend", ascending=False).reset_index(drop=True)
 
-    # 格式化表格
+    # 1. 預估月節省加總 KPI 看板
+    tot_monthly_savings = disp_df["saving_val"].sum()
+    tot_yearly_savings = tot_monthly_savings * 12.0
+    tot_monthly_spend = disp_df["m_spend"].sum()
+    savings_pct_tot = (tot_monthly_savings / tot_monthly_spend * 100.0) if tot_monthly_spend > 0 else 0.0
+
+    c_sum1, c_sum2, c_sum3 = st.columns(3)
+    c_sum1.metric("預估每月可節省總額", f"NT$ {int(tot_monthly_savings):,}", f"整體省下 {savings_pct_tot:.1f}%")
+    c_sum2.metric("預估全年度累積節省額", f"NT$ {int(tot_yearly_savings):,}")
+    c_sum3.metric("免費品項整體平均 CPOR", f"NT$ {(tot_7m_cost / total_rooms_7m):.2f} / 房")
+
+    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR 與 數字格式化排序)
     out_table = pd.DataFrame({
         "品項名稱": disp_df["name"],
         "分類區域": disp_df["cat"],
         "歸屬部門": disp_df["dept"],
-        "2026/1~7月累積金額": disp_df["tot_spend_7m"].map(lambda x: f"NT$ {int(x):,}"),
-        "月均金額": disp_df["m_spend"].map(lambda x: f"NT$ {int(x):,}"),
+        "7個月總花費(NT$)": disp_df["tot_spend_7m"].astype(int),
+        "月均金額(NT$)": disp_df["m_spend"].astype(int),
+        "每房耗用成本(CPOR)": disp_df["item_cpor"],
         "7個月採購次數": disp_df["p_count_7m"].astype(int),
-        "平均進貨單價": disp_df["avg_price"].map(lambda x: f"NT$ {x:.1f}"),
+        "平均進貨單價(NT$)": disp_df["avg_price"],
         "現行擺放": disp_df["is_request_only"].map(lambda x: "櫃檯索取/借用" if x else "房內/公共區擺放"),
         "感知價值": disp_df["value_score"].map(lambda x: "⭐" * int(x)),
         "建議優化處置": disp_df["act_val"],
-        "預估月節省": disp_df["saving_val"].map(lambda x: f"NT$ {int(x):,}")
+        "預估月節省(NT$)": disp_df["saving_val"].astype(int)
     })
 
-    st.dataframe(out_table, use_container_width=True, height=450)
+    st.dataframe(
+        out_table,
+        use_container_width=True,
+        height=480,
+        column_config={
+            "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
+            "月均金額(NT$)": st.column_config.NumberColumn("月均金額", format="NT$ %d"),
+            "每房耗用成本(CPOR)": st.column_config.NumberColumn("每房耗用成本 (CPOR)", format="NT$ %.2f / 房"),
+            "7個月採購次數": st.column_config.NumberColumn("7個月採購次數", format="%d 次"),
+            "平均進貨單價(NT$)": st.column_config.NumberColumn("平均單價", format="NT$ %.1f"),
+            "預估月節省(NT$)": st.column_config.NumberColumn("預估月節省", format="NT$ %d"),
+        }
+    )
 
     # ── 區塊 D：專案執行清單與採購通知單產出 ──────────────────────
     st.markdown("---")
