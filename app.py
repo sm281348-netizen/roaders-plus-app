@@ -9731,29 +9731,28 @@ def render_free_services_optimization_tab():
 
         audit_rows = []
         for item in FREE_SERVICES_ITEMS:
-            kws = ", ".join(item["keywords"])
-            matched_names = "—（無法讀取資料）"
+            exact_name = item.get("exact_name")
+            matched_names = "—（無設定比對品名）" if exact_name is None else "—（無法讀取資料）"
             matched_count = 0
             status = "⚪ 無法判斷"
 
-            if name_col_audit and not station_p_df.empty:
-                kw_list = item["keywords"]
-                matched_rows = station_p_df[station_p_df[name_col_audit].astype(str).apply(
-                    lambda x: any(k in x for k in kw_list)
-                )]
+            if name_col_audit and not station_p_df.empty and exact_name:
+                matched_rows = station_p_df[station_p_df[name_col_audit].astype(str).str.strip() == exact_name.strip()]
                 matched_count = len(matched_rows)
                 if matched_count > 0:
                     unique_names = matched_rows[name_col_audit].astype(str).str.strip().unique()[:5].tolist()
                     matched_names = " | ".join(unique_names)
                     status = "✅ 已比對到"
                 else:
-                    matched_names = "❌ 無比對結果（將使用估算值）"
+                    matched_names = "❌ 無比對結果（金額顯示 NT$ 0）"
                     status = "❌ 未比對到"
+            elif exact_name is None:
+                status = "❌ 無採購名稱"
 
             audit_rows.append({
                 "免費服務品項": item["name"],
                 "服務區域": item["cat"],
-                "設定的關鍵字": kws,
+                "精確比對名稱": exact_name or "—",
                 "比對狀態": status,
                 "比對到的採購單品名（最多5筆）": matched_names,
                 "2026/1~7月比對筆數": matched_count
