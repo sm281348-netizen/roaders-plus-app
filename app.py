@@ -5272,14 +5272,36 @@ if selected_page == "💰 採購分析":
             target_start = today_date + datetime.timedelta(days=1)
             target_end = today_date + datetime.timedelta(days=7)
             
-            # 計算未來 7 天的預估人數 (為了快照)
+            # 精準計算未來 7 天的預估人數 (包含早/午分流與備用降級機制)
             snap_future_bf = 0
             snap_future_af = 0
-            if 'df_fb_fut' in locals() and not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns and '數量' in df_fb_fut.columns:
+            if 'df_fb_fut' in locals() and not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns:
                 snap_mask = (df_fb_fut['date_obj'] >= target_start) & (df_fb_fut['date_obj'] <= target_end)
-                snap_raw = df_fb_fut[snap_mask]['數量'].sum()
-                snap_future_bf = int(snap_raw * (bf_conv_rate / 100.0))
-                snap_future_af = int(snap_raw * (af_conv_rate / 100.0))
+                _snap_df = df_fb_fut[snap_mask]
+                qty_col = next((c for c in _snap_df.columns if any(k in c for k in ['數量', '人數', '預估', 'qty', 'guests'])), None)
+                _meal_col = next((c for c in _snap_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                
+                if qty_col:
+                    _bf_kw = ['早', 'breakfast', 'bf']
+                    _af_kw = ['下午', 'afternoon', 'tea', 'af']
+                    if _meal_col:
+                        _bf_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
+                        _af_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
+                        snap_raw_bf = pd.to_numeric(_snap_df.loc[_bf_m, qty_col], errors='coerce').fillna(0).sum()
+                        snap_raw_af = pd.to_numeric(_snap_df.loc[_af_m, qty_col], errors='coerce').fillna(0).sum()
+                    else:
+                        snap_raw_all = pd.to_numeric(_snap_df[qty_col], errors='coerce').fillna(0).sum()
+                        snap_raw_bf = int(snap_raw_all * _bf_ratio)
+                        snap_raw_af = int(snap_raw_all * _af_ratio)
+                    snap_future_bf = int(snap_raw_bf * (bf_conv_rate / 100.0))
+                    snap_future_af = int(snap_raw_af * (af_conv_rate / 100.0))
+
+            # 防呆降級保底：若無預約明細，從歷史 MTD 均值推算未來 7 天
+            if snap_future_bf == 0 and 'hist_bf' in locals() and hist_bf > 0:
+                snap_future_bf = int((hist_bf / 30.0) * 7.0 * (bf_conv_rate / 100.0))
+            if snap_future_af == 0 and 'hist_af' in locals() and hist_af > 0:
+                snap_future_af = int((hist_af / 30.0) * 7.0 * (af_conv_rate / 100.0))
+
             snap_future_total = snap_future_bf + snap_future_af
             
             with snap_col1:
@@ -5310,41 +5332,63 @@ if selected_page == "💰 採購分析":
                     st.warning("目前尚無任何預測快照記錄。請先儲存快照，一週後即可在此檢視準確率。")
                 else:
                     st.markdown("**🔍 歷史預測準確度覆盤**")
-                    # 篩選出已經過期的快照 (target_date_end < today)
-                    df_snapshots['target_date_end'] = pd.to_datetime(df_snapshots['target_date_end'], errors='coerce').dt.date
-                    df_past_snaps = df_snapshots[df_snapshots['target_date_end'] < today_date].copy()
+                    # 數值型態清理
+                    df_snapshots['target_date_end_dt'] = pd.to_datetime(df_snapshots['target_date_end'], errors='coerce').dt.date
+                    df_snapshots['future_total_num'] = pd.to_numeric(df_snapshots['future_total'], errors='coerce').fillna(0).astype(int)
+                    
+                    # 篩選已過期的快照
+                    df_past_snaps = df_snapshots[df_snapshots['target_date_end_dt'] < today_date].copy()
                     
                     if df_past_snaps.empty:
                         st.info("快照區間尚未結束，等設定的「未來 7 天」過完後，即可進行對比。")
                         st.dataframe(df_snapshots[['snapshot_date', 'target_date_start', 'target_date_end', 'future_total']].tail(3), hide_index=True)
                     else:
-                        # 取最新一筆已過期的快照來分析
-                        latest_snap = df_past_snaps.sort_values('target_date_end', ascending=False).iloc[0]
-                        p_start = latest_snap['target_date_start']
-                        p_end = latest_snap['target_date_end']
-                        p_total = int(latest_snap['future_total'])
+                        # 🔒 過濾掉過往因 Bug 記錄成 0 人次的異常快照
+                        df_valid_past = df_past_snaps[df_past_snaps['future_total_num'] > 0]
                         
-                        # 從歷史 FB 報表抓取實際到客數
-                        actual_fb = compute_fb_mtd(str(p_start), str(p_end))
-                        a_bf = actual_fb.get('total_act_bf', 0)
-                        a_af = actual_fb.get('total_act_af', 0)
-                        a_total = a_bf + a_af
-                        
-                        diff = a_total - p_total
-                        accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
-                        
-                        st.markdown(f"📅 **覆盤區間：** `{p_start}` 至 `{p_end}`")
-                        st.markdown(f"🎯 **當時預測：** `{p_total}` 人次")
-                        st.markdown(f"🏆 **最終實際：** `{a_total}` 人次")
-                        
-                        acc_color = "green" if accuracy >= 90 else ("orange" if accuracy >= 75 else "red")
-                        diff_text = f"+{diff}" if diff > 0 else str(diff)
-                        st.markdown(f"📊 **準確率：** <span style='color:{acc_color}; font-size:1.2rem; font-weight:bold;'>{accuracy:.1f}%</span> (誤差: {diff_text} 人)", unsafe_allow_html=True)
-                        
-                        if diff > 0:
-                            st.caption("提示：實際人數大於預測，若誤差過大可能導致食材備料不足，建議微調到客率滑桿。")
-                        elif diff < 0:
-                            st.caption("提示：實際人數少於預測，若誤差過大可能導致食材報廢浪費，建議下調到客率。")
+                        if df_valid_past.empty:
+                            latest_bad = df_past_snaps.sort_values('target_date_end_dt', ascending=False).iloc[0]
+                            st.warning(
+                                f"⚠️ 找到區間 `{latest_bad['target_date_start']}` 至 `{latest_bad['target_date_end']}` 之歷史快照，"
+                                f"但當時紀錄之預測人數為 `0` 人次（原舊版本讀取欄位缺陷，現已修正）。\n\n"
+                                f"👉 請點選左側 **「💾 儲存本週預測快照」** 按鈕重新建立有效快照！"
+                            )
+                        else:
+                            # 取最新一筆有效之過期快照
+                            latest_snap = df_valid_past.sort_values('target_date_end_dt', ascending=False).iloc[0]
+                            p_start = latest_snap['target_date_start']
+                            p_end = latest_snap['target_date_end']
+                            p_total = int(latest_snap['future_total_num'])
+                            
+                            # 從歷史 FB 報表抓取實際到客數（精確過濾目前館別）
+                            actual_fb = compute_fb_mtd(str(p_start), str(p_end), _dummy_hotel=current_hotel)
+                            if '主題' in str(current_hotel):
+                                a_bf = actual_fb.get('bf_theme_act', 0)
+                                a_af = actual_fb.get('af_theme_act', 0)
+                            else:
+                                a_bf = actual_fb.get('bf_zq_act', 0)
+                                a_af = actual_fb.get('af_zq_act', 0)
+                            
+                            # 保底：若單館欄位皆為 0 但 total_act 有值，取 total_act
+                            a_total = a_bf + a_af
+                            if a_total == 0 and (actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)) > 0:
+                                a_total = actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)
+                            
+                            diff = a_total - p_total
+                            accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
+                            
+                            st.markdown(f"📅 **覆盤區間：** `{p_start}` 至 `{p_end}`")
+                            st.markdown(f"🎯 **當時預測：** `{p_total}` 人次")
+                            st.markdown(f"🏆 **最終實際：** `{a_total}` 人次")
+                            
+                            acc_color = "#2ecc71" if accuracy >= 90 else ("#f39c12" if accuracy >= 75 else "#e74c3c")
+                            diff_text = f"+{diff}" if diff > 0 else str(diff)
+                            st.markdown(f"📊 **準確率：** <span style='color:{acc_color}; font-size:1.2rem; font-weight:bold;'>{accuracy:.1f}%</span> (誤差: {diff_text} 人)", unsafe_allow_html=True)
+                            
+                            if diff > 0:
+                                st.caption("💡 提示：實際人數大於預測，若誤差過大可能導致食材備料不足，建議微調到客率滑桿。")
+                            elif diff < 0:
+                                st.caption("💡 提示：實際人數少於預測，若誤差過大可能導致食材報廢浪費，建議下調到客率。")
 
 
             st.divider()
