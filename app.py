@@ -5360,19 +5360,9 @@ if selected_page == "💰 採購分析":
                             p_end = latest_snap['target_date_end']
                             p_total = int(latest_snap['future_total_num'])
                             
-                            # 從歷史 FB 報表抓取實際到客數（精確過濾目前館別）
-                            actual_fb = compute_fb_mtd(str(p_start), str(p_end), _dummy_hotel=current_hotel)
-                            if '主題' in str(current_hotel):
-                                a_bf = actual_fb.get('bf_theme_act', 0)
-                                a_af = actual_fb.get('af_theme_act', 0)
-                            else:
-                                a_bf = actual_fb.get('bf_zq_act', 0)
-                                a_af = actual_fb.get('af_zq_act', 0)
-                            
-                            # 保底：若單館欄位皆為 0 但 total_act 有值，取 total_act
-                            a_total = a_bf + a_af
-                            if a_total == 0 and (actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)) > 0:
-                                a_total = actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)
+                            # 從歷史 FB 報表抓取實際到客數（恢復雙館加總，因 The Peak/餐車為雙館共用且快照為總客流預測）
+                            actual_fb = compute_fb_mtd(str(p_start), str(p_end))
+                            a_total = actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)
                             
                             diff = a_total - p_total
                             accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
