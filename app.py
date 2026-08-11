@@ -9566,9 +9566,15 @@ def render_free_services_optimization_tab():
         {"name": "熊寶貝自然草本衣物清新噴霧", "exact_name": "熊寶貝自然草本衣物清新噴霧", "cat": "洗衣房", "dept": "房務部", "is_request_only": False, "sub_category": "芳香備品", "default_action": "改為被動索取", "value_score": 4}
     ]
 
-    # 嘗試抓取 2026/01~2026/07 站前館 purchase_data
+    # 嘗試抓取站前館 purchase_data 並動態推算邊界
     station_p_df = pd.DataFrame()
-    total_rooms_7m = 25000  # 預設估計總房數防呆值
+    
+    # 預設估算參數 (防呆備用)
+    hist_end_str = "2026-06-30"
+    historical_months = 6.0
+    future_months = 6.0
+    total_rooms_hist = 20000.0  # 上半年預設房數
+    total_rooms_future = 20000.0 # 下半年預設房數
 
     # 本地定義 robust_date_parse，確保在此函式內可見（避免 NameError）
     def _free_svc_parse_date(val):
@@ -9621,17 +9627,31 @@ def render_free_services_optimization_tab():
             if date_col:
                 parsed_dates = df[date_col].apply(_free_svc_parse_date)
                 df['dt'] = pd.to_datetime(parsed_dates, errors='coerce')
-                # 鎖定 2026/01/01 ~ 2026/07/31 區間資料
-                filtered_by_date = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= '2026-07-31')]
+                # 動態推算歷史邊界 (對齊月底)
+                valid_dates = df['dt'].dropna()
+                if not valid_dates.empty:
+                    max_date = valid_dates.max()
+                    import calendar
+                    last_day = calendar.monthrange(max_date.year, max_date.month)[1]
+                    import pandas as pd
+                    hist_end_date = pd.Timestamp(year=max_date.year, month=max_date.month, day=last_day)
+                    hist_end_str = hist_end_date.strftime('%Y-%m-%d')
+                    
+                    hist_start_date = pd.Timestamp(year=max_date.year, month=1, day=1) # 預設從今年 1/1 算起
+                    historical_months = (hist_end_date.year - hist_start_date.year) * 12 + (hist_end_date.month - hist_start_date.month) + 1
+                    historical_months = max(1.0, float(historical_months))
+                    future_months = max(0.0, 12.0 - historical_months)
+                
+                # 鎖定歷史區間資料
+                filtered_by_date = df[(df['dt'] >= '2026-01-01') & (df['dt'] <= hist_end_str)]
                 if not filtered_by_date.empty:
                     station_p_df = filtered_by_date
                 else:
-                    # 防呆保底：若日期過濾後無資料，保留全量資料確保匹配
                     station_p_df = df
             else:
                 station_p_df = df
 
-        # 抓取 2026/01~07 入住房數估算 CPOR
+        # 抓取 歷史區間 入住房數估算 CPOR
         occ_df = _get_cached_sheet_v3("occ_data", hotel_type="站前館")
         if occ_df is not None and not occ_df.empty:
             df_occ = occ_df.copy()
@@ -9642,26 +9662,26 @@ def render_free_services_optimization_tab():
                 if not filtered_occ.empty:
                     df_occ = filtered_occ
 
-            # 轉換與過濾日期 (2026/01/01 ~ 2026/07/31)
+            # 轉換與過濾日期 (依據 hist_end_str 切割歷史與未來)
+            import pandas as pd
             date_col_occ = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['date', '日期', 'dt'])), None)
-            if date_col_occ:
+            sold_col = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['sold_rooms', 'occupied_rooms', 'total rooms sold', 'sold', '已售', '賣出', '實際住房', '房數'])), None)
+            
+            if date_col_occ and sold_col:
                 df_occ['dt'] = pd.to_datetime(df_occ[date_col_occ].apply(_free_svc_parse_date), errors='coerce')
-                m7_occ = df_occ[(df_occ['dt'] >= '2026-01-01') & (df_occ['dt'] <= '2026-07-31')]
-                if m7_occ.empty:
-                    m7_occ = df_occ
-            else:
-                m7_occ = df_occ
-
-            # 比對售出房數 / 實際住房欄位名稱
-            sold_col = next((c for c in m7_occ.columns if any(k in str(c).lower() for k in ['sold_rooms', 'occupied_rooms', 'total rooms sold', 'sold', '已售', '賣出', '實際住房', '房數'])), None)
-            if sold_col:
-                r_sum = pd.to_numeric(m7_occ[sold_col], errors='coerce').fillna(0).sum()
-                if r_sum > 0:
-                    total_rooms_7m = float(r_sum)
+                hist_occ = df_occ[(df_occ['dt'] >= '2026-01-01') & (df_occ['dt'] <= hist_end_str)]
+                fut_occ = df_occ[(df_occ['dt'] > hist_end_str) & (df_occ['dt'] <= '2026-12-31')]
+                
+                if not hist_occ.empty:
+                    r_hist = pd.to_numeric(hist_occ[sold_col], errors='coerce').fillna(0).sum()
+                    if r_hist > 0: total_rooms_hist = float(r_hist)
+                if not fut_occ.empty:
+                    r_fut = pd.to_numeric(fut_occ[sold_col], errors='coerce').fillna(0).sum()
+                    if r_fut > 0: total_rooms_future = float(r_fut)
     except Exception as e:
         pass
 
-    # 統計每個品項在 2026/01~07 站前館的採購金額與頻率
+    # 統計每個品項在 歷史區間 站前館的採購金額與頻率
     item_stats = []
     default_price_map = {
         "我的美麗日記面膜(玻尿酸)": 21.34, "蒸氣眼罩(一次性)": 29.08, "迷你迴力玩具車": 20.0, "樹頂100%蘋果汁": 15.21,
@@ -9680,7 +9700,7 @@ def render_free_services_optimization_tab():
 
     # ── 🔧 開發診斷面板（確認精確比對與房數是否正常）──────────────────────
     with st.expander("🔧 [開發用] purchase_data 精確比對診斷", expanded=False):
-        st.write(f"**站前館 7個月總入住房數 (2026/1~7月)**: `{int(total_rooms_7m):,} 間` (計算自 occ_data 工作表)")
+        st.write(f"**站前館 歷史區間總入住房數 (歷史區間)**: `{int(total_rooms_hist):,} 間` (計算自 occ_data 工作表)")
         if station_p_df.empty:
             st.error("station_p_df 為空！purchase_data 未成功載入或日期過濾後無資料。")
         else:
@@ -9746,9 +9766,9 @@ def render_free_services_optimization_tab():
                             real_dept = mode_dept.iloc[0]
 
         # ⚠️ 若無實體資料，保持 tot_spend=0，不使用估算數字
-        m_spend = tot_spend / 7.0
-        m_count = p_count / 7.0
-        cpor_contrib = tot_spend / total_rooms_7m if total_rooms_7m > 0 else 0.0
+        m_spend = tot_spend / historical_months
+        m_count = p_count / historical_months
+        cpor_contrib = tot_spend / total_rooms_hist if total_rooms_hist > 0 else 0.0
 
         item_stats.append({
             "name": name,
@@ -9759,9 +9779,9 @@ def render_free_services_optimization_tab():
             "default_action": item["default_action"],
             "value_score": item["value_score"],
             "has_real_data": has_real_data,
-            "tot_spend_7m": tot_spend,
+            "tot_spend_hist": tot_spend,
             "m_spend": m_spend,
-            "p_count_7m": p_count,
+            "p_count_hist": p_count,
             "m_count": m_count,
             "avg_price": unit_piece_cost,  # 鎖定單件/單片成本
             "po_box_price": po_box_price,
@@ -9809,7 +9829,7 @@ def render_free_services_optimization_tab():
                 "精確比對名稱": exact_name or "—",
                 "比對狀態": status,
                 "比對到的採購單品名（最多5筆）": matched_names,
-                "2026/1~7月比對筆數": matched_count
+                "歷史區間比對筆數": matched_count
             })
 
         audit_df = pd.DataFrame(audit_rows)
@@ -9827,7 +9847,7 @@ def render_free_services_optimization_tab():
             use_container_width=True,
             height=450,
             column_config={
-                "2026/1~7月比對筆數": st.column_config.NumberColumn("比對筆數", format="%d 筆"),
+                "歷史區間比對筆數": st.column_config.NumberColumn("比對筆數", format="%d 筆"),
             }
         )
 
@@ -9839,7 +9859,7 @@ def render_free_services_optimization_tab():
 
     # ── 📌 全新新增區塊：各區域與部門採購分布一覽表 ─────────────────
     st.markdown("### 📌 站前館免費服務區域與部門採購分布一覽表")
-    st.caption("💡 彙整 9 大服務區域與各歸屬部門之品項數、7個月花費金額、月均頻率與 CPOR 占比，方便您一目瞭然掌握全貌：")
+    st.caption("💡 彙整 9 大服務區域與各歸屬部門之品項數、歷史區間花費金額、月均頻率與 CPOR 占比，方便您一目瞭然掌握全貌：")
 
     tab_cat, tab_dept = st.tabs(["🏛️ 按 9 大服務區域分布一覽", "🏢 按請購權責部門分布一覽"])
 
@@ -9847,16 +9867,16 @@ def render_free_services_optimization_tab():
         # 按區域 Groupby 統計
         cat_order = ["會員禮", "生日禮", "蜜月禮", "明信片區", "茶水區", "餐車區", "洗衣房"]
         cat_rows = []
-        tot_all_spend = stats_df["tot_spend_7m"].sum()
+        tot_all_spend = stats_df["tot_spend_hist"].sum()
 
         for c in cat_order:
             sub = stats_df[stats_df["cat"] == c]
             if not sub.empty:
                 c_cnt = len(sub)
-                c_spend_7m = sub["tot_spend_7m"].sum()
+                c_spend_7m = sub["tot_spend_hist"].sum()
                 c_m_spend = sub["m_spend"].sum()
                 c_freq_m = sub["m_count"].sum()
-                c_cpor = c_spend_7m / total_rooms_7m
+                c_cpor = c_spend_7m / total_rooms_hist
                 c_ratio = (c_spend_7m / tot_all_spend * 100) if tot_all_spend > 0 else 0
                 depts = ", ".join(list(sub["dept"].unique()))
                 item_names = ", ".join(list(sub["name"]))
@@ -9865,7 +9885,7 @@ def render_free_services_optimization_tab():
                     "服務區域": c,
                     "主要權責部門": depts,
                     "品項數": c_cnt,
-                    "7個月總花費(NT$)": int(c_spend_7m),
+                    "歷史區間總花費(NT$)": int(c_spend_7m),
                     "月均花費(NT$)": int(c_m_spend),
                     "金額占比(%)": round(c_ratio, 1),
                     "月均採購次數": round(c_freq_m, 1),
@@ -9880,7 +9900,7 @@ def render_free_services_optimization_tab():
             height=360,
             column_config={
                 "品項數": st.column_config.NumberColumn("品項數", format="%d 項"),
-                "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
+                "歷史區間總花費(NT$)": st.column_config.NumberColumn("歷史區間總花費", format="NT$ %d"),
                 "月均花費(NT$)": st.column_config.NumberColumn("月均花費", format="NT$ %d"),
                 "金額占比(%)": st.column_config.NumberColumn("金額占比", format="%.1f%%"),
                 "月均採購次數": st.column_config.NumberColumn("月均採購次數", format="%.1f 次/月"),
@@ -9893,17 +9913,17 @@ def render_free_services_optimization_tab():
         dept_rows = []
         for d, sub in stats_df.groupby("dept"):
             d_cnt = len(sub)
-            d_spend_7m = sub["tot_spend_7m"].sum()
+            d_spend_7m = sub["tot_spend_hist"].sum()
             d_m_spend = sub["m_spend"].sum()
             d_freq_m = sub["m_count"].sum()
-            d_cpor = d_spend_7m / total_rooms_7m
+            d_cpor = d_spend_7m / total_rooms_hist
             d_ratio = (d_spend_7m / tot_all_spend * 100) if tot_all_spend > 0 else 0
             item_names = ", ".join(list(sub["name"]))
 
             dept_rows.append({
                 "採購部門": d,
                 "品項數": d_cnt,
-                "7個月總花費(NT$)": int(d_spend_7m),
+                "歷史區間總花費(NT$)": int(d_spend_7m),
                 "月均花費(NT$)": int(d_m_spend),
                 "總預算占比(%)": round(d_ratio, 1),
                 "月均請購次數": round(d_freq_m, 1),
@@ -9911,14 +9931,14 @@ def render_free_services_optimization_tab():
                 "主要負責物品": item_names
             })
 
-        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="7個月總花費(NT$)", ascending=False)
+        dept_summary_df = pd.DataFrame(dept_rows).sort_values(by="歷史區間總花費(NT$)", ascending=False)
         st.dataframe(
             dept_summary_df,
             use_container_width=True,
             height=220,
             column_config={
                 "品項數": st.column_config.NumberColumn("品項數", format="%d 項"),
-                "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
+                "歷史區間總花費(NT$)": st.column_config.NumberColumn("歷史區間總花費", format="NT$ %d"),
                 "月均花費(NT$)": st.column_config.NumberColumn("月均花費", format="NT$ %d"),
                 "總預算占比(%)": st.column_config.NumberColumn("總預算占比", format="%.1f%%"),
                 "月均請購次數": st.column_config.NumberColumn("月均請購次數", format="%.1f 次/月"),
@@ -9932,13 +9952,13 @@ def render_free_services_optimization_tab():
     st.markdown("### 📊 區塊 A：站前館 ROI 戰情看板與決策試算器")
 
     col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-    tot_7m_cost = stats_df["tot_spend_7m"].sum()
+    tot_hist_cost = stats_df["tot_spend_hist"].sum()
     avg_m_cost = stats_df["m_spend"].sum()
-    avg_cpor = tot_7m_cost / total_rooms_7m
+    avg_cpor = tot_hist_cost / total_rooms_hist
 
-    col_k1.metric("2026/1~7月免費品項總支出", f"NT$ {int(tot_7m_cost):,}")
+    col_k1.metric("歷史區間免費品項總支出", f"NT$ {int(tot_hist_cost):,}")
     col_k2.metric("站前館 月均花費", f"NT$ {int(avg_m_cost):,}")
-    col_k3.metric("站前館 7個月總入住房數", f"{int(total_rooms_7m):,} 間")
+    col_k3.metric("站前館 歷史區間總入住房數", f"{int(total_rooms_hist):,} 間")
     col_k4.metric("免費服務總 CPOR", f"NT$ {avg_cpor:.1f} / 房")
 
     st.markdown("---")
@@ -9987,15 +10007,29 @@ def render_free_services_optimization_tab():
         elif act == "平價替代":
             sim_m_saving += m_cost * ratio_sub
 
-    sim_7m_saving = sim_m_saving * 7.0
-    sim_year_saving = sim_m_saving * 12.0
+    # 新的未來預估邏輯
+    sim_future_saving = 0.0
+    for idx, row in stats_df.iterrows():
+        act = user_actions.get(row['name'], row['default_action'])
+        # 預估未來花費 = 真實歷史 CPOR * 未來預估房數
+        est_future_spend = row['cpor_contrib'] * total_rooms_future
+        if act == "直接刪除":
+            sim_future_saving += est_future_spend * ratio_elim
+        elif act == "改為被動索取":
+            if not row['is_request_only']:
+                sim_future_saving += est_future_spend * ratio_req
+        elif act == "平價替代":
+            sim_future_saving += est_future_spend * ratio_sub
+
+    sim_m_saving = (sim_future_saving / future_months) if future_months > 0 else sim_future_saving
     saving_pct = (sim_m_saving / avg_m_cost * 100) if avg_m_cost > 0 else 0
-    new_cpor = (tot_7m_cost - sim_7m_saving) / total_rooms_7m
+    new_cpor = (tot_hist_cost - (sim_future_saving * (historical_months/future_months) if future_months > 0 else 0)) / total_rooms_hist
 
     st.success(
-        f"🎯 **試算成果估計**：依據目前設定，預估每月可節省 **NT$ {int(sim_m_saving):,}** ({saving_pct:.1f}%)，"
-        f"全年度可省下 **NT$ {int(sim_year_saving):,}**！免費服務 CPOR 預估由 NT$ {avg_cpor:.1f} 下降至 **NT$ {new_cpor:.1f} / 房**。"
+        f"🎯 **試算成果估計**：依據未來 {int(future_months)} 個月預估房數 ({int(total_rooms_future):,}間)，預估下半年度總共可節省 **NT$ {int(sim_future_saving):,}**，"
+        f"平均每月可節省 **NT$ {int(sim_m_saving):,}**！"
     )
+    st.info("⚠️ *註：若歷史區間包含一次性大批量年度採購（囤貨），該品項之預估未來花費與節省額可能因 CPOR 被墊高而被高估。*")
 
     # ── 區塊 B：4 象限視覺化決策散佈圖 ──────────────────────────
     st.markdown("---")
@@ -10010,21 +10044,21 @@ def render_free_services_optimization_tab():
             plot_df,
             x="value_score",
             y="m_spend",
-            size="tot_spend_7m",
+            size="tot_spend_hist",
             color="act_display",
             hover_name="name",
             hover_data={
                 "cat": True,
                 "dept": True,
                 "m_spend": ":,.0f",
-                "tot_spend_7m": ":,.0f",
-                "p_count_7m": True,
+                "tot_spend_hist": ":,.0f",
+                "p_count_hist": True,
                 "value_score": True
             },
             labels={
                 "value_score": "住客感知價值 / 必要性 (1~5分)",
                 "m_spend": "站前館 月均採購花費 (NT$)",
-                "tot_spend_7m": "7個月總花費",
+                "tot_spend_hist": "歷史區間總花費",
                 "act_display": "選定處置動作"
             },
             title="站前館 免費品項 4 象限決策分析圖 (圓點大小代表 7 個月總採購額)"
@@ -10077,38 +10111,39 @@ def render_free_services_optimization_tab():
     disp_df["act_val"] = disp_df["name"].map(user_actions)
     disp_df["saving_val"] = 0.0
 
+    disp_df["future_spend_est"] = disp_df["item_cpor"] * total_rooms_future
     for idx, row in disp_df.iterrows():
         act = row["act_val"]
-        m_cost = row["m_spend"]
+        f_cost = row["future_spend_est"]
         if act == "直接刪除":
-            disp_df.at[idx, "saving_val"] = m_cost * ratio_elim
+            disp_df.at[idx, "saving_val"] = f_cost * ratio_elim
         elif act == "改為被動索取":
-            disp_df.at[idx, "saving_val"] = (m_cost * ratio_req) if not row["is_request_only"] else 0.0
+            disp_df.at[idx, "saving_val"] = (f_cost * ratio_req) if not row["is_request_only"] else 0.0
         elif act == "平價替代":
-            disp_df.at[idx, "saving_val"] = m_cost * ratio_sub
+            disp_df.at[idx, "saving_val"] = f_cost * ratio_sub
 
-    # 計算平均每間房間的耗用率 (單品 CPOR = 7個月花費 / 7個月總房數)
-    disp_df["item_cpor"] = disp_df["tot_spend_7m"] / total_rooms_7m if total_rooms_7m > 0 else 0.0
+    # 計算平均每間房間的耗用率 (單品 CPOR = 歷史區間花費 / 歷史區間總房數)
+    disp_df["item_cpor"] = disp_df["tot_spend_hist"] / total_rooms_hist if total_rooms_hist > 0 else 0.0
 
     # 依單價精算服務人次 (1入 = 1片 = 1個 = 1人次)
-    disp_df["total_servings"] = (disp_df["tot_spend_7m"] / disp_df["avg_price"]).fillna(0).astype(int)
-    disp_df["monthly_servings"] = (disp_df["total_servings"] / 7.0).astype(int)
-    disp_df["per_room_servings"] = disp_df["total_servings"] / total_rooms_7m if total_rooms_7m > 0 else 0.0
+    disp_df["total_servings"] = (disp_df["tot_spend_hist"] / disp_df["avg_price"]).fillna(0).astype(int)
+    disp_df["monthly_servings"] = (disp_df["total_servings"] / historical_months).astype(int)
+    disp_df["per_room_servings"] = disp_df["total_servings"] / total_rooms_hist if total_rooms_hist > 0 else 0.0
 
     disp_df = disp_df.sort_values(by="m_spend", ascending=False).reset_index(drop=True)
 
     # 1. 預估月節省加總 KPI 看板
     tot_monthly_savings = disp_df["saving_val"].sum()
-    tot_yearly_savings = tot_monthly_savings * 12.0
+    tot_yearly_savings = tot_monthly_savings * 5.0 # 2026 年度剩下 8~12 月 (共 5 個月)
     tot_monthly_spend = disp_df["m_spend"].sum()
     tot_servings_7m = disp_df["total_servings"].sum()
     savings_pct_tot = (tot_monthly_savings / tot_monthly_spend * 100.0) if tot_monthly_spend > 0 else 0.0
 
     c_sum1, c_sum2, c_sum3, c_sum4 = st.columns(4)
     c_sum1.metric("預估每月可節省總額", f"NT$ {int(tot_monthly_savings):,}", f"整體省下 {savings_pct_tot:.1f}%")
-    c_sum2.metric("預估全年度累積節省額", f"NT$ {int(tot_yearly_savings):,}")
-    c_sum3.metric("7個月總服務人次(總索取量)", f"{int(tot_servings_7m):,} 人次", f"月均 {int(tot_servings_7m/7.0):,} 人次/月")
-    c_sum4.metric("免費品項整體平均 CPOR", f"NT$ {(tot_7m_cost / total_rooms_7m):.2f} / 房")
+    c_sum2.metric("2026 年度剩餘可節省總額", f"NT$ {int(tot_yearly_savings):,}")
+    c_sum3.metric("歷史區間總服務人次(總索取量)", f"{int(tot_servings_7m):,} 人次", f"月均 {int(tot_servings_7m/7.0):,} 人次/月")
+    c_sum4.metric("免費品項整體平均 CPOR", f"NT$ {(tot_hist_cost / total_rooms_hist):.2f} / 房")
 
     # 顯示未比對到資料的品項警告
     no_data_items = disp_df[~disp_df["has_real_data"]]["name"].tolist()
@@ -10119,24 +10154,21 @@ def render_free_services_optimization_tab():
             + "、".join(no_data_items)
         )
 
-    # 2. 格式化排行榜表格 (包含每房耗用成本 CPOR、服務人次與資料來源標示)
+    # 2. 格式化排行榜表格
     out_table = pd.DataFrame({
         "品項名稱": disp_df["name"],
         "分類區域": disp_df["cat"],
         "歸屬部門": disp_df["dept"],
         "資料來源": disp_df["has_real_data"].map(lambda x: "✅ 真實採購" if x else "❌ 無採購紀錄"),
-        "7個月總花費(NT$)": disp_df["tot_spend_7m"].astype(int),
-        "月均金額(NT$)": disp_df["m_spend"].astype(int),
-        "7個月總服務人次": disp_df["total_servings"],
+        f"歷史花費({int(historical_months)}個月)": disp_df["tot_spend_hist"].astype(int),
+        "月均花費(NT$)": disp_df["m_spend"].astype(int),
+        "歷史總服務人次": disp_df["total_servings"],
         "月均服務人次": disp_df["monthly_servings"],
         "每房索取人次": disp_df["per_room_servings"],
-        "每房耗用成本(CPOR)": disp_df["item_cpor"],
-        "7個月採購請購次數": disp_df["p_count_7m"].astype(int),
-        "單件成本(NT$)": disp_df["avg_price"],
-        "現行擺放": disp_df["is_request_only"].map(lambda x: "櫃檯索取/借用" if x else "房內/公共區擺放"),
-        "感知價值": disp_df["value_score"].map(lambda x: "⭐" * int(x)),
+        "每房耗用(CPOR)": disp_df["item_cpor"],
+        f"預估剩餘花費({int(future_months)}個月)": disp_df["future_spend_est"].astype(int),
         "建議優化處置": disp_df["act_val"],
-        "預估月節省(NT$)": disp_df["saving_val"].astype(int)
+        f"預估剩餘總節省({int(future_months)}個月)": disp_df["saving_val"].astype(int)
     })
 
     st.dataframe(
@@ -10144,15 +10176,12 @@ def render_free_services_optimization_tab():
         use_container_width=True,
         height=480,
         column_config={
-            "7個月總花費(NT$)": st.column_config.NumberColumn("7個月總花費", format="NT$ %d"),
-            "月均金額(NT$)": st.column_config.NumberColumn("月均金額", format="NT$ %d"),
-            "7個月總服務人次": st.column_config.NumberColumn("7個月總服務人次", format="%d 人次"),
-            "月均服務人次": st.column_config.NumberColumn("月均服務人次", format="%d 人次/月"),
+            f"歷史花費({int(historical_months)}個月)": st.column_config.NumberColumn(f"歷史花費({int(historical_months)}個月)", format="NT$ %d"),
+            "月均花費(NT$)": st.column_config.NumberColumn("月均花費(NT$)", format="NT$ %d"),
             "每房索取人次": st.column_config.NumberColumn("每房索取人次", format="%.2f 人次/房"),
-            "每房耗用成本(CPOR)": st.column_config.NumberColumn("每房耗用成本 (CPOR)", format="NT$ %.2f / 房"),
-            "7個月採購請購次數": st.column_config.NumberColumn("7個月請購次數", format="%d 次"),
-            "單件成本(NT$)": st.column_config.NumberColumn("單件成本", format="NT$ %.2f"),
-            "預估月節省(NT$)": st.column_config.NumberColumn("預估月節省", format="NT$ %d"),
+            "每房耗用(CPOR)": st.column_config.NumberColumn("每房耗用 (CPOR)", format="NT$ %.2f / 房"),
+            f"預估剩餘花費({int(future_months)}個月)": st.column_config.NumberColumn(f"預估剩餘花費", format="NT$ %d"),
+            f"預估剩餘總節省({int(future_months)}個月)": st.column_config.NumberColumn(f"預估剩餘總節省", format="NT$ %d"),
         }
     )
 
