@@ -10109,6 +10109,10 @@ def render_free_services_optimization_tab():
     disp_df["act_val"] = disp_df["name"].map(user_actions)
     disp_df["saving_val"] = 0.0
 
+    # 計算平均每間房間的耗用率 (單品 CPOR = 歷史區間花費 / 歷史區間總房數)
+    disp_df["item_cpor"] = disp_df["tot_spend_hist"] / total_rooms_hist if total_rooms_hist > 0 else 0.0
+
+    # 先產生 future_spend_est，才能拿來算 saving_val
     disp_df["future_spend_est"] = disp_df["item_cpor"] * total_rooms_future
     for idx, row in disp_df.iterrows():
         act = row["act_val"]
@@ -10120,9 +10124,6 @@ def render_free_services_optimization_tab():
         elif act == "平價替代":
             disp_df.at[idx, "saving_val"] = f_cost * ratio_sub
 
-    # 計算平均每間房間的耗用率 (單品 CPOR = 歷史區間花費 / 歷史區間總房數)
-    disp_df["item_cpor"] = disp_df["tot_spend_hist"] / total_rooms_hist if total_rooms_hist > 0 else 0.0
-
     # 依單價精算服務人次 (1入 = 1片 = 1個 = 1人次)
     disp_df["total_servings"] = (disp_df["tot_spend_hist"] / disp_df["avg_price"]).fillna(0).astype(int)
     disp_df["monthly_servings"] = (disp_df["total_servings"] / historical_months).astype(int)
@@ -10131,17 +10132,17 @@ def render_free_services_optimization_tab():
     disp_df = disp_df.sort_values(by="m_spend", ascending=False).reset_index(drop=True)
 
     # 1. 預估月節省加總 KPI 看板
-    tot_monthly_savings = disp_df["saving_val"].sum()
-    tot_yearly_savings = tot_monthly_savings * 5.0 # 2026 年度剩下 8~12 月 (共 5 個月)
+    tot_future_savings = disp_df["saving_val"].sum()
+    tot_monthly_savings = (tot_future_savings / future_months) if future_months > 0 else 0.0
     tot_monthly_spend = disp_df["m_spend"].sum()
-    tot_servings_7m = disp_df["total_servings"].sum()
+    tot_servings_hist = disp_df["total_servings"].sum()
     savings_pct_tot = (tot_monthly_savings / tot_monthly_spend * 100.0) if tot_monthly_spend > 0 else 0.0
 
     c_sum1, c_sum2, c_sum3, c_sum4 = st.columns(4)
-    c_sum1.metric("預估每月可節省總額", f"NT$ {int(tot_monthly_savings):,}", f"整體省下 {savings_pct_tot:.1f}%")
-    c_sum2.metric("2026 年度剩餘可節省總額", f"NT$ {int(tot_yearly_savings):,}")
-    c_sum3.metric("歷史區間總服務人次(總索取量)", f"{int(tot_servings_7m):,} 人次", f"月均 {int(tot_servings_7m/7.0):,} 人次/月")
-    c_sum4.metric("免費品項整體平均 CPOR", f"NT$ {(tot_hist_cost / total_rooms_hist):.2f} / 房")
+    c_sum1.metric("預估每月可節省總額", f"NT$ {int(tot_monthly_savings):,}")
+    c_sum2.metric(f"2026 年度剩餘可節省總額", f"NT$ {int(tot_future_savings):,}")
+    c_sum3.metric("歷史區間總服務人次", f"{int(tot_servings_hist):,} 人次", f"月均 {int(tot_servings_hist/historical_months):,} 人次/月")
+    c_sum4.metric("歷史區間整體平均 CPOR", f"NT$ {(tot_hist_cost / total_rooms_hist):.2f} / 房")
 
     # 顯示未比對到資料的品項警告
     no_data_items = disp_df[~disp_df["has_real_data"]]["name"].tolist()
