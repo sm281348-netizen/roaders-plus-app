@@ -9633,7 +9633,6 @@ def render_free_services_optimization_tab():
                     max_date = valid_dates.max()
                     import calendar
                     last_day = calendar.monthrange(max_date.year, max_date.month)[1]
-                    import pandas as pd
                     hist_end_date = pd.Timestamp(year=max_date.year, month=max_date.month, day=last_day)
                     hist_end_str = hist_end_date.strftime('%Y-%m-%d')
                     
@@ -9663,7 +9662,6 @@ def render_free_services_optimization_tab():
                     df_occ = filtered_occ
 
             # 轉換與過濾日期 (依據 hist_end_str 切割歷史與未來)
-            import pandas as pd
             date_col_occ = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['date', '日期', 'dt'])), None)
             sold_col = next((c for c in df_occ.columns if any(k in str(c).lower() for k in ['sold_rooms', 'occupied_rooms', 'total rooms sold', 'sold', '已售', '賣出', '實際住房', '房數'])), None)
             
