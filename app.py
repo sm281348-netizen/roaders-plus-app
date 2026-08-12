@@ -10274,10 +10274,58 @@ if selected_page == "🏔️ The Peak 專案總評":
         _tp_date_col  = next((c for c in _tp_df_purchase.columns if '日期' in c or 'Date' in c), None)
         _tp_dept_col  = next((c for c in _tp_df_purchase.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
         _tp_total_col = next((c for c in _tp_df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
+        
         if _tp_date_col:
-            _tp_df_purchase['日期'] = _tp_df_purchase[_tp_date_col].apply(
-                lambda v: pd.to_datetime(v, errors='coerce').date() if pd.notna(v) else None)
+            def _tp_robust_date(val):
+                if pd.isna(val): return None
+                s = str(val).strip().replace('.0', '')
+                if not s or s in ('nan', 'None', 'NaT'): return None
+                if '/' in s:
+                    res = minguo_to_western(s)
+                    if res: return res
+                import re as _re_dp
+                if _re_dp.match(r'^\d{6}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m').date()
+                    except: pass
+                if _re_dp.match(r'^\d{8}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m%d').date()
+                    except: pass
+                try: return pd.to_datetime(val).date()
+                except: return None
+                
+            _tp_df_purchase['日期'] = _tp_df_purchase[_tp_date_col].apply(_tp_robust_date)
             _tp_df_purchase = _tp_df_purchase[_tp_df_purchase['日期'].notna()]
+            
+        if _tp_total_col:
+            if _tp_df_purchase[_tp_total_col].dtype == object:
+                _tp_df_purchase[_tp_total_col] = _tp_df_purchase[_tp_total_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+            _tp_df_purchase[_tp_total_col] = pd.to_numeric(_tp_df_purchase[_tp_total_col], errors='coerce').fillna(0)
+
+        # 匯入 Live Carts (防呆：確保當月來不及彙整入大表的資料被抓進來)
+        try:
+            _carts = [
+                (fetch_thepeak_daily_purchase_report(), 'The Peak'),
+                (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
+            ]
+            _ym_series = pd.to_datetime(_tp_df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
+            _official_ym = set(zip(_tp_df_purchase[_tp_dept_col].apply(get_cart_bucket_name), _ym_series.fillna('')))
+            for _df_daily, _def_dept in _carts:
+                if _df_daily is not None and not _df_daily.empty:
+                    d_col = next((c for c in _df_daily.columns if '日期' in c or '請購日期' in c or '叫貨日' in c), None)
+                    p_col = next((c for c in _df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                    if d_col and p_col:
+                        _app = pd.DataFrame()
+                        _app['日期'] = pd.to_datetime(_df_daily[d_col], errors='coerce').dt.date
+                        _app[_tp_dept_col] = _def_dept
+                        _app[_tp_total_col] = pd.to_numeric(_df_daily[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                        _app['ym'] = pd.to_datetime(_app['日期'], errors='coerce').dt.strftime('%Y-%m')
+                        _app['_dept_ym'] = list(zip(_app[_tp_dept_col].astype(str), _app['ym'].fillna('')))
+                        _app = _app[~_app['_dept_ym'].isin(_official_ym)].drop(columns=['ym', '_dept_ym'])
+                        if not _app.empty:
+                            _tp_df_purchase = pd.concat([_tp_df_purchase, _app], ignore_index=True)
+                            _tp_df_purchase = _tp_df_purchase[_tp_df_purchase['日期'].notna()]
+        except Exception:
+            pass
 
     # ── 7 個月資料主迴圈 ────────────────────────────────────────
     with st.spinner("🔄 正在載入 2026 年 1–7 月數據，請稍候..."):
