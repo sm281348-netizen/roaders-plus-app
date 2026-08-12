@@ -10265,6 +10265,20 @@ if selected_page == "🏔️ The Peak 專案總評":
     def _tp_hotel_rev(y, m):
         md = fetch_month_summary(y, m)
         return md.get('rev', 0)
+        
+    def _tp_get_cart_bucket_name(d):
+        d_upper = str(d).upper()
+        if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']):
+            return 'Happy Hour'
+        elif any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']):
+            return 'The Peak'
+        elif '房務' in d_upper:
+            return '房務'
+        elif any(k in d_upper for k in ['櫃台', '櫃檯']):
+            return '櫃台'
+        elif '工務' in d_upper:
+            return '工務'
+        return str(d).strip()
 
     # ── 讀取全局採購表（一次即可，避免重複讀取）──────────────────
     _tp_df_purchase = get_purchase_data_cached()
@@ -10308,7 +10322,7 @@ if selected_page == "🏔️ The Peak 專案總評":
                 (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
             ]
             _ym_series = pd.to_datetime(_tp_df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
-            _official_ym = set(zip(_tp_df_purchase[_tp_dept_col].apply(get_cart_bucket_name), _ym_series.fillna('')))
+            _official_ym = set(zip(_tp_df_purchase[_tp_dept_col].apply(_tp_get_cart_bucket_name), _ym_series.fillna('')))
             for _df_daily, _def_dept in _carts:
                 if _df_daily is not None and not _df_daily.empty:
                     d_col = next((c for c in _df_daily.columns if '日期' in c or '請購日期' in c or '叫貨日' in c), None)
@@ -10343,7 +10357,7 @@ if selected_page == "🏔️ The Peak 專案總評":
                 _mask_ym = pd.to_datetime(_tp_df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m') == ym
                 _sub = _tp_df_purchase[_mask_ym].copy()
                 if not _sub.empty:
-                    _sub['_bucket'] = _sub[_tp_dept_col].apply(get_cart_bucket_name)
+                    _sub['_bucket'] = _sub[_tp_dept_col].apply(_tp_get_cart_bucket_name)
                     peak_cost = pd.to_numeric(_sub[_sub['_bucket']=='The Peak'][_tp_total_col], errors='coerce').fillna(0).sum()
                     hh_cost   = pd.to_numeric(_sub[_sub['_bucket']=='Happy Hour'][_tp_total_col], errors='coerce').fillna(0).sum()
 
