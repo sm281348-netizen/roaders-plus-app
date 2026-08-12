@@ -2871,7 +2871,8 @@ else:
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
         "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", 
         "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
-        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告", "💡 專案：免費服務成本優化"
+        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告",
+        "🏔️ The Peak 專案總評", "💡 專案：免費服務成本優化"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
 
@@ -10207,3 +10208,614 @@ def render_free_services_optimization_tab():
 
 if selected_page == "💡 專案：免費服務成本優化":
     render_free_services_optimization_tab()
+
+# ============================================================
+# 🏔️ The Peak 專案總評頁面
+# ============================================================
+if selected_page == "🏔️ The Peak 專案總評":
+    import calendar as _cal_mod
+
+    st.header("🏔️ The Peak 專案總評")
+    st.caption("📅 分析區間：2026/01/01 – 2026/07/31（共 7 個月）｜所有平均值均使用母數計算，嚴禁平均的平均。")
+
+    PEAK_PERIOD = [(2026, m) for m in range(1, 8)]   # 1月~7月
+    PRICE_PER_GUEST = 250   # 每人估算單價
+
+    # ── 共用輔助函數 ────────────────────────────────────────────
+    def _tp_purchase_cost(df_purch, dept_col_p, total_col_p, dept_name):
+        """從整份採購表抓指定部門月份金額 (使用 get_cart_bucket_name 標準化後篩選)"""
+        if df_purch is None or df_purch.empty:
+            return {}
+        out = {}
+        for (y, m) in PEAK_PERIOD:
+            ym = f"{y}-{m:02d}"
+            mask = (
+                pd.to_datetime(df_purch['日期'], errors='coerce').dt.strftime('%Y-%m') == ym
+            )
+            sub = df_purch[mask]
+            if dept_col_p in sub.columns:
+                sub = sub[sub[dept_col_p].apply(get_cart_bucket_name) == dept_name]
+            cost = pd.to_numeric(sub[total_col_p], errors='coerce').fillna(0).sum() if (not sub.empty and total_col_p in sub.columns) else 0
+            out[ym] = cost
+        return out
+
+    def _tp_guests(y, m):
+        """回傳 (bf_act, af_act, peak_guests, hh_act, bf_est, af_est)"""
+        df_fb = fetch_fb_daily_df(y, m)
+        if df_fb.empty:
+            return 0, 0, 0, 0, 0, 0
+        for c in ['bf_act','af_act','peak_guests','hh_act','bf_est','af_est']:
+            if c not in df_fb.columns:
+                df_fb[c] = 0
+            df_fb[c] = pd.to_numeric(df_fb[c].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+        peak = df_fb['peak_guests'].sum()
+        if peak == 0:
+            peak = df_fb['bf_act'].sum() + df_fb['af_act'].sum()
+        return (int(df_fb['bf_act'].sum()), int(df_fb['af_act'].sum()),
+                int(peak), int(df_fb['hh_act'].sum()),
+                int(df_fb['bf_est'].sum()), int(df_fb['af_est'].sum()))
+
+    def _tp_dual_dates(y, m):
+        """回傳當月雙冠日日期清單"""
+        md = fetch_month_summary(y, m)
+        if md['df'].empty:
+            return []
+        return calc_key_metrics(md).get('dual_match_dates', [])
+
+    def _tp_hotel_rev(y, m):
+        md = fetch_month_summary(y, m)
+        return md.get('rev', 0)
+
+    # ── 讀取全局採購表（一次即可，避免重複讀取）──────────────────
+    _tp_df_purchase = get_purchase_data_cached()
+    _tp_date_col, _tp_dept_col, _tp_total_col = None, None, None
+    if _tp_df_purchase is not None and not _tp_df_purchase.empty:
+        _tp_df_purchase.columns = _tp_df_purchase.columns.astype(str).str.strip()
+        _tp_date_col  = next((c for c in _tp_df_purchase.columns if '日期' in c or 'Date' in c), None)
+        _tp_dept_col  = next((c for c in _tp_df_purchase.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
+        _tp_total_col = next((c for c in _tp_df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
+        if _tp_date_col:
+            _tp_df_purchase['日期'] = _tp_df_purchase[_tp_date_col].apply(
+                lambda v: pd.to_datetime(v, errors='coerce').date() if pd.notna(v) else None)
+            _tp_df_purchase = _tp_df_purchase[_tp_df_purchase['日期'].notna()]
+
+    # ── 7 個月資料主迴圈 ────────────────────────────────────────
+    with st.spinner("🔄 正在載入 2026 年 1–7 月數據，請稍候..."):
+        month_rows = []
+        for (y, m) in PEAK_PERIOD:
+            ym = f"{y}-{m:02d}"
+            bf_act, af_act, peak_g, hh_act, bf_est, af_est = _tp_guests(y, m)
+            est_total = bf_est + af_est
+            dual_dates = _tp_dual_dates(y, m)
+            hotel_rev = _tp_hotel_rev(y, m)
+
+            # 取 peak 採購成本
+            peak_cost, hh_cost = 0.0, 0.0
+            if _tp_df_purchase is not None and _tp_date_col and _tp_dept_col and _tp_total_col:
+                _mask_ym = pd.to_datetime(_tp_df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m') == ym
+                _sub = _tp_df_purchase[_mask_ym].copy()
+                if not _sub.empty:
+                    _sub['_bucket'] = _sub[_tp_dept_col].apply(get_cart_bucket_name)
+                    peak_cost = pd.to_numeric(_sub[_sub['_bucket']=='The Peak'][_tp_total_col], errors='coerce').fillna(0).sum()
+                    hh_cost   = pd.to_numeric(_sub[_sub['_bucket']=='Happy Hour'][_tp_total_col], errors='coerce').fillna(0).sum()
+
+            # 計算雙冠日的 peak_guests 與 hh_act
+            df_fb_month = fetch_fb_daily_df(y, m)
+            if not df_fb_month.empty:
+                for _c in ['bf_act','af_act','peak_guests','hh_act']:
+                    if _c not in df_fb_month.columns: df_fb_month[_c] = 0
+                    df_fb_month[_c] = pd.to_numeric(df_fb_month[_c].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+                if df_fb_month['peak_guests'].sum() == 0:
+                    df_fb_month['peak_guests'] = df_fb_month['bf_act'] + df_fb_month['af_act']
+                dual_peak_g  = int(df_fb_month[df_fb_month['date'].isin(dual_dates)]['peak_guests'].sum())
+                dual_hh_g    = int(df_fb_month[df_fb_month['date'].isin(dual_dates)]['hh_act'].sum())
+                norm_peak_g  = int(df_fb_month[~df_fb_month['date'].isin(dual_dates)]['peak_guests'].sum())
+                norm_hh_g    = int(df_fb_month[~df_fb_month['date'].isin(dual_dates)]['hh_act'].sum())
+            else:
+                dual_peak_g = dual_hh_g = norm_peak_g = norm_hh_g = 0
+
+            # 雙冠日成本 (月均攤) → 雙冠日天數 × (月成本 ÷ 有客天數)
+            _days_with_peak = int(df_fb_month[df_fb_month['peak_guests'] > 0]['peak_guests'].count()) if not df_fb_month.empty else 0
+            _days_with_hh   = int(df_fb_month[df_fb_month['hh_act'] > 0]['hh_act'].count()) if not df_fb_month.empty else 0
+            n_dual = len(dual_dates)
+            dual_peak_cost = peak_cost / _days_with_peak * n_dual if _days_with_peak > 0 else 0
+            dual_hh_cost   = hh_cost   / _days_with_hh   * n_dual if _days_with_hh > 0 else 0
+            norm_peak_cost = peak_cost - dual_peak_cost
+            norm_hh_cost   = hh_cost   - dual_hh_cost
+
+            _, last_d = _cal_mod.monthrange(y, m)
+            month_rows.append({
+                'ym': ym, 'year': y, 'month': m,
+                'bf_act': bf_act, 'af_act': af_act, 'peak_guests': peak_g,
+                'hh_act': hh_act, 'bf_est': bf_est, 'af_est': af_est,
+                'est_total': est_total,
+                'peak_cost': peak_cost, 'hh_cost': hh_cost,
+                'dual_dates': dual_dates, 'n_dual': n_dual,
+                'dual_peak_guests': dual_peak_g, 'dual_hh_guests': dual_hh_g,
+                'norm_peak_guests': norm_peak_g, 'norm_hh_guests': norm_hh_g,
+                'dual_peak_cost': dual_peak_cost, 'dual_hh_cost': dual_hh_cost,
+                'norm_peak_cost': norm_peak_cost, 'norm_hh_cost': norm_hh_cost,
+                'hotel_rev': hotel_rev,
+                'days_in_month': last_d,
+            })
+
+    df_tp = pd.DataFrame(month_rows)
+
+    # ── 全期合計（只計算有效月份）────────────────────────────────
+    # 有效月 = peak_guests > 0 或 peak_cost > 0
+    df_valid = df_tp[(df_tp['peak_guests'] > 0) | (df_tp['peak_cost'] > 0)]
+    df_hh_valid = df_tp[(df_tp['hh_act'] > 0) | (df_tp['hh_cost'] > 0)]
+
+    total_peak_g   = int(df_valid['peak_guests'].sum())
+    total_peak_cost= float(df_valid['peak_cost'].sum())
+    total_hh_g     = int(df_hh_valid['hh_act'].sum())
+    total_hh_cost  = float(df_hh_valid['hh_cost'].sum())
+    total_est      = int(df_valid['est_total'].sum())
+    total_dual_d   = int(df_tp['n_dual'].sum())
+    total_est_rev  = total_est * PRICE_PER_GUEST
+    total_hotel_rev= float(df_tp['hotel_rev'].sum())
+    overall_cpg    = total_peak_cost / total_peak_g if total_peak_g > 0 else 0
+    overall_hh_cpg = total_hh_cost   / total_hh_g  if total_hh_g  > 0 else 0
+    # 預算人均效益 = 7個月總估算營收 ÷ 7個月總實際來客
+    overall_ppa    = total_est_rev / total_peak_g if total_peak_g > 0 else 0
+    # 整體達成率
+    overall_acc    = (total_peak_g / total_est * 100) if total_est > 0 else 0
+    # ROI = (估算營收 - 成本) / 成本
+    overall_roi    = ((total_est_rev - total_peak_cost) / total_peak_cost * 100) if total_peak_cost > 0 else 0
+
+    # ── 有效天數（7個月所有有來客的天數合計）─────────────────────
+    total_op_days = int(df_valid['days_in_month'].sum())   # 以月曆天數為母數（保守）
+    # 實際有客天數：逐月計算
+    _total_op_days_actual = 0
+    for _, r in df_valid.iterrows():
+        df_fb_t = fetch_fb_daily_df(int(r['year']), int(r['month']))
+        if not df_fb_t.empty:
+            if 'peak_guests' in df_fb_t.columns:
+                df_fb_t['peak_guests'] = pd.to_numeric(df_fb_t['peak_guests'].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+            _total_op_days_actual += int((df_fb_t['peak_guests'] > 0).sum())
+    total_op_days_actual = max(_total_op_days_actual, 1)
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 8 (頁首)：頂部 KPI Cards ─────────────────────────
+    # ══════════════════════════════════════════════════════════
+    st.markdown("""
+    <style>
+    .tp-card {
+        background: linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);
+        border-radius: 14px; padding: 18px 16px; text-align: center;
+        border-top: 4px solid #f39c12; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+        margin-bottom: 8px;
+    }
+    .tp-card-blue  { border-top-color: #3498db; }
+    .tp-card-green { border-top-color: #2ecc71; }
+    .tp-card-red   { border-top-color: #e74c3c; }
+    .tp-card-purple{ border-top-color: #9b59b6; }
+    .tp-card-teal  { border-top-color: #1abc9c; }
+    .tp-label { color: #aaa; font-size: 0.78rem; margin-bottom: 4px; }
+    .tp-value { color: #fff; font-size: 1.5rem; font-weight: 800; }
+    .tp-sub   { color: #7f8c8d; font-size: 0.72rem; margin-top: 2px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    kpi_c = st.columns(7)
+    kpi_data = [
+        ("👥 總人次", f"{total_peak_g:,} 人", f"有效月份 {len(df_valid)} 個月", "tp-card-blue"),
+        ("💰 總成本", f"NT${total_peak_cost:,.0f}", f"月均 NT${total_peak_cost/max(len(df_valid),1):,.0f}", "tp-card-red"),
+        ("📊 整體 CPG", f"NT${overall_cpg:,.0f}", "目標 NT$150", "tp-card"),
+        ("🏆 雙冠日", f"{total_dual_d} 天", f"月均 {total_dual_d/7:.1f} 天", "tp-card-purple"),
+        ("🎯 估算總營收", f"NT${total_est_rev:,.0f}", f"月均 NT${total_est_rev/7:,.0f}", "tp-card-green"),
+        ("📈 整體達成率", f"{overall_acc:.1f}%", f"估算 {total_est:,} vs 實際 {total_peak_g:,}", "tp-card-teal"),
+        ("💡 ROI", f"{overall_roi:.1f}%", f"估算營收/成本 - 1", "tp-card"),
+    ]
+    for col, (label, val, sub, cls) in zip(kpi_c, kpi_data):
+        with col:
+            st.markdown(f"""
+            <div class="tp-card {cls}">
+                <div class="tp-label">{label}</div>
+                <div class="tp-value">{val}</div>
+                <div class="tp-sub">{sub}</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.write("")
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 1：人流分析 ────────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("👥 區塊 1：人流分析", expanded=True):
+        st.markdown("#### 👥 The Peak 人流統計分析（2026/01–07）")
+        col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+        avg_monthly_g = total_peak_g / max(len(df_valid), 1)
+        avg_daily_g   = total_peak_g / total_op_days_actual
+        # 月最高/最低
+        max_m_row = df_valid.loc[df_valid['peak_guests'].idxmax()] if not df_valid.empty else None
+        min_m_row = df_valid.loc[df_valid['peak_guests'].idxmin()] if not df_valid.empty else None
+
+        col_a1.metric("7個月總人次", f"{total_peak_g:,} 人")
+        col_a2.metric("月平均人次", f"{avg_monthly_g:,.0f} 人", help="總人次 ÷ 有效月數（母數）")
+        col_a3.metric("日平均人次", f"{avg_daily_g:.1f} 人", help="總人次 ÷ 有效天數（母數）")
+        col_a4.metric("最高月人次", f"{int(max_m_row['peak_guests']):,} 人（{max_m_row['ym']}）" if max_m_row is not None else "—")
+
+        col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+        total_bf = int(df_valid['bf_act'].sum())
+        total_af = int(df_valid['af_act'].sum())
+        bf_pct = total_bf / total_peak_g * 100 if total_peak_g > 0 else 0
+        af_pct = total_af / total_peak_g * 100 if total_peak_g > 0 else 0
+        col_b1.metric("最低月人次", f"{int(min_m_row['peak_guests']):,} 人（{min_m_row['ym']}）" if min_m_row is not None else "—")
+        col_b2.metric("早餐總人次", f"{total_bf:,} 人（{bf_pct:.0f}%）")
+        col_b3.metric("下午茶總人次", f"{total_af:,} 人（{af_pct:.0f}%）")
+        col_b4.metric("HH 總人次（獨立）", f"{total_hh_g:,} 人")
+
+        # 月別趨勢圖
+        st.write("")
+        df_tp_chart = df_tp[['ym','peak_guests','bf_act','af_act']].copy()
+        df_melt = df_tp_chart.melt(id_vars='ym', value_vars=['bf_act','af_act'],
+                                    var_name='類型', value_name='人次')
+        df_melt['類型'] = df_melt['類型'].map({'bf_act':'🍳 早餐','af_act':'🍰 下午茶'})
+        bar = alt.Chart(df_melt).mark_bar().encode(
+            x=alt.X('ym:N', title='月份', sort=None),
+            y=alt.Y('人次:Q', title='人次'),
+            color=alt.Color('類型:N', scale=alt.Scale(
+                domain=['🍳 早餐','🍰 下午茶'], range=['#3498db','#e67e22'])),
+            tooltip=['ym:N','類型:N',alt.Tooltip('人次:Q',format=',')]
+        )
+        total_line = alt.Chart(df_tp_chart).mark_line(
+            point=True, color='#2ecc71', strokeWidth=2.5, strokeDash=[4,2]
+        ).encode(
+            x=alt.X('ym:N', sort=None),
+            y=alt.Y('peak_guests:Q'),
+            tooltip=['ym:N', alt.Tooltip('peak_guests:Q', title='總人次', format=',')]
+        )
+        total_text = alt.Chart(df_tp_chart).mark_text(
+            dy=-12, color='#2ecc71', fontSize=11, fontWeight='bold'
+        ).encode(
+            x=alt.X('ym:N', sort=None), y=alt.Y('peak_guests:Q'),
+            text=alt.Text('peak_guests:Q', format=',')
+        )
+        st.altair_chart((bar + total_line + total_text).properties(
+            title='月別人流趨勢（堆疊：早餐＋下午茶，綠線：總人次）', height=320
+        ), use_container_width=True)
+        st.caption("💡 **早餐 vs 下午茶比例**：直觀看出哪個時段貢獻較多客流。綠色虛線為總人次。")
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 2：成本分析 ────────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("💰 區塊 2：成本統計分析", expanded=True):
+        st.markdown("#### 💰 The Peak 成本統計分析（2026/01–07）")
+        total_weeks = 30   # 7個月 ≈ 30 週
+        avg_m_cost = total_peak_cost / max(len(df_valid), 1)
+        avg_w_cost = total_peak_cost / total_weeks
+        avg_d_cost = total_peak_cost / total_op_days_actual
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("7個月總成本", f"NT${total_peak_cost:,.0f}")
+        c2.metric("月平均成本", f"NT${avg_m_cost:,.0f}", help="總成本 ÷ 有效月數（母數）")
+        c3.metric("週平均成本", f"NT${avg_w_cost:,.0f}", help="總成本 ÷ 30週（月曆週數）")
+        c4.metric("日平均成本", f"NT${avg_d_cost:,.0f}", help="總成本 ÷ 有效天數（母數）")
+
+        c5, c6, c7 = st.columns(3)
+        max_m_cost = df_valid.loc[df_valid['peak_cost'].idxmax()] if not df_valid.empty else None
+        min_m_cost = df_valid.loc[df_valid['peak_cost'].idxmin()] if not df_valid.empty else None
+        if max_m_cost is not None:
+            c5.metric("最高月成本", f"NT${int(max_m_cost['peak_cost']):,}（{max_m_cost['ym']}）")
+        if min_m_cost is not None:
+            c6.metric("最低月成本", f"NT${int(min_m_cost['peak_cost']):,}（{min_m_cost['ym']}）")
+        c7.metric("整體 CPG", f"NT${overall_cpg:,.0f}", delta=f"{150-overall_cpg:+.0f} vs 目標$150",
+                  delta_color="normal" if overall_cpg <= 150 else "inverse")
+
+        # 月別成本折線圖
+        st.write("")
+        df_cost_chart = df_tp[['ym','peak_cost']].copy()
+        cost_bar = alt.Chart(df_cost_chart).mark_bar(color='#e74c3c', opacity=0.7).encode(
+            x=alt.X('ym:N', title='月份', sort=None),
+            y=alt.Y('peak_cost:Q', title='採購金額 (NT$)'),
+            tooltip=['ym:N', alt.Tooltip('peak_cost:Q', title='採購額', format=',.0f')]
+        )
+        cost_text = alt.Chart(df_cost_chart).mark_text(dy=-12, color='#e74c3c', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('ym:N', sort=None), y='peak_cost:Q',
+            text=alt.Text('peak_cost:Q', format=',.0f')
+        )
+        # CPG 線（右軸）
+        df_cpg_chart = df_valid[['ym','peak_cost','peak_guests']].copy()
+        df_cpg_chart['cpg'] = df_cpg_chart['peak_cost'] / df_cpg_chart['peak_guests'].replace(0, pd.NA)
+        cpg_line = alt.Chart(df_cpg_chart).mark_line(point=True, color='#3498db', strokeWidth=2.5).encode(
+            x=alt.X('ym:N', sort=None),
+            y=alt.Y('cpg:Q', title='CPG (NT$)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#3498db')),
+            tooltip=['ym:N', alt.Tooltip('cpg:Q', title='CPG', format=',.0f')]
+        )
+        combined_cost = alt.layer(cost_bar + cost_text, cpg_line).resolve_scale(y='independent')
+        st.altair_chart(combined_cost.properties(
+            title='月別採購成本（紅色柱）與月別 CPG（藍線）', height=300
+        ), use_container_width=True)
+        st.info("💡 **週成本說明**：週平均以 7 個月 ÷ 30 週計算（月曆基準），反映整體食材消耗均值。若需查看哪週實際採購金額最高，請至「採購分析」頁的週次相關性圖查閱。")
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 3：雙冠日分析 ─────────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("🏆 區塊 3：雙冠日分析", expanded=True):
+        st.markdown("#### 🏆 雙冠日統計分析（2026/01–07）")
+        st.caption("🔑 **雙冠日定義**：當月前 20% 營收日中，ADR 同時高於月均 ADR 的天數（與月分析專區定義完全一致）")
+
+        # 整體雙冠日數據
+        total_dual_peak_g    = int(df_tp['dual_peak_guests'].sum())
+        total_dual_peak_cost = float(df_tp['dual_peak_cost'].sum())
+        dual_cpg = total_dual_peak_cost / total_dual_peak_g if total_dual_peak_g > 0 else 0
+        dual_pct = total_dual_peak_g / total_peak_g * 100 if total_peak_g > 0 else 0
+
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("7個月雙冠日總天數", f"{total_dual_d} 天")
+        d2.metric("月均雙冠日天數", f"{total_dual_d/7:.1f} 天")
+        d3.metric("雙冠日人次占比", f"{dual_pct:.1f}%", help="雙冠日人次 ÷ 全期總人次 × 100%")
+        d4.metric("雙冠日整體 CPG", f"NT${dual_cpg:,.0f}", help="雙冠日總成本 ÷ 雙冠日總人次（母數法）")
+
+        # 說明：CPG 結構性問題
+        st.warning("⚠️ **CPG 說明**：雙冠日 CPG 採用月均攤模型（全月成本平均分配給各有客日），因雙冠日人次本就較高，CPG 自然偏低。此數字**反映的是規模效應，而非食材真的更便宜**。更有意義的指標是「人次占比」：代表我們在最高價值天數的精準服務集中度。")
+
+        # 月別雙冠日表格
+        st.write("")
+        dual_table = df_tp[['ym','n_dual','dual_peak_guests','dual_peak_cost']].copy()
+        dual_table.columns = ['月份','雙冠日天數','雙冠日人次','雙冠日成本']
+        dual_table['雙冠日 CPG'] = (dual_table['雙冠日成本'] / dual_table['雙冠日人次'].replace(0, pd.NA)).fillna(0).round(0).astype(int)
+        dual_table['占全月人次比'] = (dual_table['雙冠日人次'] / df_tp['peak_guests'].replace(0, pd.NA) * 100).fillna(0).round(1).astype(str) + '%'
+        dual_table['雙冠日成本'] = dual_table['雙冠日成本'].apply(lambda x: f"NT${int(x):,}")
+        dual_table['雙冠日 CPG']  = dual_table['雙冠日 CPG'].apply(lambda x: f"NT${x:,}")
+        st.dataframe(dual_table, use_container_width=True, hide_index=True)
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 4：非雙冠日分析 ───────────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("📉 區塊 4：非雙冠日分析", expanded=False):
+        st.markdown("#### 📉 非雙冠日統計分析（2026/01–07）")
+        total_norm_peak_g    = int(df_tp['norm_peak_guests'].sum())
+        total_norm_peak_cost = float(df_tp['norm_peak_cost'].sum())
+        norm_cpg = total_norm_peak_cost / total_norm_peak_g if total_norm_peak_g > 0 else 0
+        norm_pct = total_norm_peak_g / total_peak_g * 100 if total_peak_g > 0 else 0
+
+        n1, n2, n3, n4 = st.columns(4)
+        n1.metric("非雙冠日總人次", f"{total_norm_peak_g:,} 人")
+        n2.metric("非雙冠日占比", f"{norm_pct:.1f}%")
+        n3.metric("非雙冠日總成本", f"NT${total_norm_peak_cost:,.0f}")
+        n4.metric("非雙冠日整體 CPG", f"NT${norm_cpg:,.0f}", help="非雙冠日總成本 ÷ 非雙冠日總人次（母數法）")
+
+        # 雙冠 vs 一般 比較卡片
+        ratio = dual_cpg / norm_cpg * 100 if norm_cpg > 0 else 0
+        st.write("")
+        cmp_c1, cmp_c2 = st.columns(2)
+        cmp_c1.markdown(f"""
+        <div style="background:#fff5e6;border-left:4px solid #e67e22;padding:15px;border-radius:8px;">
+            <p style="margin:0;font-size:13px;color:#e67e22;font-weight:bold;">🏆 雙冠日（共 {total_dual_d} 天）</p>
+            <h3 style="margin:5px 0;">NT$ {int(dual_cpg):,} / 客</h3>
+            <p style="margin:0;font-size:12px;color:#555;">人次 {total_dual_peak_g:,} 人 ｜ 成本 NT${int(total_dual_peak_cost):,}</p>
+        </div>""", unsafe_allow_html=True)
+        cmp_c2.markdown(f"""
+        <div style="background:#f8f9fa;border-left:4px solid #95a5a6;padding:15px;border-radius:8px;">
+            <p style="margin:0;font-size:13px;color:#7f8c8d;font-weight:bold;">📅 一般日（共 {int(df_tp['days_in_month'].sum()) - total_dual_d} 天）</p>
+            <h3 style="margin:5px 0;">NT$ {int(norm_cpg):,} / 客</h3>
+            <p style="margin:0;font-size:12px;color:#555;">人次 {total_norm_peak_g:,} 人 ｜ 成本 NT${int(total_norm_peak_cost):,}</p>
+        </div>""", unsafe_allow_html=True)
+        st.write("")
+        if ratio >= 110:
+            st.success(f"✅ **主動備戰達成！** 雙冠日 CPG 為一般日的 **{ratio:.0f}%**（≥ 目標 110%），代表高價值日有投入更好的食材配備。")
+        else:
+            st.info(f"ℹ️ 雙冠日 CPG 為一般日的 **{ratio:.0f}%**（目標 ≥ 110%）。因月均攤模型特性，此差距主要反映來客人數差異，建議搭配採購分析頁的週相關性圖做進一步判斷。")
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 5：實際 vs 預估來客數 ─────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("🎯 區塊 5：實際 vs 預估來客數分析", expanded=True):
+        st.markdown("#### 🎯 預估 vs 實際來客數對照（2026/01–07）")
+        st.caption("📌 預估來客數來源：`f&b_report` 工作表 `bf_est + af_est` 欄位（與採購分析頁邏輯完全一致）")
+
+        e1, e2, e3 = st.columns(3)
+        e1.metric("7個月總預估人次", f"{total_est:,} 人")
+        e2.metric("7個月總實際人次", f"{total_peak_g:,} 人")
+        e3.metric("整體達成率", f"{overall_acc:.1f}%",
+                  delta=f"{total_peak_g - total_est:+,} 人",
+                  delta_color="normal" if total_peak_g >= total_est else "inverse")
+
+        # 月別表格
+        df_acc = df_tp[['ym','est_total','peak_guests']].copy()
+        df_acc.columns = ['月份','預估人次','實際人次']
+        df_acc['達成率'] = (df_acc['實際人次'] / df_acc['預估人次'].replace(0, pd.NA) * 100).fillna(0)
+        df_acc['差異'] = df_acc['實際人次'] - df_acc['預估人次']
+
+        # 有效行標記
+        df_acc_disp = df_acc.copy()
+        df_acc_disp['達成率'] = df_acc_disp['達成率'].round(1).astype(str) + '%'
+        df_acc_disp['差異'] = df_acc_disp['差異'].apply(lambda x: f"+{int(x)}" if x > 0 else str(int(x)))
+        st.dataframe(df_acc_disp, use_container_width=True, hide_index=True)
+
+        # 達成率折線圖
+        df_acc['月份_str'] = df_acc['月份']
+        acc_line = alt.Chart(df_acc).mark_line(point=True, color='#3498db', strokeWidth=2.5).encode(
+            x=alt.X('月份_str:N', title='月份', sort=None),
+            y=alt.Y('達成率:Q', title='達成率 (%)', scale=alt.Scale(zero=False)),
+            tooltip=['月份_str:N', alt.Tooltip('達成率:Q', title='達成率', format='.1f'),
+                     alt.Tooltip('實際人次:Q', format=','), alt.Tooltip('預估人次:Q', format=',')]
+        )
+        acc_text = alt.Chart(df_acc).mark_text(dy=-12, color='#3498db', fontSize=11, fontWeight='bold').encode(
+            x=alt.X('月份_str:N', sort=None), y='達成率:Q',
+            text=alt.Text('達成率:Q', format='.1f')
+        )
+        base_100 = alt.Chart(pd.DataFrame({'y':[100]})).mark_rule(
+            color='#e74c3c', strokeDash=[6,3], strokeWidth=1.5
+        ).encode(y='y:Q')
+        st.altair_chart((acc_line + acc_text + base_100).properties(
+            title='月別達成率折線（紅線 = 100% 基準）', height=260
+        ), use_container_width=True)
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 6：The Peak 營收分析 ───────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("💵 區塊 6：The Peak 營收分析", expanded=True):
+        st.markdown("#### 💵 The Peak 估算營收與預算人均效益（2026/01–07）")
+        st.caption(f"📌 估算邏輯：預估來客數 × NT${PRICE_PER_GUEST}（固定單價）= 估算營收。**預算人均效益**（Budgeted Revenue Per Actual Guest）= 估算營收 ÷ 實際來客數。")
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("7個月估算總營收", f"NT${total_est_rev:,.0f}")
+        r2.metric("月均估算營收", f"NT${total_est_rev/7:,.0f}")
+        r3.metric("日均估算營收", f"NT${total_est_rev/total_op_days_actual:,.0f}")
+        r4.metric("7個月整體預算人均效益", f"NT${overall_ppa:,.0f}",
+                  help=f"7個月總估算營收（NT${total_est_rev:,}）÷ 7個月總實際來客（{total_peak_g:,}人）\n⚠️ 非7個月各月值相加除以7",
+                  delta=f"{overall_ppa-PRICE_PER_GUEST:+.0f} vs 基準${PRICE_PER_GUEST}",
+                  delta_color="normal" if overall_ppa >= PRICE_PER_GUEST else "inverse")
+
+        # 月別客單價表格（7個月各自計算）
+        st.write("")
+        df_rev = df_tp[['ym','est_total','peak_guests']].copy()
+        df_rev['估算月營收'] = df_rev['est_total'] * PRICE_PER_GUEST
+        df_rev['預算人均效益'] = (df_rev['估算月營收'] / df_rev['peak_guests'].replace(0, pd.NA)).fillna(0)
+        df_rev.columns = ['月份','預估人次','實際人次','估算月營收','預算人均效益(NT$)']
+
+        df_rev_disp = df_rev.copy()
+        df_rev_disp['估算月營收'] = df_rev_disp['估算月營收'].apply(lambda x: f"NT${int(x):,}")
+        df_rev_disp['預算人均效益(NT$)'] = df_rev_disp['預算人均效益(NT$)'].round(0).apply(lambda x: f"NT${int(x):,}")
+        st.dataframe(df_rev_disp, use_container_width=True, hide_index=True)
+
+        # 預算人均效益折線圖
+        rev_line = alt.Chart(df_rev).mark_line(point=True, color='#2ecc71', strokeWidth=2.5).encode(
+            x=alt.X('月份:N', title='月份', sort=None),
+            y=alt.Y('預算人均效益(NT$):Q', title='預算人均效益 (NT$)', scale=alt.Scale(zero=False)),
+            tooltip=['月份:N', alt.Tooltip('預算人均效益(NT$):Q', title='預算人均效益', format=',.0f')]
+        )
+        rev_text = alt.Chart(df_rev).mark_text(dy=-12, color='#2ecc71', fontSize=11, fontWeight='bold').encode(
+            x=alt.X('月份:N', sort=None), y='預算人均效益(NT$):Q',
+            text=alt.Text('預算人均效益(NT$):Q', format=',.0f')
+        )
+        base_250 = alt.Chart(pd.DataFrame({'y':[PRICE_PER_GUEST]})).mark_rule(
+            color='#e74c3c', strokeDash=[6,3], strokeWidth=1.5
+        ).encode(y='y:Q')
+        avg_line_rev = alt.Chart(pd.DataFrame({'y':[overall_ppa]})).mark_rule(
+            color='#f39c12', strokeDash=[4,2], strokeWidth=1.5
+        ).encode(y='y:Q')
+        st.altair_chart((rev_line + rev_text + base_250 + avg_line_rev).properties(
+            title=f'月別預算人均效益（紅線=$250基準，橘線=7個月整體均值 NT${overall_ppa:.0f}）', height=260
+        ), use_container_width=True)
+        st.info(f"📖 **解讀**：預算人均效益 > NT${PRICE_PER_GUEST} 表示當月實際來客少於計畫；< NT${PRICE_PER_GUEST} 表示當月實際來客超出計畫（超客屬正向表現，此時顯示值偏低）。7個月**整體**預算人均效益 = NT${overall_ppa:,.0f}（非7月份值相加除以7，使用母數計算）。")
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 7：飯店 vs The Peak 營收對比 ──────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("🏨 區塊 7：飯店 vs The Peak 營收對比", expanded=True):
+        st.markdown("#### 🏨 飯店住房收入 vs The Peak 估算營收（2026/01–07）")
+
+        h1, h2, h3, h4 = st.columns(4)
+        peak_share = total_est_rev / total_hotel_rev * 100 if total_hotel_rev > 0 else 0
+        h1.metric("飯店7個月住房總收入", f"NT${total_hotel_rev:,.0f}")
+        h2.metric("The Peak估算總營收", f"NT${total_est_rev:,.0f}")
+        h3.metric("The Peak 貢獻占比", f"{peak_share:.1f}%")
+        h4.metric("The Peak ROI", f"{overall_roi:.1f}%",
+                  help="(估算營收 - 成本) ÷ 成本 × 100%",
+                  delta_color="normal" if overall_roi >= 0 else "inverse")
+
+        # 月別疊加圖
+        df_hotel = df_tp[['ym','hotel_rev']].copy()
+        df_hotel['peak_est_rev'] = df_tp['est_total'] * PRICE_PER_GUEST
+        df_hotel.columns = ['月份','飯店住房收入','The Peak估算']
+
+        df_hotel_melt = df_hotel.melt(id_vars='月份', value_vars=['飯店住房收入','The Peak估算'],
+                                       var_name='類型', value_name='金額')
+        stacked = alt.Chart(df_hotel_melt).mark_bar().encode(
+            x=alt.X('月份:N', title='月份', sort=None),
+            y=alt.Y('金額:Q', title='NT$'),
+            color=alt.Color('類型:N', scale=alt.Scale(
+                domain=['飯店住房收入','The Peak估算'],
+                range=['#2c3e50','#f39c12'])),
+            tooltip=['月份:N','類型:N', alt.Tooltip('金額:Q', format=',.0f')]
+        )
+
+        # 貢獻比折線（右軸）
+        df_ratio = df_hotel.copy()
+        df_ratio['貢獻比'] = df_ratio['The Peak估算'] / df_ratio['飯店住房收入'].replace(0, pd.NA) * 100
+        ratio_line = alt.Chart(df_ratio).mark_line(point=True, color='#e74c3c', strokeWidth=2.5, strokeDash=[4,2]).encode(
+            x=alt.X('月份:N', sort=None),
+            y=alt.Y('貢獻比:Q', title='The Peak 占比 (%)', axis=alt.Axis(titleColor='#e74c3c')),
+            tooltip=['月份:N', alt.Tooltip('貢獻比:Q', title='貢獻比', format='.1f')]
+        )
+        ratio_text = alt.Chart(df_ratio).mark_text(dy=-12, color='#e74c3c', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('月份:N', sort=None), y='貢獻比:Q',
+            text=alt.Text('貢獻比:Q', format='.1f')
+        )
+        hotel_chart = alt.layer(stacked, alt.layer(ratio_line, ratio_text)).resolve_scale(y='independent')
+        st.altair_chart(hotel_chart.properties(
+            title='月別飯店收入（深色）+ The Peak 估算（橘色）；紅虛線 = 貢獻比', height=320
+        ), use_container_width=True)
+
+        # 詳細月別對比表格
+        df_ratio_disp = df_ratio.copy()
+        df_ratio_disp['飯店住房收入'] = df_ratio_disp['飯店住房收入'].apply(lambda x: f"NT${int(x):,}")
+        df_ratio_disp['The Peak估算']  = df_ratio_disp['The Peak估算'].apply(lambda x: f"NT${int(x):,}")
+        df_ratio_disp['貢獻比'] = df_ratio_disp['貢獻比'].fillna(0).round(1).astype(str) + '%'
+        df_ratio_disp = df_ratio_disp[['月份','飯店住房收入','The Peak估算','貢獻比']]
+        st.dataframe(df_ratio_disp, use_container_width=True, hide_index=True)
+
+    # ══════════════════════════════════════════════════════════
+    # ── 區塊 9：Happy Hour 獨立分析 ────────────────────────
+    # ══════════════════════════════════════════════════════════
+    with st.expander("🥂 區塊 9：Happy Hour 獨立分析", expanded=False):
+        st.markdown("#### 🥂 Happy Hour 統計分析（2026/01–07）")
+        st.caption("⚠️ HH 數據與 The Peak 完全分隔，所有指標獨立計算。")
+
+        hh1, hh2, hh3, hh4 = st.columns(4)
+        avg_hh_m = total_hh_g / max(len(df_hh_valid), 1)
+        hh1.metric("7個月 HH 總人次", f"{total_hh_g:,} 人")
+        hh2.metric("月平均 HH 人次", f"{avg_hh_m:,.0f} 人")
+        hh3.metric("7個月 HH 總成本", f"NT${total_hh_cost:,.0f}")
+        hh4.metric("整體 HH CPG", f"NT${overall_hh_cpg:,.0f}", help="HH總成本 ÷ HH總人次（母數法）")
+
+        # 月別 HH 表格
+        df_hh = df_tp[['ym','hh_act','hh_cost']].copy()
+        df_hh['HH CPG'] = (df_hh['hh_cost'] / df_hh['hh_act'].replace(0, pd.NA)).fillna(0).round(0)
+        df_hh['雙冠日 HH 人次'] = df_tp['dual_hh_guests']
+        df_hh['一般日 HH 人次'] = df_tp['norm_hh_guests']
+        df_hh_disp = df_hh.copy()
+        df_hh_disp['hh_cost'] = df_hh_disp['hh_cost'].apply(lambda x: f"NT${int(x):,}")
+        df_hh_disp['HH CPG']  = df_hh_disp['HH CPG'].astype(int).apply(lambda x: f"NT${x:,}")
+        df_hh_disp.columns = ['月份','HH實際人次','HH成本','HH CPG','雙冠日HH人次','一般日HH人次']
+        st.dataframe(df_hh_disp, use_container_width=True, hide_index=True)
+
+        # HH 月別柱狀圖
+        hh_bar_c = alt.Chart(df_tp).mark_bar(color='#9b59b6', opacity=0.8).encode(
+            x=alt.X('ym:N', title='月份', sort=None),
+            y=alt.Y('hh_act:Q', title='HH 人次'),
+            tooltip=['ym:N', alt.Tooltip('hh_act:Q', title='HH人次', format=',')]
+        )
+        hh_cpg_line = alt.Chart(df_hh[df_hh['hh_act']>0]).mark_line(
+            point=True, color='#e67e22', strokeWidth=2.5, strokeDash=[4,2]
+        ).encode(
+            x=alt.X('ym:N', sort=None),
+            y=alt.Y('HH CPG:Q', title='HH CPG (NT$)', axis=alt.Axis(titleColor='#e67e22')),
+            tooltip=['ym:N', alt.Tooltip('HH CPG:Q', title='HH CPG', format='.0f')]
+        )
+        hh_chart = alt.layer(hh_bar_c, hh_cpg_line).resolve_scale(y='independent')
+        st.altair_chart(hh_chart.properties(
+            title='月別 HH 人次（紫柱）與 HH CPG（橘虛線）', height=280
+        ), use_container_width=True)
+
+        # 雙冠日 vs 一般日 HH 對比
+        total_dual_hh_g    = int(df_tp['dual_hh_guests'].sum())
+        total_dual_hh_cost = float(df_tp['dual_hh_cost'].sum())
+        total_norm_hh_g    = int(df_tp['norm_hh_guests'].sum())
+        total_norm_hh_cost = float(df_tp['norm_hh_cost'].sum())
+        dual_hh_cpg_v = total_dual_hh_cost / total_dual_hh_g if total_dual_hh_g > 0 else 0
+        norm_hh_cpg_v = total_norm_hh_cost / total_norm_hh_g if total_norm_hh_g > 0 else 0
+
+        if total_dual_hh_g > 0 or total_norm_hh_g > 0:
+            st.write("")
+            st.markdown("**🎯 雙冠日 vs 一般日 HH 對比**")
+            hh_cmp1, hh_cmp2 = st.columns(2)
+            hh_cmp1.markdown(f"""
+            <div style="background:#f5eef8;border-left:4px solid #9b59b6;padding:12px;border-radius:8px;">
+                <p style="margin:0;font-size:12px;color:#9b59b6;font-weight:bold;">🏆 雙冠日 HH（{total_dual_d} 天）</p>
+                <h4 style="margin:4px 0;">NT$ {int(dual_hh_cpg_v):,} / 人</h4>
+                <p style="margin:0;font-size:11px;color:#555;">{total_dual_hh_g:,} 人次 ｜ NT${int(total_dual_hh_cost):,}</p>
+            </div>""", unsafe_allow_html=True)
+            hh_cmp2.markdown(f"""
+            <div style="background:#f8f9fa;border-left:4px solid #bdc3c7;padding:12px;border-radius:8px;">
+                <p style="margin:0;font-size:12px;color:#7f8c8d;font-weight:bold;">📅 一般日 HH</p>
+                <h4 style="margin:4px 0;">NT$ {int(norm_hh_cpg_v):,} / 人</h4>
+                <p style="margin:0;font-size:11px;color:#555;">{total_norm_hh_g:,} 人次 ｜ NT${int(total_norm_hh_cost):,}</p>
+            </div>""", unsafe_allow_html=True)
+
+    st.divider()
+    st.caption("📌 The Peak 專案總評 | 分析區間：2026/01/01–2026/07/31 | 所有「平均」均使用總量母數計算，禁止平均的平均。")
+
