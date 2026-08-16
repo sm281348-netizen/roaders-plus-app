@@ -8283,8 +8283,8 @@ if current_hotel != "採購":
                 edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points', 'perf_score']].copy()
                 edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
                 
-                st.markdown("請確認並微調以下績效分數：")
-                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points'])
+                st.markdown("請確認並微調以下績效分數 (**取消勾選 `eligible` 即可將該名單排除於本次發放**)：")
+                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'])
                 
                 edited_df['total_points'] = edited_df.apply(
                     lambda row: (row['pos_points'] + row['tenure_points']) * (row['perf_score'] / 100) if row['eligible'] else 0, 
