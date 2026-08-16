@@ -8034,11 +8034,11 @@ if current_hotel != "採購":
             except:
                 return pd.DataFrame()
 
-        def add_employee(e_id, name, dept, pos, salary):
+        def add_employee(e_id, name, dept, pos, salary, start_date):
             try:
                 df = conn.read(worksheet="employees", ttl="0")
                 required_cols = ["employee_id", "name",
-                                 "dept", "position", "salary"]
+                                 "dept", "position", "salary", "start_date"]
 
                 if df is None or df.empty or not all(c in df.columns for c in required_cols):
                     if df is None or df.empty:
@@ -8052,7 +8052,7 @@ if current_hotel != "採購":
                     return "ID_EXISTS"
 
                 new_emp = pd.DataFrame([{"employee_id": str(
-                    e_id), "name": name, "dept": dept, "position": pos, "salary": salary}])
+                    e_id), "name": name, "dept": dept, "position": pos, "salary": salary, "start_date": str(start_date)}])
                 df = pd.concat([df, new_emp], ignore_index=True)
                 conn.update(worksheet="employees", data=df.fillna(""))
                 get_all_employees_cached.clear()
@@ -8078,14 +8078,17 @@ if current_hotel != "採購":
         # -- UI: 新增員工區 --
         with st.expander("➕ 新增新進員工資訊", expanded=False):
             with st.form("add_employee_form", clear_on_submit=True):
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 new_id = col1.text_input("員工編號 (必填)")
                 new_name = col2.text_input("姓名 (必填)")
+                import datetime
+                new_start_date = col3.date_input("到職日", value=datetime.date.today())
 
-                new_dept = st.selectbox(
+                col4, col5, col6 = st.columns(3)
+                new_dept = col4.selectbox(
                     "所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
-                new_pos = st.text_input("職位")
-                new_salary = st.number_input("薪資", min_value=0, step=1000)
+                new_pos = col5.text_input("職位")
+                new_salary = col6.number_input("薪資", min_value=0, step=1000)
 
                 submit_btn = st.form_submit_button("✅ 確認新增")
                 if submit_btn:
@@ -8093,7 +8096,7 @@ if current_hotel != "採購":
                         st.error("❌ 請填寫員工編號與姓名！")
                     else:
                         res = add_employee(
-                            new_id, new_name, new_dept, new_pos, new_salary)
+                            new_id, new_name, new_dept, new_pos, new_salary, new_start_date)
                         if res == True:
                             st.success(f"✅ 成功新增員工：{new_name}")
                             st.rerun()
@@ -8170,18 +8173,19 @@ if current_hotel != "採購":
             st.write(f"📊 目前共有 {len(df_emp)} 位員工")
 
             # 標題列
-            header_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+            header_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
             header_cols[0].markdown("**員工編號**")
             header_cols[1].markdown("**姓名**")
             header_cols[2].markdown("**部門**")
             header_cols[3].markdown("**職位**")
             header_cols[4].markdown("**薪資**")
-            header_cols[5].markdown("**操作**")
+            header_cols[5].markdown("**到職日**")
+            header_cols[6].markdown("**操作**")
 
             st.divider()
 
             for idx, row in df_emp.iterrows():
-                row_cols = st.columns([1.5, 1.5, 1.5, 1.5, 1.5, 1])
+                row_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
                 row_cols[0].write(row.get('employee_id', ''))
                 row_cols[1].write(row.get('name', ''))
                 row_cols[2].write(row.get('dept', ''))
@@ -8193,14 +8197,142 @@ if current_hotel != "採購":
                 except:
                     salary_int = 0
                 row_cols[4].write(f"NT$ {salary_int:,}")
+                row_cols[5].write(str(row.get('start_date', '')))
 
                 # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
-                if row_cols[5].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
+                if row_cols[6].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
                     delete_employee(row.get('employee_id', ''))
                     st.toast(f"已刪除員工: {row['name']}")
                     time.sleep(0.5)
                     st.rerun()
 
+            # --- 💰 獎金發放與試算系統 ---
+            st.divider()
+            st.header("💰 獎金發放與試算系統")
+            
+            # 全局設定區
+            with st.container():
+                st.subheader("1. 全局設定")
+                col_settings1, col_settings2, col_settings3 = st.columns(3)
+                bonus_period = col_settings1.text_input("發放期別", value="2026年中績效獎金")
+                total_bonus_pool = col_settings2.number_input("本期總獎金池額度 (NT$)", min_value=0, step=10000, value=100000)
+                import datetime
+                tenure_cutoff = col_settings3.date_input("年資計算截止日", value=datetime.date.today())
+                
+            # ✨ 智慧化 PDF 自動匯入功能
+            st.subheader("2. 上傳本期評核表 (PDF)")
+            uploaded_pdf = st.file_uploader("上傳 PDF 檔案", type=['pdf'])
+            
+            pdf_data = {}
+            if uploaded_pdf is not None:
+                try:
+                    import PyPDF2
+                    import re
+                    pdf_reader = PyPDF2.PdfReader(uploaded_pdf)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                    
+                    matches = re.findall(r'([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*(\d{1,3}(?:\.\d{1,2})?)', text)
+                    for name, score in matches:
+                        pdf_data[name] = float(score)
+                        
+                    st.success(f"成功解析 PDF，共讀取 {len(pdf_data)} 筆成績資料。")
+                except Exception as e:
+                    st.error(f"PDF 解析失敗：{e}")
+                    
+            # 試算與輸入看板
+            st.subheader("3. 試算與輸入看板 (Data Editor)")
+            
+            if not df_emp.empty:
+                bonus_df = df_emp[df_emp['name'] != '余冠傑'].copy()
+                
+                if 'start_date' not in bonus_df.columns:
+                    bonus_df['start_date'] = pd.NaT
+                else:
+                    bonus_df['start_date'] = pd.to_datetime(bonus_df['start_date'], errors='coerce')
+                    
+                bonus_df['tenure_days'] = (pd.to_datetime(tenure_cutoff) - bonus_df['start_date']).dt.days
+                bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
+                bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(0)
+                
+                bonus_df['eligible'] = bonus_df['tenure_days'] >= 180
+                
+                def get_position_points(pos):
+                    pos = str(pos)
+                    if any(x in pos for x in ['組長', '大廳經理']) and '副' not in pos:
+                        return 20
+                    elif '副組長' in pos:
+                        return 15
+                    elif any(x in pos for x in ['職代', '內場', '工務']):
+                        return 12
+                    else:
+                        return 10
+                        
+                bonus_df['pos_points'] = bonus_df['position'].apply(get_position_points)
+                bonus_df['tenure_points'] = bonus_df['tenure_years'].apply(lambda x: min(round(x, 2), 10.0))
+                bonus_df['perf_score'] = bonus_df['name'].map(pdf_data).fillna(80.0)
+                
+                edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points', 'perf_score']].copy()
+                edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
+                
+                st.markdown("請確認並微調以下績效分數：")
+                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points'])
+                
+                edited_df['total_points'] = edited_df.apply(
+                    lambda row: (row['pos_points'] + row['tenure_points']) * (row['perf_score'] / 100) if row['eligible'] else 0, 
+                    axis=1
+                )
+                
+                total_valid_points = edited_df['total_points'].sum()
+                point_value = total_bonus_pool / total_valid_points if total_valid_points > 0 else 0
+                
+                edited_df['suggested_bonus'] = (edited_df['total_points'] * point_value).fillna(0)
+                edited_df['suggested_bonus'] = edited_df['suggested_bonus'].apply(lambda x: int(x / 100) * 100)
+                
+                st.markdown("微調實際發放金額：")
+                final_edit_df = edited_df[['employee_id', 'name', 'eligible', 'total_points', 'suggested_bonus']].copy()
+                final_edit_df['actual_bonus'] = final_edit_df['suggested_bonus']
+                
+                final_df = st.data_editor(final_edit_df, disabled=['employee_id', 'name', 'eligible', 'total_points', 'suggested_bonus'])
+                
+                total_actual_bonus = final_df['actual_bonus'].sum()
+                
+                st.write(f"**本期總獎金池:** NT$ {total_bonus_pool:,}")
+                st.write(f"**總發放金額:** NT$ {total_actual_bonus:,}")
+                
+                if total_actual_bonus > total_bonus_pool:
+                    st.error("❌ 警告：總發放金額超過總獎金池！")
+                else:
+                    st.success("✅ 預算控管正常。")
+                    
+                if st.button("💾 儲存並匯出 CSV"):
+                    if total_actual_bonus > total_bonus_pool:
+                        st.error("發放金額超過預算，無法儲存！")
+                    else:
+                        try:
+                            br_df = conn.read(worksheet="bonus_records", ttl="0")
+                            if br_df is None or br_df.empty:
+                                br_df = pd.DataFrame(columns=["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"])
+                            
+                            new_records = final_df[final_df['eligible']].copy()
+                            new_records['period'] = bonus_period
+                            new_records = pd.merge(new_records, edited_df[['employee_id', 'perf_score']], on='employee_id', how='left')
+                            new_records = new_records[["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"]]
+                            
+                            br_df = pd.concat([br_df, new_records], ignore_index=True)
+                            conn.update(worksheet="bonus_records", data=br_df.fillna(""))
+                            st.success("✅ 成功儲存至資料庫！")
+                            
+                            csv = new_records.to_csv(index=False).encode('utf-8-sig')
+                            st.download_button(
+                                label="📥 下載 CSV 簽收單",
+                                data=csv,
+                                file_name=f"{bonus_period}_bonus.csv",
+                                mime="text/csv",
+                            )
+                        except Exception as e:
+                            st.error(f"儲存失敗：{e}")
 
 
 def clean_nation_name(nation_str):
