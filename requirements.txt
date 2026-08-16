@@ -9,3 +9,4 @@ st-gsheets-connection
 holidays
 deep-translator
 plotly>=5.18.0
+PyPDF2
