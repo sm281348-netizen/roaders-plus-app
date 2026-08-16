@@ -8253,8 +8253,9 @@ if current_hotel != "採購":
                     bonus_df['start_date'] = pd.to_datetime(bonus_df['start_date'], errors='coerce')
                     
                 bonus_df['tenure_days'] = (pd.to_datetime(tenure_cutoff) - bonus_df['start_date']).dt.days
+                bonus_df['tenure_days'] = bonus_df['tenure_days'].fillna(365)
                 bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
-                bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(0)
+                bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(1.0)
                 
                 bonus_df['eligible'] = bonus_df['tenure_days'] >= 180
                 
