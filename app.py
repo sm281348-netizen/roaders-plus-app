@@ -8250,7 +8250,13 @@ if current_hotel != "採購":
                 if 'start_date' not in bonus_df.columns:
                     bonus_df['start_date'] = pd.NaT
                 else:
-                    bonus_df['start_date'] = pd.to_datetime(bonus_df['start_date'], errors='coerce')
+                    def _parse_bonus_date(x):
+                        import pandas as pd
+                        s = str(x).replace('.0', '').strip()
+                        if len(s) == 8 and s.isdigit():
+                            return pd.to_datetime(f"{s[:4]}-{s[4:6]}-{s[6:]}", errors='coerce')
+                        return pd.to_datetime(x, errors='coerce')
+                    bonus_df['start_date'] = bonus_df['start_date'].apply(_parse_bonus_date)
                     
                 bonus_df['tenure_days'] = (pd.to_datetime(tenure_cutoff) - bonus_df['start_date']).dt.days
                 bonus_df['tenure_days'] = bonus_df['tenure_days'].fillna(365)
