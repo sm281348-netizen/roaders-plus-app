@@ -8259,7 +8259,7 @@ if current_hotel != "採購":
                 st.subheader("1. 全局設定")
                 col_settings1, col_settings2, col_settings3 = st.columns(3)
                 bonus_period = col_settings1.text_input("發放期別", value="2026年中績效獎金")
-                total_bonus_pool = col_settings2.number_input("本期總獎金池額度 (NT$)", min_value=0, step=10000, value=100000)
+                total_bonus_pool = col_settings2.number_input("本期總獎金池額度 (NT$)", min_value=0, step=10000, value=450000)
                 import datetime
                 tenure_cutoff = col_settings3.date_input("年資計算截止日", value=datetime.date.today())
                 
