@@ -8383,11 +8383,32 @@ if current_hotel != "採購":
                 edited_df['suggested_bonus'] = (edited_df['total_points'] * point_value).fillna(0)
                 edited_df['suggested_bonus'] = edited_df['suggested_bonus'].apply(lambda x: int(x / 100) * 100)
                 
+                # 建立薪資對照字典
+                bonus_df['salary_num'] = pd.to_numeric(bonus_df['salary'], errors='coerce').fillna(0).astype(int)
+                salary_dict = bonus_df.set_index('employee_id')['salary_num'].to_dict()
+
                 st.markdown("微調實際發放金額：")
                 final_edit_df = edited_df[['employee_id', 'name', 'total_points', 'suggested_bonus']].copy()
+                final_edit_df['salary'] = final_edit_df['employee_id'].map(salary_dict).fillna(0).astype(int)
                 final_edit_df['actual_bonus'] = final_edit_df['suggested_bonus']
+                final_edit_df['bonus_salary_ratio'] = final_edit_df.apply(
+                    lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r['salary'] > 0 else "0.0%", axis=1
+                )
+                final_edit_df = final_edit_df[['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'actual_bonus', 'bonus_salary_ratio']]
                 
-                final_df = st.data_editor(final_edit_df, disabled=['employee_id', 'name', 'total_points', 'suggested_bonus'])
+                final_df = st.data_editor(
+                    final_edit_df, 
+                    disabled=['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'bonus_salary_ratio'],
+                    column_config={
+                        "employee_id": st.column_config.TextColumn("員工編號"),
+                        "name": st.column_config.TextColumn("姓名"),
+                        "salary": st.column_config.NumberColumn("月薪 (NT$)", format="NT$ %d"),
+                        "total_points": st.column_config.NumberColumn("總點數", format="%.2f 點"),
+                        "suggested_bonus": st.column_config.NumberColumn("建議獎金", format="NT$ %d"),
+                        "actual_bonus": st.column_config.NumberColumn("實際發放金額 (可微調)", format="NT$ %d"),
+                        "bonus_salary_ratio": st.column_config.TextColumn("獎金薪資比 (%)")
+                    }
+                )
                 
                 total_actual_bonus = final_df['actual_bonus'].sum()
                 
@@ -8406,12 +8427,15 @@ if current_hotel != "採購":
                         try:
                             br_df = conn.read(worksheet="bonus_records", ttl="0")
                             if br_df is None or br_df.empty:
-                                br_df = pd.DataFrame(columns=["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"])
+                                br_df = pd.DataFrame(columns=["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"])
                             
                             new_records = final_df.copy()
+                            new_records['bonus_salary_ratio'] = new_records.apply(
+                                lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r.get('salary', 0) > 0 else "0.0%", axis=1
+                            )
                             new_records['period'] = bonus_period
                             new_records = pd.merge(new_records, edited_df[['employee_id', 'perf_score']], on='employee_id', how='left')
-                            new_records = new_records[["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"]]
+                            new_records = new_records[["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"]]
                             
                             br_df = pd.concat([br_df, new_records], ignore_index=True)
                             conn.update(worksheet="bonus_records", data=br_df.fillna(""))
