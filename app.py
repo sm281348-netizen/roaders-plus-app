@@ -8230,9 +8230,9 @@ if current_hotel != "採購":
                 with col_r1:
                     st.markdown("""
                     **📌 職位基準點數 (A)**
-                    * **20 點**：組長、大廳經理
+                    * **18 點**：組長、大廳經理
                     * **15 點**：副組長、外場副組長
-                    * **12 點**：職代、內場、工務
+                    * **13 點**：職代、內場、工務
                     * **10 點**：房務員、公清、櫃台員、館助、夜櫃及其他同仁
                     """)
                 with col_r2:
@@ -8335,11 +8335,11 @@ if current_hotel != "採購":
                 def get_position_points(pos):
                     pos = str(pos)
                     if any(x in pos for x in ['組長', '大廳經理']) and '副' not in pos:
-                        return 20
+                        return 18
                     elif '副組長' in pos:
                         return 15
                     elif any(x in pos for x in ['職代', '內場', '工務']):
-                        return 12
+                        return 13
                     else:
                         return 10
                         
