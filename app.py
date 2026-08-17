@@ -8220,7 +8220,7 @@ if current_hotel != "採購":
                 #### 1️⃣ 基本資格條件
                 * **任職門檻**：依據年資截止日，**任職滿 6 個月 (180 天)** 方具備本期獎金分配資格。
                 * **排除機制**：已離職員工或特定不列入名單人員不參與分配。
-                * **彈性控管**：可於下方試算表直接手動取消勾選 `eligible` 排除特定同仁。
+                * **名單鎖定**：點擊「儲存本次發放名單與考核分數」後，系統即固定保存此名單與分數，重整頁面時自動載入。
 
                 ---
                 #### 2️⃣ 點數加權規則
@@ -8307,33 +8307,30 @@ if current_hotel != "採購":
                 bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
                 bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(1.0)
                 
-                # 讀取已儲存的名單資格與分數設定 (bonus_config)
+                # 讀取已儲存的名單與分數設定 (bonus_config)
                 saved_scores = {}
-                saved_eligible = {}
+                saved_eids = []
                 try:
                     cfg_df = conn.read(worksheet="bonus_config", ttl="0")
                     if cfg_df is not None and not cfg_df.empty:
                         for _, r in cfg_df.iterrows():
                             eid = str(r.get('employee_id', '')).replace('.0', '').strip()
                             if eid:
+                                saved_eids.append(eid)
                                 if 'perf_score' in r and pd.notna(r['perf_score']):
                                     try:
                                         saved_scores[eid] = float(r['perf_score'])
                                     except:
                                         pass
-                                if 'eligible' in r and pd.notna(r['eligible']):
-                                    val_str = str(r['eligible']).strip().lower()
-                                    saved_eligible[eid] = val_str in ['true', '1', 'yes', 't']
                 except Exception:
                     pass
 
-                def get_initial_eligible(row):
-                    eid = str(row.get('employee_id', '')).replace('.0', '').strip()
-                    if eid in saved_eligible:
-                        return bool(saved_eligible[eid])
-                    return bool(row['tenure_days'] >= 180)
-
-                bonus_df['eligible'] = bonus_df.apply(get_initial_eligible, axis=1)
+                # 若 bonus_config 已有固定名單則直接帶入該名單；若尚無儲存紀錄，預設以滿 180 天為發放名單
+                if saved_eids:
+                    bonus_df['eid_clean'] = bonus_df['employee_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    bonus_df = bonus_df[bonus_df['eid_clean'].isin(saved_eids)].copy()
+                else:
+                    bonus_df = bonus_df[bonus_df['tenure_days'] >= 180].copy()
                 
                 def get_position_points(pos):
                     pos = str(pos)
@@ -8360,28 +8357,25 @@ if current_hotel != "採購":
 
                 bonus_df['perf_score'] = bonus_df.apply(get_initial_score, axis=1)
                 
-                edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points', 'perf_score']].copy()
+                edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points', 'perf_score']].copy()
                 edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
                 
-                st.markdown("請確認並微調以下績效分數 (**取消勾選 `eligible` 即可將該名單排除於本次發放**)：")
-                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'])
+                st.markdown("請確認並微調以下考核分數 (可隨時點擊下方儲存按鈕將名單與分數固定保存)：")
+                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'], num_rows="dynamic")
                 
                 col_save_cfg, _ = st.columns([3, 7])
-                if col_save_cfg.button("💾 儲存名單資格與考核分數 (重整時固定載入)", help="將目前表格中的【發放資格 (eligible)】與【考核分數】固定儲存至資料庫"):
+                if col_save_cfg.button("💾 儲存本次發放名單與考核分數 (重整時固定載入)", help="將目前表格中的發放名單與考核分數固定儲存至資料庫"):
                     try:
-                        save_cfg = edited_df[['employee_id', 'name', 'eligible', 'perf_score']].copy()
+                        save_cfg = edited_df[['employee_id', 'name', 'perf_score']].copy()
                         save_cfg['employee_id'] = save_cfg['employee_id'].astype(str)
                         conn.update(worksheet="bonus_config", data=save_cfg.fillna(""))
-                        st.success("✅ 成功儲存名單設定與分數！下次重新整理網頁時將自動載入此設定。")
+                        st.success("✅ 成功儲存發放名單與分數！下次重新整理網頁時將自動鎖定此名單。")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
                         st.error(f"儲存失敗（若尚未建立工作表，請先在 Google Sheets 新增名為 bonus_config 的頁籤）：{e}")
                 
-                edited_df['total_points'] = edited_df.apply(
-                    lambda row: (row['pos_points'] + row['tenure_points']) * (row['perf_score'] / 100) if row['eligible'] else 0, 
-                    axis=1
-                )
+                edited_df['total_points'] = (edited_df['pos_points'] + edited_df['tenure_points']) * (edited_df['perf_score'] / 100)
                 
                 total_valid_points = edited_df['total_points'].sum()
                 point_value = total_bonus_pool / total_valid_points if total_valid_points > 0 else 0
@@ -8390,10 +8384,10 @@ if current_hotel != "採購":
                 edited_df['suggested_bonus'] = edited_df['suggested_bonus'].apply(lambda x: int(x / 100) * 100)
                 
                 st.markdown("微調實際發放金額：")
-                final_edit_df = edited_df[['employee_id', 'name', 'eligible', 'total_points', 'suggested_bonus']].copy()
+                final_edit_df = edited_df[['employee_id', 'name', 'total_points', 'suggested_bonus']].copy()
                 final_edit_df['actual_bonus'] = final_edit_df['suggested_bonus']
                 
-                final_df = st.data_editor(final_edit_df, disabled=['employee_id', 'name', 'eligible', 'total_points', 'suggested_bonus'])
+                final_df = st.data_editor(final_edit_df, disabled=['employee_id', 'name', 'total_points', 'suggested_bonus'])
                 
                 total_actual_bonus = final_df['actual_bonus'].sum()
                 
@@ -8414,7 +8408,7 @@ if current_hotel != "採購":
                             if br_df is None or br_df.empty:
                                 br_df = pd.DataFrame(columns=["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"])
                             
-                            new_records = final_df[final_df['eligible']].copy()
+                            new_records = final_df.copy()
                             new_records['period'] = bonus_period
                             new_records = pd.merge(new_records, edited_df[['employee_id', 'perf_score']], on='employee_id', how='left')
                             new_records = new_records[["period", "employee_id", "name", "perf_score", "total_points", "actual_bonus"]]
