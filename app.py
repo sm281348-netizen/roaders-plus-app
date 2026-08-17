@@ -8307,7 +8307,33 @@ if current_hotel != "採購":
                 bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
                 bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(1.0)
                 
-                bonus_df['eligible'] = bonus_df['tenure_days'] >= 180
+                # 讀取已儲存的名單資格與分數設定 (bonus_config)
+                saved_scores = {}
+                saved_eligible = {}
+                try:
+                    cfg_df = conn.read(worksheet="bonus_config", ttl="0")
+                    if cfg_df is not None and not cfg_df.empty:
+                        for _, r in cfg_df.iterrows():
+                            eid = str(r.get('employee_id', '')).replace('.0', '').strip()
+                            if eid:
+                                if 'perf_score' in r and pd.notna(r['perf_score']):
+                                    try:
+                                        saved_scores[eid] = float(r['perf_score'])
+                                    except:
+                                        pass
+                                if 'eligible' in r and pd.notna(r['eligible']):
+                                    val_str = str(r['eligible']).strip().lower()
+                                    saved_eligible[eid] = val_str in ['true', '1', 'yes', 't']
+                except Exception:
+                    pass
+
+                def get_initial_eligible(row):
+                    eid = str(row.get('employee_id', '')).replace('.0', '').strip()
+                    if eid in saved_eligible:
+                        return bool(saved_eligible[eid])
+                    return bool(row['tenure_days'] >= 180)
+
+                bonus_df['eligible'] = bonus_df.apply(get_initial_eligible, axis=1)
                 
                 def get_position_points(pos):
                     pos = str(pos)
@@ -8322,13 +8348,35 @@ if current_hotel != "採購":
                         
                 bonus_df['pos_points'] = bonus_df['position'].apply(get_position_points)
                 bonus_df['tenure_points'] = bonus_df['tenure_years'].apply(lambda x: min(round(x, 2), 10.0))
-                bonus_df['perf_score'] = bonus_df['name'].map(pdf_data).fillna(80.0)
+
+                def get_initial_score(row):
+                    name = str(row.get('name', '')).strip()
+                    eid = str(row.get('employee_id', '')).replace('.0', '').strip()
+                    if pdf_data and name in pdf_data:
+                        return float(pdf_data[name])
+                    if eid in saved_scores:
+                        return float(saved_scores[eid])
+                    return 80.0
+
+                bonus_df['perf_score'] = bonus_df.apply(get_initial_score, axis=1)
                 
                 edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'eligible', 'pos_points', 'tenure_points', 'perf_score']].copy()
                 edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
                 
                 st.markdown("請確認並微調以下績效分數 (**取消勾選 `eligible` 即可將該名單排除於本次發放**)：")
                 edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'])
+                
+                col_save_cfg, _ = st.columns([3, 7])
+                if col_save_cfg.button("💾 儲存名單資格與考核分數 (重整時固定載入)", help="將目前表格中的【發放資格 (eligible)】與【考核分數】固定儲存至資料庫"):
+                    try:
+                        save_cfg = edited_df[['employee_id', 'name', 'eligible', 'perf_score']].copy()
+                        save_cfg['employee_id'] = save_cfg['employee_id'].astype(str)
+                        conn.update(worksheet="bonus_config", data=save_cfg.fillna(""))
+                        st.success("✅ 成功儲存名單設定與分數！下次重新整理網頁時將自動載入此設定。")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"儲存失敗（若尚未建立工作表，請先在 Google Sheets 新增名為 bonus_config 的頁籤）：{e}")
                 
                 edited_df['total_points'] = edited_df.apply(
                     lambda row: (row['pos_points'] + row['tenure_points']) * (row['perf_score'] / 100) if row['eligible'] else 0, 
