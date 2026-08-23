@@ -10221,7 +10221,7 @@ if selected_page == "📋 營運檢討報告":
 # ─────────────────────────────────────────────────────────────
 def render_free_services_optimization_tab():
     st.markdown("## 💡 免費服務採購品項成本優化專案 (站前館)")
-    st.caption("📅 分析資料時間範圍：鎖定 **2026/01/01 ~ 2026/07/31 (共 7 個月)** 之 `purchase_data` 與營運數據")
+    st.caption("📅 分析資料時間範圍：鎖定 **2026/01/01 ~ 2026/06/30 (共 6 個月)** 之 `purchase_data` 與營運數據")
 
     st.info(
         "💡 **專案目標**：針對站前館提供之 39 項免費服務物品進行金額、頻率與 CPOR 耗用分析，"
@@ -10893,7 +10893,7 @@ def render_free_services_optimization_tab():
     st.markdown(f"**站前館優化執行項目摘要（共 {len(act_summary)} 項）：**")
 
     markdown_report = "# 📋 路徒Plus行旅 站前館 - 免費服務品項成本優化執行通知單\n"
-    markdown_report += f"**專案基準區間**：2026/01/01 ~ 2026/07/31 採購數據\n"
+    markdown_report += f"**專案基準區間**：2026/01/01 ~ 2026/06/30 採購數據\n"
     markdown_report += f"**產出日期**：{pd.Timestamp.now().strftime('%Y-%m-%d')}\n"
     markdown_report += f"**預估月度總節省額**：NT$ {int(sim_m_saving):,} ({saving_pct:.1f}%)\n\n"
     markdown_report += "---\n\n### 🛠️ 擬執行調整品項明細：\n\n"
@@ -10915,9 +10915,9 @@ if selected_page == "🏔️ The Peak 專案總評":
     import calendar as _cal_mod
 
     st.header("🏔️ The Peak 專案總評")
-    st.caption("📅 分析區間：2026/01/01 – 2026/07/31（共 7 個月）｜所有平均值均使用母數計算，嚴禁平均的平均。")
+    st.caption("📅 分析區間：2026/01/01 – 2026/06/30（共 7 個月）｜所有平均值均使用母數計算，嚴禁平均的平均。")
 
-    PEAK_PERIOD = [(2026, m) for m in range(1, 8)]   # 1月~7月
+    PEAK_PERIOD = [(2026, m) for m in range(1, 7)]   # 1月~7月
     PRICE_PER_GUEST = 250   # 每人估算單價
 
     # ── 共用輔助函數 ────────────────────────────────────────────
@@ -11283,7 +11283,11 @@ if selected_page == "🏔️ The Peak 專案總評":
             y=alt.Y('cpg:Q', title='CPG (NT$)', scale=alt.Scale(zero=False), axis=alt.Axis(titleColor='#3498db')),
             tooltip=['ym:N', alt.Tooltip('cpg:Q', title='CPG', format=',.0f')]
         )
-        combined_cost = alt.layer(cost_bar + cost_text, cpg_line).resolve_scale(y='independent')
+        cpg_text = alt.Chart(df_cpg_chart).mark_text(dy=-15, color='#3498db', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('ym:N', sort=None), y='cpg:Q',
+            text=alt.Text('cpg:Q', format=',.0f')
+        )
+        combined_cost = alt.layer(cost_bar + cost_text, cpg_line + cpg_text).resolve_scale(y='independent')
         st.altair_chart(combined_cost.properties(
             title='月別採購成本（紅色柱）與月別 CPG（藍線）', height=300
         ), use_container_width=True)
@@ -11496,7 +11500,12 @@ if selected_page == "🏔️ The Peak 專案總評":
             x=alt.X('月份:N', sort=None), y='貢獻比:Q',
             text=alt.Text('貢獻比:Q', format='.1f')
         )
-        hotel_chart = alt.layer(stacked, alt.layer(ratio_line, ratio_text)).resolve_scale(y='independent')
+        stacked_text = alt.Chart(df_hotel_melt[df_hotel_melt['類別'] == 'The Peak估算']).mark_text(dy=15, color='white', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('月份:N', sort=None),
+            y=alt.Y('金額:Q', stack='zero'),
+            text=alt.Text('金額:Q', format=',.0f')
+        )
+        hotel_chart = alt.layer(stacked + stacked_text, alt.layer(ratio_line, ratio_text)).resolve_scale(y='independent')
         st.altair_chart(hotel_chart.properties(
             title='月別飯店收入（深色）+ The Peak 估算（橘色）；紅虛線 = 貢獻比', height=320
         ), use_container_width=True)
@@ -11540,6 +11549,10 @@ if selected_page == "🏔️ The Peak 專案總評":
             y=alt.Y('hh_act:Q', title='HH 人次'),
             tooltip=['ym:N', alt.Tooltip('hh_act:Q', title='HH人次', format=',')]
         )
+        hh_bar_text = alt.Chart(df_tp).mark_text(dy=10, color='white', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('ym:N', sort=None), y='hh_act:Q',
+            text=alt.Text('hh_act:Q', format=',.0f')
+        )
         hh_cpg_line = alt.Chart(df_hh[df_hh['hh_act']>0]).mark_line(
             point=True, color='#e67e22', strokeWidth=2.5, strokeDash=[4,2]
         ).encode(
@@ -11547,7 +11560,11 @@ if selected_page == "🏔️ The Peak 專案總評":
             y=alt.Y('HH CPG:Q', title='HH CPG (NT$)', axis=alt.Axis(titleColor='#e67e22')),
             tooltip=['ym:N', alt.Tooltip('HH CPG:Q', title='HH CPG', format='.0f')]
         )
-        hh_chart = alt.layer(hh_bar_c, hh_cpg_line).resolve_scale(y='independent')
+        hh_cpg_text = alt.Chart(df_hh[df_hh['hh_act']>0]).mark_text(dy=-15, color='#e67e22', fontSize=10, fontWeight='bold').encode(
+            x=alt.X('ym:N', sort=None), y='HH CPG:Q',
+            text=alt.Text('HH CPG:Q', format='.0f')
+        )
+        hh_chart = alt.layer(hh_bar_c + hh_bar_text, hh_cpg_line + hh_cpg_text).resolve_scale(y='independent')
         st.altair_chart(hh_chart.properties(
             title='月別 HH 人次（紫柱）與 HH CPG（橘虛線）', height=280
         ), use_container_width=True)
@@ -11578,5 +11595,5 @@ if selected_page == "🏔️ The Peak 專案總評":
             </div>""", unsafe_allow_html=True)
 
     st.divider()
-    st.caption("📌 The Peak 專案總評 | 分析區間：2026/01/01–2026/07/31 | 所有「平均」均使用總量母數計算，禁止平均的平均。")
+    st.caption("📌 The Peak 專案總評 | 分析區間：2026/01/01–2026/06/30 | 所有「平均」均使用總量母數計算，禁止平均的平均。")
 
