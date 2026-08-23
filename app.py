@@ -11500,7 +11500,7 @@ if selected_page == "🏔️ The Peak 專案總評":
             x=alt.X('月份:N', sort=None), y='貢獻比:Q',
             text=alt.Text('貢獻比:Q', format='.1f')
         )
-        stacked_text = alt.Chart(df_hotel_melt[df_hotel_melt['類別'] == 'The Peak估算']).mark_text(dy=15, color='white', fontSize=10, fontWeight='bold').encode(
+        stacked_text = alt.Chart(df_hotel_melt[df_hotel_melt['類型'] == 'The Peak估算']).mark_text(dy=15, color='white', fontSize=10, fontWeight='bold').encode(
             x=alt.X('月份:N', sort=None),
             y=alt.Y('金額:Q', stack='zero'),
             text=alt.Text('金額:Q', format=',.0f')
