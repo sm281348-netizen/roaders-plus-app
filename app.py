@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 import streamlit as st
 
 # --- Gspread Retry Patch ---
@@ -8371,7 +8371,7 @@ if selected_page == "🥬 H1 菜價戰略總評":
                 
                 c1.markdown(make_card("H1 大盤報價通膨率", f"{market_inflation:+.1f}%", "card-theme-red" if market_inflation > 0 else "card-theme-green"), unsafe_allow_html=True)
                 c2.markdown(make_card("H1 真實叫貨通膨率", f"{real_inflation:+.1f}%", "card-theme-red" if real_inflation > 0 else "card-theme-green"), unsafe_allow_html=True)
-                c3.markdown(make_card("採購防禦指數 (抵銷漲幅)", f"{defense:+.1f}%", "card-theme-green" if defense > 0 else "card-theme-red", help="數值大於0代表我們成功透過改變叫貨比例，規避了部分市場漲價"), unsafe_allow_html=True)
+                c3.markdown(make_card("採購防禦指數 (抵銷漲幅)", f"{defense:+.1f}%", "card-theme-green" if defense > 0 else "card-theme-red"), unsafe_allow_html=True)
                 
                 # Chart
                 if has_w:
