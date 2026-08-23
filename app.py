@@ -1,4 +1,4 @@
-import traceback
+﻿import traceback
 import streamlit as st
 
 # --- Gspread Retry Patch ---
@@ -3117,11 +3117,11 @@ st.title(f"Hotel Master - {current_hotel}")
 st.sidebar.divider()
 st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    menu_options = ["💰 採購分析", "🛒 菜價分析", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
+    menu_options = ["💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
 else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
-        "💰 採購分析", "🛒 菜價分析", "🧹 房務數據", 
+        "💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🧹 房務數據", 
         "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
         "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告",
         "🏔️ The Peak 專案總評", "💡 專案：免費服務成本優化"
@@ -8297,6 +8297,180 @@ if selected_page == "🛒 菜價分析":
                         <p style="margin:4px 0 0 0; font-size:14px; color:#333;">預估備餐: <strong style="color:#e74c3c; font-size:16px;">{int(bf_count)}</strong> 人</p>
                     </div>
                     """, unsafe_allow_html=True)
+# =====================================================
+# 🥬 H1 菜價戰略總評
+# =====================================================
+if selected_page == "🥬 H1 菜價戰略總評":
+    import altair as alt
+    st.header("🥬 H1 菜價戰略總評 (採購與報價深度盤點)")
+    
+    # 鎖定 H1 區間
+    h1_months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']
+    
+    with st.spinner("正在載入供應商報價與叫貨歷史..."):
+        # 1. 取得所有報價
+        sp_df = fetch_supplier_prices()
+        # 2. 取得 The Peak 叫貨歷史 (做為主要叫貨量依據)
+        df_hist = pd.DataFrame()
+        try:
+            df_hist = fetch_thepeak_daily_purchase_report()
+        except:
+            pass
+            
+    if sp_df.empty:
+        st.error("無法取得供應商報價資料。")
+    else:
+        # 過濾 H1 報價
+        sp_df['period_str'] = pd.to_datetime(sp_df['period_dt']).dt.strftime('%Y-%m')
+        sp_h1 = sp_df[sp_df['period_str'].isin(h1_months)].copy()
+        
+        # 處理叫貨歷史
+        weights_dict = {}
+        df_hist_h1 = pd.DataFrame()
+        if not df_hist.empty:
+            date_col_hist = next((c for c in df_hist.columns if '期' in c or 'Date' in c or 'date' in c.lower() or '時間' in c), None)
+            item_col = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item', 'item'])), None)
+            qty_col = next((c for c in df_hist.columns if any(k in c for k in ['數量', 'Qty', 'qty'])), None)
+            
+            if date_col_hist and item_col and qty_col:
+                df_hist['_ym'] = pd.to_datetime(df_hist[date_col_hist], errors='coerce').dt.strftime('%Y-%m')
+                df_hist_h1 = df_hist[df_hist['_ym'].isin(h1_months)].copy()
+                
+                if not df_hist_h1.empty:
+                    df_hist_h1[qty_col] = pd.to_numeric(df_hist_h1[qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    weights_df = pd.DataFrame({'item': df_hist_h1[item_col].astype(str), 'amt': df_hist_h1[qty_col]})
+                    weights_dict = weights_df.groupby('item')['amt'].sum().to_dict()
+        
+        if sp_h1.empty:
+            st.warning("H1 (1-6月) 期間沒有菜價報價紀錄。")
+        else:
+            # 計算 H1 加權指數
+            index_df = get_market_index_df(sp_h1, weights_dict=weights_dict)
+            
+            st.markdown("### 📊 區塊 1：H1 總體通膨趨勢 (大盤 vs 真實叫貨)")
+            st.caption("比較供應商純報價漲幅 (等權重) 與我們實際叫貨的通膨漲幅 (依叫貨量加權)")
+            
+            if not index_df.empty:
+                idx_min = max(0, int(min(index_df['index'].min(), index_df.get('weighted_index', index_df['index']).min()) * 0.95))
+                idx_max = int(max(index_df['index'].max(), index_df.get('weighted_index', index_df['index']).max()) * 1.05)
+                
+                has_w = 'weighted_index' in index_df.columns
+                
+                # Top KPI Cards
+                c1, c2, c3 = st.columns(3)
+                start_m, end_m = index_df['month_label'].iloc[0], index_df['month_label'].iloc[-1]
+                idx_start, idx_end = index_df['index'].iloc[0], index_df['index'].iloc[-1]
+                
+                market_inflation = (idx_end - idx_start) / idx_start * 100 if idx_start > 0 else 0
+                
+                w_end = index_df['weighted_index'].iloc[-1] if has_w else idx_end
+                w_start = index_df['weighted_index'].iloc[0] if has_w else idx_start
+                real_inflation = (w_end - w_start) / w_start * 100 if w_start > 0 else 0
+                
+                defense = market_inflation - real_inflation
+                
+                c1.markdown(make_card("H1 大盤報價通膨率", f"{market_inflation:+.1f}%", "card-theme-red" if market_inflation > 0 else "card-theme-green"), unsafe_allow_html=True)
+                c2.markdown(make_card("H1 真實叫貨通膨率", f"{real_inflation:+.1f}%", "card-theme-red" if real_inflation > 0 else "card-theme-green"), unsafe_allow_html=True)
+                c3.markdown(make_card("採購防禦指數 (抵銷漲幅)", f"{defense:+.1f}%", "card-theme-green" if defense > 0 else "card-theme-red", help="數值大於0代表我們成功透過改變叫貨比例，規避了部分市場漲價"), unsafe_allow_html=True)
+                
+                # Chart
+                if has_w:
+                    chart_df = index_df.melt(id_vars=['period_str', 'month_label'], value_vars=['index', 'weighted_index'], var_name='index_type', value_name='index_value')
+                    chart_df['index_type'] = chart_df['index_type'].map({'index': '大盤報價指數 (等權重)', 'weighted_index': '真實採購通膨指數 (用量加權)'})
+                    
+                    base = alt.Chart(chart_df).encode(
+                        x=alt.X('period_str:O', title='期別 (1-6月)', axis=alt.Axis(labelAngle=-30)),
+                        y=alt.Y('index_value:Q', title='指數 (基期=100)', scale=alt.Scale(domain=[idx_min, idx_max], zero=False)),
+                        color=alt.Color('index_type:N', legend=alt.Legend(title='指數類型', orient='bottom')),
+                        tooltip=['period_str:N', 'index_type:N', alt.Tooltip('index_value:Q', title='指數', format='.1f')]
+                    )
+                    lines = base.mark_line(point=True, strokeWidth=3).encode(
+                        strokeDash=alt.condition(alt.datum.index_type == '大盤報價指數 (等權重)', alt.value([5, 5]), alt.value([0]))
+                    )
+                    text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+                        text=alt.Text('index_value:Q', format='.1f')
+                    )
+                    st.altair_chart((lines + text).properties(height=350), use_container_width=True)
+            
+            st.divider()
+            
+            # 區塊 2: 報價漲跌幅排行榜
+            st.markdown("### 📈 區塊 2：H1 報價漲跌幅極端排行")
+            st.caption("分析 H1 (最後一期 vs 第一期) 供應商單價的絕對變化")
+            
+            # 找出有出現在第一期與最後一期的品項
+            first_period = sp_h1['period_dt'].min()
+            last_period = sp_h1['period_dt'].max()
+            
+            df_first = sp_h1[sp_h1['period_dt'] == first_period][['item_name', 'price', 'unit']].drop_duplicates('item_name')
+            df_last = sp_h1[sp_h1['period_dt'] == last_period][['item_name', 'price', 'unit']].drop_duplicates('item_name')
+            
+            df_compare = pd.merge(df_first, df_last, on='item_name', suffixes=('_start', '_end'))
+            df_compare['price_diff'] = df_compare['price_end'] - df_compare['price_start']
+            df_compare['price_pct'] = (df_compare['price_diff'] / df_compare['price_start']) * 100
+            
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.markdown("#### 🔥 H1 暴漲 Top 5")
+                df_up = df_compare.sort_values(by='price_pct', ascending=False).head(5)
+                st.dataframe(df_up[['item_name', 'price_start', 'price_end', 'price_pct']].style.format({'price_start': '{:.1f}', 'price_end': '{:.1f}', 'price_pct': '{:+.1f}%'}), hide_index=True)
+                
+            with col_t2:
+                st.markdown("#### 🧊 H1 暴跌 Top 5")
+                df_down = df_compare.sort_values(by='price_pct', ascending=True).head(5)
+                st.dataframe(df_down[['item_name', 'price_start', 'price_end', 'price_pct']].style.format({'price_start': '{:.1f}', 'price_end': '{:.1f}', 'price_pct': '{:+.1f}%'}), hide_index=True)
+
+            st.divider()
+            
+            # 區塊 3: 叫貨依賴度 vs 價格波動矩陣
+            st.markdown("### 🎯 區塊 3：H1 叫貨象限矩陣 (依賴度 vs 波動率)")
+            st.caption("透過結合「歷史叫貨總量」與「供應商報價波動率 (標準差/均價)」，找出需要優先管理或尋找替代品的食材。")
+            
+            if not df_hist_h1.empty and len(weights_dict) > 0:
+                # 計算報價波動率
+                volatility = sp_h1.groupby('item_name')['price'].agg(['std', 'mean']).reset_index()
+                volatility['volatility_pct'] = (volatility['std'] / volatility['mean']) * 100
+                volatility['volatility_pct'] = volatility['volatility_pct'].fillna(0)
+                
+                # 合併叫貨量
+                volatility['total_qty'] = volatility['item_name'].map(weights_dict).fillna(0)
+                
+                # 只分析有叫貨且有報價的品項
+                matrix_df = volatility[volatility['total_qty'] > 0].copy()
+                
+                if not matrix_df.empty:
+                    med_vol = matrix_df['volatility_pct'].median()
+                    med_qty = matrix_df['total_qty'].median()
+                    
+                    def get_quadrant(row):
+                        if row['volatility_pct'] > med_vol and row['total_qty'] > med_qty: return "高依賴/高波動 (危險)"
+                        elif row['volatility_pct'] <= med_vol and row['total_qty'] > med_qty: return "高依賴/低波動 (基石)"
+                        elif row['volatility_pct'] > med_vol and row['total_qty'] <= med_qty: return "低依賴/高波動 (投機)"
+                        else: return "低依賴/低波動 (常規)"
+                        
+                    matrix_df['Quadrant'] = matrix_df.apply(get_quadrant, axis=1)
+                    
+                    scatter = alt.Chart(matrix_df).mark_circle(size=80).encode(
+                        x=alt.X('volatility_pct:Q', title='價格波動率 (%)', scale=alt.Scale(zero=False)),
+                        y=alt.Y('total_qty:Q', title='H1 叫貨總量', scale=alt.Scale(zero=False, type='symlog')),
+                        color=alt.Color('Quadrant:N', scale=alt.Scale(domain=['高依賴/高波動 (危險)', '高依賴/低波動 (基石)', '低依賴/高波動 (投機)', '低依賴/低波動 (常規)'], range=['#e74c3c', '#2ecc71', '#f39c12', '#95a5a6'])),
+                        tooltip=['item_name:N', alt.Tooltip('volatility_pct:Q', format='.1f'), alt.Tooltip('total_qty:Q', format='.1f'), 'Quadrant:N']
+                    )
+                    
+                    # 十字線
+                    rule_x = alt.Chart(pd.DataFrame({'x': [med_vol]})).mark_rule(strokeDash=[5,5], color='gray').encode(x='x:Q')
+                    rule_y = alt.Chart(pd.DataFrame({'y': [med_qty]})).mark_rule(strokeDash=[5,5], color='gray').encode(y='y:Q')
+                    
+                    st.altair_chart((scatter + rule_x + rule_y).properties(height=400, width=800).interactive(), use_container_width=True)
+                    
+                    # 危險清單
+                    danger_items = matrix_df[matrix_df['Quadrant'] == '高依賴/高波動 (危險)'].sort_values(by='total_qty', ascending=False)
+                    if not danger_items.empty:
+                        st.warning(f"⚠️ **需要注意的品項 (高依賴且高波動)**：{', '.join(danger_items.head(10)['item_name'].tolist())}")
+                else:
+                    st.info("無法計算矩陣，可能缺乏足夠的叫貨與報價交集資料。")
+            else:
+                st.info("尚未載入叫貨歷史資料，無法產生象限矩陣。")
 
 if current_hotel != "採購":
     if selected_page == "👥 人事概況":
