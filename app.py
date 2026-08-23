@@ -2041,6 +2041,258 @@ def minguo_to_western(d_str):
     return None
 
 
+# ---------------------------------------------------------
+# 新增功能：匯出本月完整數據報告 (Markdown)
+# ---------------------------------------------------------
+def generate_monthly_export(year, month):
+    import datetime
+    import calendar
+    from io import StringIO
+    import pandas as pd
+    
+    out = StringIO()
+    month_str = f"{year}-{month:02d}"
+    out.write(f"# 📊 Hotel Master 月份數據報告\n")
+    out.write(f"## 月份：{year}年{month}月 ({month_str})\n")
+    out.write(f"## 飯店：{current_hotel}\n")
+    out.write(f"## 匯出時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    out.write("---\n\n")
+    
+    # 1. 月分析專區
+    out.write("# 第一部分：月分析專區\n\n")
+    msum = fetch_month_summary(year, month)
+    ly_sum = fetch_month_summary(year-1, month)
+    
+    out.write("## 本月核心 KPI\n")
+    out.write(f"- 平均 ADR：NT$ {int(msum['avg_adr']):,}\n")
+    out.write(f"- 平均 OCC：{msum['avg_occ']:.1f}%\n")
+    out.write(f"- RevPAR：NT$ {int(msum['revpar']):,}\n")
+    out.write(f"- 月總客房營收：NT$ {int(msum['rev']):,}\n")
+    out.write(f"- OCC ≥ 90% 天數：{msum.get('occ90_days', 0)} 天\n\n")
+    
+    out.write("## YoY 比較 (vs 去年同月)\n")
+    if not ly_sum['df'].empty:
+        adr_diff = msum['avg_adr'] - ly_sum['avg_adr']
+        adr_pct = (adr_diff / ly_sum['avg_adr'] * 100) if ly_sum['avg_adr'] > 0 else 0
+        occ_diff = msum['avg_occ'] - ly_sum['avg_occ']
+        rev_diff = msum['rev'] - ly_sum['rev']
+        rev_pct = (rev_diff / ly_sum['rev'] * 100) if ly_sum['rev'] > 0 else 0
+        
+        out.write(f"- ADR：{'+' if adr_diff>=0 else ''}NT$ {int(adr_diff):,} ({'+' if adr_pct>=0 else ''}{adr_pct:.1f}%)\n")
+        out.write(f"- OCC：{'+' if occ_diff>=0 else ''}{occ_diff:.1f}%\n")
+        out.write(f"- 營收：{'+' if rev_diff>=0 else ''}NT$ {int(rev_diff):,} ({'+' if rev_pct>=0 else ''}{rev_pct:.1f}%)\n\n")
+    else:
+        out.write("無去年同月資料\n\n")
+        
+    out.write("---\n\n")
+    
+    # 2. 採購分析
+    out.write("# 第二部分：採購分析\n\n")
+    try:
+        df_pur = get_purchase_data_cached()
+    except Exception:
+        df_pur = None
+    if df_pur is not None and not df_pur.empty:
+        df_pur.columns = df_pur.columns.astype(str).str.strip()
+        date_col = next((c for c in df_pur.columns if '日期' in c or 'Date' in c), None)
+        dept_col = next((c for c in df_pur.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
+        total_col = next((c for c in df_pur.columns if '小計' in c or '金額' in c or 'Total' in c), None)
+        
+        if date_col and dept_col and total_col:
+            def robust_date_parse(val):
+                if pd.isna(val): return None
+                s = str(val).strip().replace('.0', '')
+                if not s or s in ('nan', 'None', 'NaT'): return None
+                if '/' in s: 
+                    try:
+                        return minguo_to_western(s)
+                    except:
+                        pass
+                import re as _re_dp
+                if _re_dp.match(r'^\d{6}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m').date()
+                    except: pass
+                if _re_dp.match(r'^\d{8}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m%d').date()
+                    except: pass
+                try: return pd.to_datetime(val).date()
+                except: return None
+
+            df_pur['_date'] = df_pur[date_col].apply(robust_date_parse)
+            df_pur['_ym'] = pd.to_datetime(df_pur['_date']).dt.strftime('%Y-%m')
+            
+            df_pur_m = df_pur[df_pur['_ym'] == month_str].copy()
+            
+            if not df_pur_m.empty:
+                df_pur_m[dept_col] = df_pur_m[dept_col].fillna("未分類").astype(str).str.strip()
+                df_pur_m[total_col] = pd.to_numeric(df_pur_m[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                
+                total_amt = df_pur_m[total_col].sum()
+                out.write(f"## 本月採購總覽\n")
+                out.write(f"- 總採購金額：NT$ {int(total_amt):,}\n")
+                out.write(f"- 採購筆數：{len(df_pur_m)} 筆\n")
+                out.write(f"- 採購部門數：{df_pur_m[dept_col].nunique()} 個\n\n")
+                
+                out.write(f"## 各部門採購金額\n")
+                out.write("| 部門 | 金額 | 佔比 |\n|:---|---:|---:|\n")
+                dept_sum = df_pur_m.groupby(dept_col)[total_col].sum().sort_values(ascending=False)
+                for dept, amt in dept_sum.items():
+                    pct = (amt / total_amt * 100) if total_amt > 0 else 0
+                    out.write(f"| {dept} | NT$ {int(amt):,} | {pct:.1f}% |\n")
+                out.write("\n")
+            else:
+                out.write("本月無採購資料。\n\n")
+        else:
+            out.write("採購資料欄位解析失敗。\n\n")
+    else:
+         out.write("無法讀取採購資料。\n\n")
+         
+    out.write("---\n\n")
+    
+    # 3. 菜價分析
+    out.write("# 第三部分：菜價分析\n\n")
+    try:
+        sp_df = fetch_supplier_prices()
+    except Exception:
+        sp_df = pd.DataFrame()
+        
+    if not sp_df.empty:
+        sp_df['period_str'] = pd.to_datetime(sp_df['period_dt']).dt.strftime('%Y-%m')
+        # 抓取所有期數
+        sp_df_m = sp_df[sp_df['period_str'] == month_str].copy()
+        
+        # 嘗試計算加權指數
+        weights_dict = {}
+        try:
+            df_hist = fetch_thepeak_daily_purchase_report()
+            if not df_hist.empty:
+                date_col_hist = next((c for c in df_hist.columns if '期' in c or 'Date' in c or 'date' in c.lower() or '時間' in c), None)
+                item_col = next((c for c in df_hist.columns if any(k in c for k in ['品名', '品項', '項目', 'Item', 'item'])), None)
+                qty_col = next((c for c in df_hist.columns if any(k in c for k in ['數量', 'Qty', 'qty'])), None)
+                if date_col_hist and item_col and qty_col:
+                    df_hist['_ym'] = pd.to_datetime(df_hist[date_col_hist], errors='coerce').dt.strftime('%Y-%m')
+                    df_pur_hist = df_hist[df_hist['_ym'] == month_str].copy()
+                    if not df_pur_hist.empty:
+                        pur_amt = pd.to_numeric(df_pur_hist[qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        weights_df = pd.DataFrame({'item': df_pur_hist[item_col].astype(str), 'amt': pur_amt})
+                        weights_dict = weights_df.groupby('item')['amt'].sum().to_dict()
+        except:
+            pass
+            
+        index_df = get_market_index_df(sp_df, weights_dict=weights_dict)
+        if not index_df.empty:
+            idx_m = index_df[index_df['month_label'] == month_str]
+            if not idx_m.empty:
+                idx_row = idx_m.iloc[-1]
+                idx_val = idx_row['index']
+                has_w = 'weighted_index' in index_df.columns
+                w_val = idx_row['weighted_index'] if has_w else idx_val
+                
+                out.write("## 採購通膨指數 (CPG)\n")
+                out.write(f"- 當期真實採購通膨指數 (用量加權)：{w_val:.1f}\n")
+                out.write(f"- 當期大盤報價指數 (等權重)：{idx_val:.1f}\n")
+                out.write(f"- 差異 (加權 vs 大盤)：{w_val - idx_val:+.1f}\n\n")
+            else:
+                out.write("本月無菜價指數資料。\n\n")
+        else:
+             out.write("菜價指數計算失敗。\n\n")
+    else:
+        out.write("無法讀取菜價資料。\n\n")
+        
+    out.write("---\n\n")
+    
+    # 4. 國籍分析
+    out.write("# 第四部分：國籍分析\n\n")
+    try:
+        df_nation = _get_cached_sheet_v3("nationality_report", hotel_type=current_hotel)
+    except Exception:
+        df_nation = None
+        
+    if df_nation is not None and not df_nation.empty:
+        # 清理並篩選
+        df_n = df_nation.copy()
+        if '年' in df_n.columns and '月' in df_n.columns:
+            df_n['年'] = pd.to_numeric(df_n['年'], errors='coerce')
+            df_n['月'] = pd.to_numeric(df_n['月'], errors='coerce')
+            df_nm = df_n[(df_n['年'] == year) & (df_n['月'] == month)].copy()
+            
+            if not df_nm.empty:
+                val_col = next((c for c in df_nm.columns if '住宿天數' in c or 'Room Nights' in c or 'Nights' in c), None)
+                nat_col = next((c for c in df_nm.columns if '國別' in c or 'Nationality' in c or '國家' in c), None)
+                if val_col and nat_col:
+                    df_nm[val_col] = pd.to_numeric(df_nm[val_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    total_nights = df_nm[val_col].sum()
+                    out.write(f"## 本月總住宿天數：{int(total_nights):,} 晚\n\n")
+                    
+                    df_nm = df_nm.sort_values(by=val_col, ascending=False)
+                    out.write("## 國籍排名 Top 10\n")
+                    out.write("| 排名 | 國籍 | 住宿天數 | 佔比 |\n|:---|:---|---:|---:|\n")
+                    for i, row in enumerate(df_nm.head(10).itertuples()):
+                        rn = getattr(row, val_col)
+                        pct = (rn / total_nights * 100) if total_nights > 0 else 0
+                        out.write(f"| {i+1} | {getattr(row, nat_col)} | {int(rn):,} | {pct:.1f}% |\n")
+                    out.write("\n")
+            else:
+                 out.write("本月無國籍資料。\n\n")
+        else:
+            out.write("國籍資料欄位解析失敗 (需有 '年' 與 '月' 欄位)。\n\n")
+    else:
+        out.write("無法讀取國籍資料。\n\n")
+        
+    out.write("---\n\n")
+    
+    # 5. 渠道分析
+    out.write("# 第五部分：渠道分析\n\n")
+    try:
+        df_channel = _get_cached_sheet_v3("marketing_channel_data", hotel_type=current_hotel)
+    except Exception:
+        df_channel = None
+        
+    if df_channel is not None and not df_channel.empty:
+        df_c = df_channel.copy()
+        if '年' in df_c.columns and '月' in df_c.columns:
+            df_c['年'] = pd.to_numeric(df_c['年'], errors='coerce')
+            df_c['月'] = pd.to_numeric(df_c['月'], errors='coerce')
+            df_cm = df_c[(df_c['年'] == year) & (df_c['月'] == month)].copy()
+            
+            if not df_cm.empty:
+                rn_col = next((c for c in df_cm.columns if 'Room Nights' in c or '住宿天數' in c), None)
+                rev_col = next((c for c in df_cm.columns if 'Revenue' in c or '營收' in c), None)
+                ch_col = next((c for c in df_cm.columns if 'Channel' in c or '渠道' in c or '來源' in c), None)
+                
+                if ch_col and rn_col and rev_col:
+                    df_cm[rn_col] = pd.to_numeric(df_cm[rn_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    df_cm[rev_col] = pd.to_numeric(df_cm[rev_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    
+                    total_rn = df_cm[rn_col].sum()
+                    total_rev = df_cm[rev_col].sum()
+                    
+                    out.write(f"## 渠道總覽\n")
+                    out.write(f"- 總客房營收：NT$ {int(total_rev):,}\n")
+                    out.write(f"- 總住宿天數：{int(total_rn):,} 晚\n\n")
+                    
+                    out.write("## 各渠道佔比與 ADR\n")
+                    out.write("| 渠道 | 營收 | 營收佔比 | 住宿天數 | ADR |\n|:---|---:|---:|---:|---:|\n")
+                    df_cm = df_cm.sort_values(by=rev_col, ascending=False)
+                    for row in df_cm.itertuples():
+                        ch = getattr(row, ch_col)
+                        rev = getattr(row, rev_col)
+                        rn = getattr(row, rn_col)
+                        adr = (rev / rn) if rn > 0 else 0
+                        pct = (rev / total_rev * 100) if total_rev > 0 else 0
+                        out.write(f"| {ch} | NT$ {int(rev):,} | {pct:.1f}% | {int(rn):,} | NT$ {int(adr):,} |\n")
+                    out.write("\n")
+            else:
+                 out.write("本月無渠道資料。\n\n")
+        else:
+            out.write("渠道資料欄位解析失敗 (需有 '年' 與 '月' 欄位)。\n\n")
+    else:
+        out.write("無法讀取渠道資料。\n\n")
+        
+    return out.getvalue()
+# ---------------------------------------------------------
+
+
 def fetch_month_summary(year, month):
     import calendar
     m_start = f"{year}-{month:02d}-01"
@@ -2875,6 +3127,30 @@ else:
         "🏔️ The Peak 專案總評", "💡 專案：免費服務成本優化"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
+
+st.sidebar.divider()
+st.sidebar.subheader("📥 資料匯出")
+export_date = st.session_state.get('sidebar_date', datetime.datetime.now())
+export_month_str = f"{export_date.year}-{export_date.month:02d}"
+
+if st.sidebar.button("📤 匯出本月完整數據報告", use_container_width=True, help="匯出 5 個頁面的核心數據，格式為 Markdown，可直接貼入 AI 進行分析。"):
+    with st.spinner(f"正在彙整 {export_month_str} 的數據報告..."):
+        try:
+            md_content = generate_monthly_export(export_date.year, export_date.month)
+            st.sidebar.download_button(
+                label="✅ 點此下載 Markdown 報告",
+                data=md_content,
+                file_name=f"Hotel_月份報告_{export_month_str}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                type="primary"
+            )
+            st.sidebar.success("✅ 報告生成成功！請點擊上方『點此下載』按鈕取得檔案。")
+            st.sidebar.info("💡 下載後，可將 .md 檔案直接上傳到 NotebookLM 或 ChatGPT。")
+        except Exception as e:
+            st.sidebar.error(f"報告生成失敗: {str(e)}")
+            import traceback
+            st.sidebar.code(traceback.format_exc())
 
 
 if current_hotel != "採購":
