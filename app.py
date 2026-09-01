@@ -4736,17 +4736,8 @@ if selected_page == "💰 採購分析":
                 df_purchase['日期'] <= m_end)].copy()
 
             if df_month.empty and not df_purchase.empty:
-                # 找不到當月資料時，自動退回至最新有採購紀錄的月份
-                latest_date = df_purchase['日期'].max()
-                if pd.notna(latest_date):
-                    fallback_start = latest_date.replace(day=1)
-                    _, fb_last_day = calendar.monthrange(latest_date.year, latest_date.month)
-                    fallback_end = latest_date.replace(day=fb_last_day)
-                    df_month = df_purchase[(df_purchase['日期'] >= fallback_start) & (df_purchase['日期'] <= fallback_end)].copy()
-                    st.info(
-                        f"💡 **資料提示**：您所選的 **{selected_date.strftime('%Y-%m')}** 尚無採購紀錄，"
-                        f"系統已自動切換至最新有資料之月份 **{latest_date.strftime('%Y-%m')}** 進行完整分析。"
-                    )
+                # 移除自動回溯邏輯，避免跨月數據污染 (例如 9月拉到 8月的採購)
+                pass
 
             # ===== TEMP DEBUG: 強制顯示 4FHH 資料追蹤 =====
             _hh_raw = fetch_4fhh_daily_purchase_report()
