@@ -1,4 +1,4 @@
-import traceback
+﻿import traceback
 import streamlit as st
 
 # --- Gspread Retry Patch ---
@@ -5386,19 +5386,31 @@ if selected_page == "💰 採購分析":
                     help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
                 )
 
-            # --- 回歸原始邏輯：嚴格區分月份，完全以「本月 MTD 實際消耗」推算未來，不跨月借用數據 ---
-            if 'peak_spent' in locals() and peak_spent > 0 and 'hist_bf' in locals() and (hist_bf + k_val * hist_af) > 0:
-                future_cb = peak_spent / (hist_bf + k_val * hist_af)
-                future_ca = k_val * future_cb
-                used_rate_source = f"本月 MTD 實際消耗推算 (早 NT${future_cb:.0f} / 午 NT${future_ca:.0f})"
-            else:
-                future_cb = target_cpg
-                future_ca = target_cpg
-                used_rate_source = f"設定目標值 (NT${int(target_cpg)})"
+            # --- 深度優化版方案 B：庫存感知與動態收斂模型 (Inventory-Aware Pacing Model) ---
+            # 1. 取得 Baseline CPG (歷史真實體質，若無則用 Target)
+            baseline_cpg = fallback_cpg if fallback_cpg > 0 else target_cpg
             
-            expected_future_spend = (adj_future_bf * future_cb) + (adj_future_af * future_ca)
-            projected_eom_cost = peak_spent + expected_future_spend
+            # 2. 模擬全月總耗損 (Expected Total Consumption)
+            expected_total_consumption = total_est_guests * baseline_cpg
+            
+            # 3. 推算真實剩餘採購需求 (Cash-Flow Catch-up)
+            # 確保不會算出負的採購需求，若已花費大於預期總耗損，則不再叫貨(0)
+            remaining_purchases_needed = max(0, expected_total_consumption - peak_spent)
+            
+            # 4. 動態預估落點總成本與 CPG
+            projected_eom_cost = peak_spent + remaining_purchases_needed
             projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
+            cpg_delta = projected_cpg - target_cpg
+            
+            # 為了儀表板顯示，將預估的 projected_cpg 按照 k 值拆解給早午餐
+            if (hist_bf + k_val * hist_af) > 0:
+                proj_cb = projected_eom_cost / (hist_bf + k_val * hist_af)
+                proj_ca = k_val * proj_cb
+            else:
+                proj_cb = projected_cpg
+                proj_ca = projected_cpg
+                
+            used_rate_source = f"庫存感知收斂模型 (基線 NT${int(baseline_cpg)})"
             cpg_delta = projected_cpg - target_cpg
             
             if projected_cpg > target_cpg * 1.05:
