@@ -11697,6 +11697,16 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
                 if pd.isna(val): return None
                 s = str(val).strip().replace('.0', '')
                 if not s or s in ('nan', 'None', 'NaT'): return None
+                if '/' in s:
+                    res = minguo_to_western(s)
+                    if res: return pd.to_datetime(res).strftime('%Y-%m')
+                import re as _re_dp
+                if _re_dp.match(r'^\d{6}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m').strftime('%Y-%m')
+                    except: pass
+                if _re_dp.match(r'^\d{8}$', s):
+                    try: return pd.to_datetime(s, format='%Y%m%d').strftime('%Y-%m')
+                    except: pass
                 try: return pd.to_datetime(val).strftime('%Y-%m')
                 except: return None
             
