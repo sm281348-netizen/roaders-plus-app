@@ -11731,8 +11731,8 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
             else:
                 df_t['_amt'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 all_depts = df_t[dept_col].astype(str).unique().tolist()
-                t_hh = [d for d in all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡飲時刻'])]
-                t_peak = [d for d in all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                t_hh = [d for d in all_depts if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡飲時刻'])]
+                t_peak = [d for d in all_depts if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
                 peak_spent = df_t[df_t[dept_col].isin(t_peak)]['_amt'].sum()
                 hh_spent = df_t[df_t[dept_col].isin(t_hh)]['_amt'].sum()
                 
