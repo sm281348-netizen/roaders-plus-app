@@ -10166,46 +10166,178 @@ def render_report_tab():
     st.markdown("---")
     st.subheader("🤖 7. 自動檢討評語 (Auto-Generated Summary)")
     
+    # -------------------------------------------------------------
+    # 1. 數據基線對齊與收益管理歸因拆解 (Yield Attribution)
+    # -------------------------------------------------------------
+    adr_ly = ly_summary.get('avg_adr', 0.0)
+    has_ly_data = bool(ly_summary.get('revpar', 0.0) > 0 and adr_ly > 0 and occ_ly > 0)
+    
+    adr_yoy_diff = (adr_val - adr_ly) if has_ly_data else 0.0
+    impact_adr = 0.0
+    impact_occ = 0.0
+    if has_ly_data:
+        impact_adr = adr_yoy_diff * ((occ_val + occ_ly) / 200.0)
+        impact_occ = (occ_diff / 100.0) * ((adr_val + adr_ly) / 2.0)
+        
+    # -------------------------------------------------------------
+    # 2. 收益四象限戰略定位評級 (Strategic Positioning Matrix)
+    # -------------------------------------------------------------
+    cpg_over = (cpg_actual > cpg_target)
+    budget_deficit = (m_est_budget_rem < 0)
+    
+    quadrant_title = "穩健營運型"
+    quadrant_desc = "營運指標維持在常規水準，建議持續鞏固既有基礎。"
+    quadrant_color = "#3498db"
+    
+    if has_ly_data:
+        if revpar_diff >= 0:
+            if adr_yoy_diff >= 0 and occ_diff >= -0.5:
+                if occ_diff > 0.5:
+                    quadrant_title = "價量俱揚型 (爆發成長)"
+                    quadrant_desc = f"住房率 ({occ_val:.1f}%, +{occ_diff:.1f}%) 與房價 (+NT$ {int(adr_yoy_diff):,}) 雙軌齊揚，帶動每房收益 (RevPAR) 較去年同期激增 +NT$ {int(revpar_diff):,}。市場集客動能極強，營運已逼近承載上限。"
+                    quadrant_color = "#2ecc71"
+                else:
+                    quadrant_title = "優質利潤型 (以價補量)"
+                    quadrant_desc = f"住房率穩守在 {occ_val:.1f}% 之極高水準 (同期波動僅 {occ_diff:+.1f}% 屬健康隨機調節)，受惠於平均房價大幅推升至 NT$ {int(adr_val):,} (+NT$ {int(adr_yoy_diff):,})，帶動每房收益 (RevPAR) 逆勢成長 +NT$ {int(revpar_diff):,}。策略成功過濾低價客群，降低房務清潔與備品變動成本，營業毛利實質擴大。"
+                    quadrant_color = "#27ae60"
+            elif adr_yoy_diff >= 0 and occ_diff < -0.5:
+                quadrant_title = "優質利潤型 (以價補量)"
+                quadrant_desc = f"雖住房率小幅調節 {occ_diff:.1f}%，但平均房價顯著上揚 (+NT$ {int(adr_yoy_diff):,})，價格帶動效應完全抵銷少賣客房之影響，RevPAR 仍淨增 +NT$ {int(revpar_diff):,}。成功實現以價制量，營運體質強健。"
+                quadrant_color = "#27ae60"
+            else:
+                quadrant_title = "薄利多銷型 (流量推升)"
+                quadrant_desc = f"藉由價格讓利帶動住房率推升 (+{occ_diff:.1f}%)，雖帶動 RevPAR 增長 +NT$ {int(revpar_diff):,}，但客房周轉率提高使水電及備品耗損增加，需防範毛利被變動成本侵蝕。"
+                quadrant_color = "#f39c12"
+        else:
+            if adr_yoy_diff >= 0 and occ_diff < 0:
+                quadrant_title = "價格抗性型 (失衡緊縮)"
+                quadrant_desc = f"房價雖逆勢調升 (+NT$ {int(adr_yoy_diff):,})，但引發市場抗性導致住房率跌幅過深 ({occ_diff:.1f}%)，房價增幅不足以彌補客源流失，整體 RevPAR 較去年同期衰退 -NT$ {abs(int(revpar_diff)):,}。"
+                quadrant_color = "#e67e22"
+            elif adr_yoy_diff < 0 and occ_diff >= 0:
+                quadrant_title = "無效讓利型 (過度削價)"
+                quadrant_desc = f"降價讓利促銷雖保住部分人流 (OCC {occ_diff:+.1f}%)，但嚴重犧牲單房收益，RevPAR 仍較去年同期衰退 -NT$ {abs(int(revpar_diff)):,}，陷入做白工風險。"
+                quadrant_color = "#e74c3c"
+            else:
+                quadrant_title = "結構承壓型 (全面警訊)"
+                quadrant_desc = f"量價齊跌 (OCC {occ_diff:+.1f}%, ADR 較去年 -NT$ {abs(int(adr_yoy_diff)):,})，整體 RevPAR 大幅衰退 -NT$ {abs(int(revpar_diff)):,}，需立即啟動渠道重整與產品價值再造。"
+                quadrant_color = "#c0392b"
+                
+    # 若為利潤型但餐飲成本爆量，增加警語補充
+    if "優質利潤" in quadrant_title and (cpg_over or budget_deficit):
+        quadrant_desc += " ⚠️ 【注意】雖房費收益表現優異，惟餐飲端出現成本超標或預估赤字，部分侵蝕了客房溢價帶來的利潤紅利，需強化後勤控管。"
+
+    # -------------------------------------------------------------
+    # 3. 智慧化指標診斷 (去除雜訊，聚焦實質價值與真隱患)
+    # -------------------------------------------------------------
     good_pts = []
     bad_pts = []
     
-    if occ_diff > 0: good_pts.append(f"住房率 (OCC) 達 {occ_val:.1f}%，超越去年同期 (+{occ_diff:.1f}%)。")
-    else: bad_pts.append(f"住房率 (OCC) 為 {occ_val:.1f}%，較去年同期衰退 ({occ_diff:.1f}%)，需留意集客力。")
-    
-    if adr_diff >= 0: good_pts.append(f"平均房價 (ADR) 表現亮眼 (NT$ {int(adr_val):,})，高於年度平均基準。")
-    else: bad_pts.append(f"平均房價 (ADR) (NT$ {int(adr_val):,}) 低於年度平均基準，可能受到淡季或促銷影響。")
-    
-    if cpg_actual > cpg_target: bad_pts.append(f"食材成本 (CPG) 超標，實際 NT$ {int(cpg_actual)} 高於目標 NT$ {int(cpg_target)}。")
-    else: good_pts.append(f"食材成本 (CPG) 控制得宜，維持在目標 NT$ {int(cpg_target)} 內。")
-    
-    if idx_diff > 0: bad_pts.append(f"大盤物價指數較上月上漲 {idx_diff:.1f}，推升採購成本壓力。")
-    
-    if m_est_budget_rem < 0:
-        bad_pts.append(f"The Peak 餐飲成本預估將超支 NT$ {abs(int(m_est_budget_rem)):,}，請緊急檢視用量與耗損。")
+    # (A) OCC 智慧判讀
+    if abs(occ_diff) <= 0.5 or (occ_val >= 85.0 and occ_diff >= -1.5):
+        good_pts.append(f"住房率 (OCC) 穩居高檔：全月達 {occ_val:.1f}% (去年同期 {occ_ly:.1f}%)，{f'微幅波動 {occ_diff:+.1f}% 屬良性客群篩選與正常統計雜訊' if occ_diff < 0 else f'較去年同期微幅成長 +{occ_diff:.1f}%'}，客房稼動效率極佳。")
+    elif occ_diff > 0.5:
+        good_pts.append(f"住房率 (OCC) 突破成長：達 {occ_val:.1f}%，較去年同期顯著躍升 +{occ_diff:.1f}%，市場需求與集客轉換強勁。")
     else:
-        good_pts.append(f"The Peak 餐飲成本預估結餘 NT$ {int(m_est_budget_rem):,}，符合預算控制範圍。")
+        bad_pts.append(f"住房率 (OCC) 顯著承壓：本月跌至 {occ_val:.1f}% (衰退 {occ_diff:.1f}%)，平日住房需求與集客轉化動能需加強關注。")
         
-    if m_r_ratio > lm_r_ratio and m_r_ratio > 0:
-        bad_pts.append(f"The Peak 成本佔房費營收比攀升至 {m_r_ratio:.1f}% (上月 {lm_r_ratio:.1f}%)，餐飲對整體利潤的侵蝕度擴大。")
-    elif m_r_ratio <= lm_r_ratio and m_r_ratio > 0:
-        good_pts.append(f"The Peak 成本佔房費營收比為 {m_r_ratio:.1f}% (上月 {lm_r_ratio:.1f}%)，利潤侵蝕度獲得控制。")
-    
-    
-    summary_text = f"""**【{year}年{month}月 營運總結報告】**
+    # (B) ADR 智慧判讀
+    if has_ly_data and adr_yoy_diff >= 0:
+        good_pts.append(f"平均房價 (ADR) 創價能力亮眼：本月達 NT$ {int(adr_val):,} (較去年同期增加 +NT$ {int(adr_yoy_diff):,}，高於年度平均基準 +NT$ {int(adr_diff):,})，定價護城河穩固。")
+    elif adr_diff >= 0:
+        good_pts.append(f"平均房價 (ADR) 表現穩健：本月達 NT$ {int(adr_val):,}，高於年度平均基準 (+NT$ {int(adr_diff):,})。")
+    else:
+        bad_pts.append(f"平均房價 (ADR) 承受折價壓力：本月 NT$ {int(adr_val):,} 低於年度基準 (-NT$ {abs(int(adr_diff)):,}){f'，較去年同期下滑 -NT$ {abs(int(adr_yoy_diff)):,}' if has_ly_data else ''}，需檢視促銷專案是否過度稀釋價格。")
+        
+    # (C) 餐飲與成本端 (連動防呆)
+    if cpg_over:
+        bad_pts.append(f"食材成本 (CPG) 超出警戒線：實際每客食材成本 NT$ {int(cpg_actual)} 高於目標 NT$ {int(cpg_target)} (每客超額 +NT$ {int(cpg_actual - cpg_target)})，需嚴密檢視廚房出餐損耗與高單價食材領料。")
+    else:
+        good_pts.append(f"食材成本 (CPG) 控制得宜：本月實際 NT$ {int(cpg_actual)} 嚴格鎖定在目標 NT$ {int(cpg_target)} 防線內，餐飲利潤防護良好。")
+        
+    if budget_deficit:
+        bad_pts.append(f"The Peak 餐飲成本預估落點赤字：月底預估將超支 NT$ {abs(int(m_est_budget_rem)):,}，請緊急檢視用量節奏並啟動非必要採購動態收斂。")
+    else:
+        good_pts.append(f"The Peak 預算控制穩健：預估月底結餘 NT$ {int(m_est_budget_rem):,}，採購與叫貨節奏符合月度預算防線。")
+        
+    if m_r_ratio > 0 and m_r_ratio > lm_r_ratio and m_r_ratio > 1.2:
+        bad_pts.append(f"餐飲成本佔房費比攀升：升至 {m_r_ratio:.1f}% (上月 {lm_r_ratio:.1f}%)，免費用餐對客房毛利的侵蝕度微幅擴大。")
+            
+    if idx_diff > 1.0:
+        bad_pts.append(f"大盤原物料指數上揚：較上月走高 +{idx_diff:.1f}，採購端需留意下月食材進貨成本轉嫁風險。")
+        
+    # (D) 收益歸因拆解說明
+    attribution_lines = []
+    if has_ly_data:
+        attribution_lines.append(f"- **RevPAR 總體變動**：較去年同期 {'增加' if revpar_diff >= 0 else '減少'} **NT$ {abs(int(revpar_diff)):,}**")
+        attribution_lines.append(f"- **價格效應 (ADR Impact)**：{'帶動' if impact_adr >= 0 else '拖累'} **NT$ {int(impact_adr):+}** (房價變動貢獻)")
+        attribution_lines.append(f"- **住房量能效應 (OCC Impact)**：{'帶動' if impact_occ >= 0 else '拖累'} **NT$ {int(impact_occ):+}** (周轉率變動貢獻)")
+        primary_driver = "平均房價調升 (Price-Driven)" if abs(impact_adr) >= abs(impact_occ) else "客房周轉量能 (Volume-Driven)"
+        attribution_lines.append(f"- **歸因結論**：本期增長動能主要由 **{primary_driver}** 主導。")
+    attribution_text = chr(10).join(attribution_lines)
 
-本月營運結果整體呈現 {'成長' if revpar_diff >= 0 else '衰退'} 趨勢，RevPAR 較去年同期 {'增加' if revpar_diff >= 0 else '減少'} NT$ {abs(int(revpar_diff)):,}。
+    # (E) 專屬精準行動方針 (Tailored Action Plans)
+    if "以價補量" in quadrant_title:
+        action_rev = "【嚴禁盲目降價促銷】目前住房率已在近飽和高檔，當前收益成長高度依賴高 ADR 支撐。平日應堅守價格防線，週末高需求日應大膽調升溢價幅度。"
+        action_cost = "【精準收斂變動成本】趁客數微調之契機，同步落實房務洗滌、備品耗損及 The Peak 叫貨精準化，確保房價帶來的溢價紅利完全沉澱為實質利潤。"
+        action_exp = "【全面強化高價客體驗口碑】現有客群對價格敏感度低、對服務品質要求高，櫃台與房務應聚焦高價值客人的專屬迎賓與細節服務，衝刺 OTA 高分評價。"
+    elif "價量俱揚" in quadrant_title:
+        action_rev = "【大膽推升價格天花板】市場集客動能極強，應立即收緊各通路早鳥低價配額，並拉高週五、週六與特殊展期之 ADR 溢價幅度。"
+        action_cost = "【防止高乘載服務品質滑落】滿房天數激增易造成房務過勞與出餐混亂，需加強現場排班調度與備料準備，防範客訴風險。"
+        action_exp = "【深耕品牌會員與直客訂房】利用滿房紅利，於退房時積極引導住客加入官方會員，降低未來對高佣金 OTA 通路的依賴。"
+    elif "薄利多銷" in quadrant_title:
+        action_rev = "【逐步收斂過度削價專案】住房率已獲支撐，應嘗試以加值套裝 (含下午茶/延退) 代替直接降價，避免品牌定位在市場定錨於低價。"
+        action_cost = "【嚴格防守水電與變動耗損】人流充沛但單房收益薄弱，必須嚴格控管早餐領料與客房耗品，防止做白工導致利潤被稀釋。"
+        action_exp = "【提升館內二次消費創收】強化設施與周邊商品導購，拉高每房額外產值 (TRevPOR)。"
+    else:
+        action_rev = "【全盤檢視價格彈性與通路權重】重新比對競品同級房型定價，適度釋出中階促銷房型，修復平日基本盤住房率。"
+        action_cost = "【全面凍結非必要經常性開支】落實食材零庫存管理與採購比價，嚴控固定與變動成本支出。"
+        action_exp = "【加強主要客源市場專屬包裝】針對當月主力客群精準投遞 OTA 促銷廣告，提振集客轉化率。"
+        
+    action_nation = f"本月主力客群依序為 {', '.join(top_nations) if top_nations else '一般散客'}，建議行銷團隊針對這些市場偏好之預訂週期，提前佈建下季專屬推廣專案。"
 
-**✅ 本月亮點 (Strengths)**
-{chr(10).join(['- ' + p for p in good_pts]) if good_pts else '- 無明顯亮點'}
+    # -------------------------------------------------------------
+    # 4. 組裝專業級 Markdown 總結報告
+    # -------------------------------------------------------------
+    summary_text = f"""**【{current_hotel} {year}年{month}月 營運檢討總結報告】**
 
-**⚠️ 待改善與隱患 (Weaknesses & Threats)**
-{chr(10).join(['- ' + p for p in bad_pts]) if bad_pts else '- 營運狀況平穩，無明顯隱患'}
+### 🎯 本月戰略定位評級：【{quadrant_title}】
+> {quadrant_desc}
 
-**📌 下月建議方向 (Action Plans)**
-- **營收策略**：{'加強平日促銷以提升 OCC' if occ_val < 70 else '在維持 OCC 的前提下，逐步拉升 ADR'}。
-- **成本控制**：{'物價上漲壓力大，建議檢視前十大高單價食材並尋找替代供應商' if idx_diff > 0 or cpg_actual > cpg_target else '維持現有採購節奏'}。
-- **客源開發**：本月主要客群為 {', '.join(top_nations) if top_nations else '未知'}，可針對這些市場推出專屬包裝。
+---
+
+### 📊 核心收益歸因 (Yield Attribution Analysis)
+{attribution_text if attribution_text else "本月因去年同期歷史數據未齊全，暫不套用 YoY 歸因拆解模型。"}
+
+---
+
+### ✅ 本月價值驅動亮點 (Strengths & Value Drivers)
+{chr(10).join(['- ' + p for p in good_pts]) if good_pts else '- 營運表現持平，無突出超標項目。'}
+
+---
+
+### ⚠️ 實質營運隱患與瓶頸 (True Weaknesses & Bottlenecks)
+{chr(10).join(['- ' + p for p in bad_pts]) if bad_pts else '- 本期營運指標穩健健康，無威脅利潤之實質隱患。'}
+
+---
+
+### 📌 下月精準策略方針 (Tailored Action Plans)
+- **營收定價策略**：{action_rev}
+- **成本與品質控管**：{action_cost}
+- **現場體驗與口碑**：{action_exp}
+- **市場客源佈局**：{action_nation}
 """
+
+    # 頁面視覺化呈現 (含戰略定位卡片)
+    st.markdown(f"""
+    <div style="background:rgba(52, 152, 219, 0.08); border-left: 5px solid {quadrant_color}; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;">
+        <div style="font-size:18px; font-weight:bold; color:{quadrant_color}; margin-bottom: 6px;">
+            🎯 本月戰略定位評級：【{quadrant_title}】
+        </div>
+        <div style="font-size:14px; line-height:1.6; color:#e0e0e0;">
+            {quadrant_desc}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown(summary_text)
     
