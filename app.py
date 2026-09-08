@@ -9796,7 +9796,7 @@ def render_report_tab():
             
         m_est_total_guests = hist_guests + future_guests_est
         m_est_landing_cost = peak_spent + (future_guests_est * (cpg_actual if cpg_actual > 0 else last_month_cpg))
-        m_est_budget_rem = (m_est_total_guests * cpg_target) - peak_spent
+        m_est_budget_rem = (m_est_total_guests * cpg_target) - m_est_landing_cost
         
         lm_budget_rem = (lm_hist_guests * cpg_target) - lm_peak_spent
         m2_budget_rem = (m2_fb_data['total_fb_guests'] * cpg_target) - m2_peak_spent if 'm2_peak_spent' in locals() else 0
