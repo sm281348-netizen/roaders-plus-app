@@ -11716,18 +11716,24 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
             if df_t.empty:
                 # Fallback to daily reports if current month is missing
                 df_daily = _get_cached_sheet_v3("thepeak_daily_purchase_report")
-                if not df_daily.empty and '採購日期' in df_daily.columns:
-                    df_daily['_ym'] = pd.to_datetime(df_daily['採購日期'], errors='coerce').dt.strftime('%Y-%m')
-                    df_daily_m = df_daily[df_daily['_ym'] == month_str]
-                    if not df_daily_m.empty and '總計' in df_daily_m.columns:
-                        peak_spent = pd.to_numeric(df_daily_m['總計'], errors='coerce').fillna(0).sum()
+                if not df_daily.empty:
+                    d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
+                    p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '總計', '小計'])), None)
+                    if d_col and p_col:
+                        df_daily['_ym'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.strftime('%Y-%m')
+                        df_daily_m = df_daily[df_daily['_ym'] == month_str]
+                        if not df_daily_m.empty:
+                            peak_spent = pd.to_numeric(df_daily_m[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
                 
                 df_hh = fetch_4fhh_daily_purchase_report()
-                if not df_hh.empty and '採購日期' in df_hh.columns:
-                    df_hh['_ym'] = pd.to_datetime(df_hh['採購日期'], errors='coerce').dt.strftime('%Y-%m')
-                    df_hh_m = df_hh[df_hh['_ym'] == month_str]
-                    if not df_hh_m.empty and '總計' in df_hh_m.columns:
-                        hh_spent = pd.to_numeric(df_hh_m['總計'], errors='coerce').fillna(0).sum()
+                if not df_hh.empty:
+                    d_col_hh = next((c for c in df_hh.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
+                    p_col_hh = next((c for c in df_hh.columns if any(k in c for k in ['總價', '總計', '小計'])), None)
+                    if d_col_hh and p_col_hh:
+                        df_hh['_ym'] = pd.to_datetime(df_hh[d_col_hh], errors='coerce').dt.strftime('%Y-%m')
+                        df_hh_m = df_hh[df_hh['_ym'] == month_str]
+                        if not df_hh_m.empty:
+                            hh_spent = pd.to_numeric(df_hh_m[p_col_hh].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
             else:
                 df_t['_amt'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 all_depts = df_t[dept_col].astype(str).unique().tolist()
