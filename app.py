@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 import streamlit as st
 
 # --- Gspread Retry Patch ---
@@ -11705,7 +11705,6 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
             
             if df_t.empty:
                 # Fallback to daily reports if current month is missing
-                from app import _get_cached_sheet_v3, fetch_4fhh_daily_purchase_report
                 df_daily = _get_cached_sheet_v3("thepeak_daily_purchase_report")
                 if not df_daily.empty and '採購日期' in df_daily.columns:
                     df_daily['_ym'] = pd.to_datetime(df_daily['採購日期'], errors='coerce').dt.strftime('%Y-%m')
