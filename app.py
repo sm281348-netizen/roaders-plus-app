@@ -11836,7 +11836,9 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
                 '月份': f"{y}-{check_m:02d}",
                 '站前館攤提金額': _month_zq,
                 '主題館攤提金額': _month_th,
-                '當月總成本': _month_zq + _month_th
+                '當月總成本': _month_zq + _month_th,
+                '早餐單客成本(CB)': _cb if _cb > 0 else 0,
+                '下午茶單客成本(CA)': (k_val * _cb) if _cb > 0 else 0
             })
             
         colY1, colY2, colY3 = st.columns(3)
@@ -11856,4 +11858,8 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
             fig.update_layout(title='年度攤提成本累積走勢 (YTD)', xaxis_title='月份', yaxis_title='累積金額 (NT$)', template='plotly_dark', hovermode='x unified')
             st.plotly_chart(fig, use_container_width=True)
             
-            st.dataframe(df_ytd.style.format({'站前館攤提金額': '{:,.0f}', '主題館攤提金額': '{:,.0f}', '當月總成本': '{:,.0f}', '站前館累積': '{:,.0f}', '主題館累積': '{:,.0f}'}))
+            st.dataframe(df_ytd.style.format({
+                '站前館攤提金額': '{:,.0f}', '主題館攤提金額': '{:,.0f}', '當月總成本': '{:,.0f}', 
+                '站前館累積': '{:,.0f}', '主題館累積': '{:,.0f}',
+                '早餐單客成本(CB)': 'NT$ {:,.1f}', '下午茶單客成本(CA)': 'NT$ {:,.1f}'
+            }))
