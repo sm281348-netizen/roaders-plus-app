@@ -1615,7 +1615,11 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
                         'hh_act': hh_act,
                         'peak_guests': bf_act + af_act,
                         'bf_est': bf_est,
-                        'af_est': af_est
+                        'af_est': af_est,
+                        'bf_theme': bf_theme,
+                        'bf_zq': bf_zq,
+                        'af_theme': af_theme,
+                        'af_zq': af_zq
                     })
     except Exception:
         pass
@@ -3124,7 +3128,7 @@ else:
         "💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🧹 房務數據", 
         "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
         "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告",
-        "🏔️ The Peak 專案總評", "💡 專案：免費服務成本優化"
+        "🏔️ The Peak 專案總評", "⚖️ 雙館餐飲成本攤提", "💡 專案：免費服務成本優化"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
 
@@ -11600,3 +11604,241 @@ if selected_page == "🏔️ The Peak 專案總評":
     st.divider()
     st.caption("📌 The Peak 專案總評 | 分析區間：2026/01/01–2026/06/30 | 所有「平均」均使用總量母數計算，禁止平均的平均。")
 
+
+# =====================================================
+# ⚖️ 雙館餐飲成本攤提
+# =====================================================
+if selected_page == "⚖️ 雙館餐飲成本攤提":
+    import pandas as pd
+    import datetime
+    import calendar
+    import plotly.graph_objects as go
+    from streamlit_gsheets import GSheetsConnection
+
+    st.header("⚖️ 雙館餐飲成本攤提 (The Peak & 4FHH)")
+    
+    st.markdown("### ⚙️ 攤提邏輯中控台")
+    k_val = st.slider("早餐/下午茶相對成本轉換 k 值 (1 位下午茶 = k 位早餐)", min_value=1.0, max_value=5.0, value=st.session_state.get('tab_p_k_value', 1.8), step=0.1)
+    
+    st.info(f"**💡 攤提計算邏輯 (方案 C - 雙軌拆帳法)**\n\n"
+            f"1. 依據設定的 k={k_val:.1f}，假定 `1 位下午茶成本 = {k_val:.1f} 位早餐成本`。\n"
+            f"2. 系統將本月的「The Peak 總採購費」依此權重拆解為「早餐總成本」與「下午茶總成本」。\n"
+            f"3. 將「早餐總成本」嚴格依據雙館的早餐客數比例攤提；「下午茶總成本」依據雙館的下午茶客數比例攤提。\n"
+            f"4. **4FHH 攤提**：因現場無法辨識客源，採均分制，固定由雙館各承擔 50%。")
+    
+    # 建立快取的單次抓取模組 (避免 YTD 迴圈打爆 API)
+    @st.cache_data(ttl=3600)
+    def fetch_all_fb_data_for_year(year):
+        conn_name = "gsheets_station"
+        raw_st = st.connection(conn_name, type=GSheetsConnection)
+        url_st = st.secrets["connections"][conn_name]["spreadsheet"]
+        c_st = _ConnWrapper(raw_st, url_st)
+        df_report = c_st.read(worksheet="f&b_report", ttl=0)
+        
+        all_rows = []
+        if df_report is not None and not df_report.empty:
+            for _, row in df_report.iterrows():
+                try:
+                    raw_d = row.iloc[0]
+                    if pd.isna(raw_d) or str(raw_d).strip() == '': continue
+                    s = str(raw_d).replace('.0', '').strip()
+                    d_str = None
+                    import re as _re
+                    m1 = _re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+                    if m1:
+                        d_str = f"{m1.group(1)}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
+                    elif s.isdigit() and len(s) == 5:
+                        d_str = (pd.to_datetime('1899-12-30') + pd.to_timedelta(int(s), unit='D')).strftime('%Y-%m-%d')
+                    else:
+                        d_str = pd.to_datetime(raw_d).strftime('%Y-%m-%d')
+                        
+                    if d_str and d_str.startswith(str(year)):
+                        def safe_int(v):
+                            try: return int(float(str(v).replace(',', '').strip()))
+                            except: return 0
+                        all_rows.append({
+                            'date': d_str,
+                            'month': int(d_str.split('-')[1]),
+                            'bf_theme': safe_int(row.iloc[2]) if len(row) > 2 else 0,
+                            'bf_zq': safe_int(row.iloc[4]) if len(row) > 4 else 0,
+                            'af_theme': safe_int(row.iloc[6]) if len(row) > 6 else 0,
+                            'af_zq': safe_int(row.iloc[8]) if len(row) > 8 else 0,
+                            'hh_act': safe_int(row.iloc[9]) if len(row) > 9 else 0
+                        })
+                except:
+                    pass
+        return pd.DataFrame(all_rows)
+
+    def get_monthly_cost_data(y, m):
+        # 1. 抓取 F&B 客數
+        df_fb = fetch_all_fb_data_for_year(y)
+        bf_theme, bf_zq, af_theme, af_zq, hh_act = 0, 0, 0, 0, 0
+        if not df_fb.empty:
+            df_m = df_fb[df_fb['month'] == m]
+            if not df_m.empty:
+                bf_theme = df_m['bf_theme'].sum()
+                bf_zq = df_m['bf_zq'].sum()
+                af_theme = df_m['af_theme'].sum()
+                af_zq = df_m['af_zq'].sum()
+                hh_act = df_m['hh_act'].sum()
+        
+        # 2. 抓取採購成本 (與採購分析一致的 fallback 邏輯)
+        peak_spent = 0
+        hh_spent = 0
+        df_purchase = get_purchase_data_cached()
+        month_str = f"{y}-{m:02d}"
+        
+        if df_purchase is not None and not df_purchase.empty:
+            date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '類別' in c or '工作地點' in c), None)
+            total_col = next((c for c in df_purchase.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
+            
+            def r_date(val):
+                if pd.isna(val): return None
+                s = str(val).strip().replace('.0', '')
+                if not s or s in ('nan', 'None', 'NaT'): return None
+                try: return pd.to_datetime(val).strftime('%Y-%m')
+                except: return None
+            
+            df_purchase['_ym'] = df_purchase[date_col].apply(r_date)
+            df_t = df_purchase[df_purchase['_ym'] == month_str].copy()
+            
+            if df_t.empty:
+                # Fallback to daily reports if current month is missing
+                from app import _get_cached_sheet_v3, fetch_4fhh_daily_purchase_report
+                df_daily = _get_cached_sheet_v3("thepeak_daily_purchase_report")
+                if not df_daily.empty and '採購日期' in df_daily.columns:
+                    df_daily['_ym'] = pd.to_datetime(df_daily['採購日期'], errors='coerce').dt.strftime('%Y-%m')
+                    df_daily_m = df_daily[df_daily['_ym'] == month_str]
+                    if not df_daily_m.empty and '總計' in df_daily_m.columns:
+                        peak_spent = pd.to_numeric(df_daily_m['總計'], errors='coerce').fillna(0).sum()
+                
+                df_hh = fetch_4fhh_daily_purchase_report()
+                if not df_hh.empty and '採購日期' in df_hh.columns:
+                    df_hh['_ym'] = pd.to_datetime(df_hh['採購日期'], errors='coerce').dt.strftime('%Y-%m')
+                    df_hh_m = df_hh[df_hh['_ym'] == month_str]
+                    if not df_hh_m.empty and '總計' in df_hh_m.columns:
+                        hh_spent = pd.to_numeric(df_hh_m['總計'], errors='coerce').fillna(0).sum()
+            else:
+                df_t['_amt'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                all_depts = df_t[dept_col].astype(str).unique().tolist()
+                t_hh = [d for d in all_depts if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡飲時刻'])]
+                t_peak = [d for d in all_depts if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                peak_spent = df_t[df_t[dept_col].isin(t_peak)]['_amt'].sum()
+                hh_spent = df_t[df_t[dept_col].isin(t_hh)]['_amt'].sum()
+                
+        return {
+            'bf_theme': bf_theme, 'bf_zq': bf_zq, 'af_theme': af_theme, 'af_zq': af_zq, 'hh_act': hh_act,
+            'peak_spent': peak_spent, 'hh_spent': hh_spent
+        }
+
+    # ==========================================
+    # 本月攤提計算
+    # ==========================================
+    y, m = selected_date.year, selected_date.month
+    m_data = get_monthly_cost_data(y, m)
+    
+    # 避免除以 0 的保護機制
+    B_zq, B_th = m_data['bf_zq'], m_data['bf_theme']
+    A_zq, A_th = m_data['af_zq'], m_data['af_theme']
+    B_total = B_zq + B_th
+    A_total = A_zq + A_th
+    
+    # 雙軌法拆解 The Peak 總成本
+    peak_spent = m_data['peak_spent']
+    total_bf_cost = 0
+    total_af_cost = 0
+    if (B_total + k_val * A_total) > 0:
+        cb = peak_spent / (B_total + k_val * A_total)
+        total_bf_cost = cb * B_total
+        total_af_cost = (k_val * cb) * A_total
+        
+    amort_peak_zq = (total_bf_cost * (B_zq / B_total) if B_total > 0 else 0) + (total_af_cost * (A_zq / A_total) if A_total > 0 else 0)
+    amort_peak_th = (total_bf_cost * (B_th / B_total) if B_total > 0 else 0) + (total_af_cost * (A_th / A_total) if A_total > 0 else 0)
+    
+    # 4FHH 50/50 均分
+    hh_spent = m_data['hh_spent']
+    amort_hh_zq = hh_spent * 0.5
+    amort_hh_th = hh_spent * 0.5
+    
+    total_amort_zq = amort_peak_zq + amort_hh_zq
+    total_amort_th = amort_peak_th + amort_hh_th
+    
+    st.markdown(f"### 📅 {y}年 {m}月 當月攤提結算")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("當月 The Peak 總成本", f"NT$ {int(peak_spent):,}")
+    c2.metric("當月 4FHH 總成本", f"NT$ {int(hh_spent):,}")
+    c3.metric("本月應攤提總額", f"NT$ {int(peak_spent + hh_spent):,}")
+    
+    st.markdown("#### 🏢 站前館攤提明細")
+    colA1, colA2, colA3 = st.columns(3)
+    colA1.metric("站前 The Peak 分攤", f"NT$ {int(amort_peak_zq):,}", f"早餐 {B_zq}人 / 下午茶 {A_zq}人", delta_color="off")
+    colA2.metric("站前 4FHH 分攤", f"NT$ {int(amort_hh_zq):,}", f"固定 50%", delta_color="off")
+    colA3.metric("站前館【本月總分攤】", f"NT$ {int(total_amort_zq):,}", f"佔比 {(total_amort_zq / (peak_spent + hh_spent) * 100) if (peak_spent + hh_spent) > 0 else 0:.1f}%", delta_color="off")
+    
+    st.markdown("#### 🎪 主題館攤提明細")
+    colB1, colB2, colB3 = st.columns(3)
+    colB1.metric("主題 The Peak 分攤", f"NT$ {int(amort_peak_th):,}", f"早餐 {B_th}人 / 下午茶 {A_th}人", delta_color="off")
+    colB2.metric("主題 4FHH 分攤", f"NT$ {int(amort_hh_th):,}", f"固定 50%", delta_color="off")
+    colB3.metric("主題館【本月總分攤】", f"NT$ {int(total_amort_th):,}", f"佔比 {(total_amort_th / (peak_spent + hh_spent) * 100) if (peak_spent + hh_spent) > 0 else 0:.1f}%", delta_color="off")
+    
+    st.divider()
+    
+    # ==========================================
+    # YTD 年度攤提計算
+    # ==========================================
+    st.markdown(f"### 📈 {y}年度 (YTD) 累積攤提總成本")
+    with st.spinner("計算 YTD 歷史成本中..."):
+        ytd_zq = 0
+        ytd_th = 0
+        ytd_records = []
+        for check_m in range(1, m + 1):
+            _d = get_monthly_cost_data(y, check_m)
+            _B_zq, _B_th = _d['bf_zq'], _d['bf_theme']
+            _A_zq, _A_th = _d['af_zq'], _d['af_theme']
+            _B_tot = _B_zq + _B_th
+            _A_tot = _A_zq + _A_th
+            
+            _t_bf_cost = 0
+            _t_af_cost = 0
+            if (_B_tot + k_val * _A_tot) > 0:
+                _cb = _d['peak_spent'] / (_B_tot + k_val * _A_tot)
+                _t_bf_cost = _cb * _B_tot
+                _t_af_cost = (k_val * _cb) * _A_tot
+                
+            _am_p_zq = (_t_bf_cost * (_B_zq / _B_tot) if _B_tot > 0 else 0) + (_t_af_cost * (_A_zq / _A_tot) if _A_tot > 0 else 0)
+            _am_p_th = (_t_bf_cost * (_B_th / _B_tot) if _B_tot > 0 else 0) + (_t_af_cost * (_A_th / _A_tot) if _A_tot > 0 else 0)
+            
+            _am_h_zq = _d['hh_spent'] * 0.5
+            _am_h_th = _d['hh_spent'] * 0.5
+            
+            _month_zq = _am_p_zq + _am_h_zq
+            _month_th = _am_p_th + _am_h_th
+            ytd_zq += _month_zq
+            ytd_th += _month_th
+            
+            ytd_records.append({
+                '月份': f"{y}-{check_m:02d}",
+                '站前館攤提金額': _month_zq,
+                '主題館攤提金額': _month_th,
+                '當月總成本': _month_zq + _month_th
+            })
+            
+        colY1, colY2, colY3 = st.columns(3)
+        colY1.metric(f"🏢 站前館 YTD 總攤提", f"NT$ {int(ytd_zq):,}")
+        colY2.metric(f"🎪 主題館 YTD 總攤提", f"NT$ {int(ytd_th):,}")
+        colY3.metric(f"雙館 YTD 總花費", f"NT$ {int(ytd_zq + ytd_th):,}")
+        
+        # 繪製 YTD 累積圖
+        if ytd_records:
+            df_ytd = pd.DataFrame(ytd_records)
+            df_ytd['站前館累積'] = df_ytd['站前館攤提金額'].cumsum()
+            df_ytd['主題館累積'] = df_ytd['主題館攤提金額'].cumsum()
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df_ytd['月份'], y=df_ytd['站前館累積'], mode='lines+markers', name='站前館累積攤提', line=dict(color='#3498db', width=3)))
+            fig.add_trace(go.Scatter(x=df_ytd['月份'], y=df_ytd['主題館累積'], mode='lines+markers', name='主題館累積攤提', line=dict(color='#e74c3c', width=3)))
+            fig.update_layout(title='年度攤提成本累積走勢 (YTD)', xaxis_title='月份', yaxis_title='累積金額 (NT$)', template='plotly_dark', hovermode='x unified')
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.dataframe(df_ytd.style.format({'站前館攤提金額': '{:,.0f}', '主題館攤提金額': '{:,.0f}', '當月總成本': '{:,.0f}', '站前館累積': '{:,.0f}', '主題館累積': '{:,.0f}'}))
