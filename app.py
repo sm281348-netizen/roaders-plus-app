@@ -3654,6 +3654,250 @@ if current_hotel != "採購":
         with col_chart4:
             render_occ_chart(m_next, "(下月)")
 
+        # --- A1. 每日量價結構深度剖析 (Daily Yield & Pricing Diagnostics) ---
+        def render_daily_yield_deep_dive(month_data, sel_date, events_df):
+            df_m = month_data.get('df', pd.DataFrame()).copy()
+            if df_m.empty or 'occ_rate' not in df_m.columns or 'adr' not in df_m.columns:
+                return
+
+            df_m['occ_val'] = pd.to_numeric(df_m['occ_rate'], errors='coerce').fillna(0.0)
+            df_m['adr_val'] = pd.to_numeric(df_m['adr'], errors='coerce').fillna(0.0)
+            df_m['date_dt'] = pd.to_datetime(df_m['date'], errors='coerce')
+            df_m['day'] = df_m['date_dt'].dt.day
+            weekday_map = {0: '一', 1: '二', 2: '三', 3: '四', 4: '五', 5: '六', 6: '日'}
+            df_m['weekday_name'] = df_m['date_dt'].dt.weekday.map(weekday_map)
+            df_m['is_weekend'] = df_m['date_dt'].dt.weekday.isin([4, 5]) # 週五、週六為核心週末
+
+            # 基準線取得
+            c_yr = sel_date.year
+            y_adr, y_pure_adr = fetch_yearly_metrics(c_yr)
+            m_avg_adr = month_data.get('avg_adr', df_m['adr_val'].mean() if not df_m.empty else 0.0)
+            
+            m_lbl = month_data.get('month_label', f"{sel_date.year}-{sel_date.month:02d}")
+            try:
+                y_num, m_num = [int(x) for x in m_lbl.split('-')[:2]]
+            except:
+                y_num, m_num = sel_date.year, sel_date.month
+            holidays_dict = fetch_holidays_for_month(y_num, m_num)
+
+            def _get_event_meta(d_str):
+                import re
+                h_info = holidays_dict.get(d_str, {})
+                h_desc = h_info.get('name', '')
+                h_flags = re.findall(r'\[.*?\]|🌍', h_info.get('flags', ''))
+                e_names = []
+                if events_df is not None and not events_df.empty and 'date' in events_df.columns:
+                    match_e = events_df[events_df['date'] == d_str]
+                    for _, erow in match_e.iterrows():
+                        v_str = str(erow.get('event_name', '')).strip()
+                        if v_str: e_names.append(v_str)
+                all_tags = h_flags + [f"[{n}]" for n in e_names[:2]]
+                return " ".join(all_tags), h_desc, e_names
+
+            # 1. 篩選：低價割肉吸單日 (Sub-Baseline Dumps)
+            dump_rows = []
+            for _, r in df_m.iterrows():
+                d_str = str(r['date'])
+                occ = float(r['occ_val'])
+                adr = float(r['adr_val'])
+                is_wknd = bool(r['is_weekend'])
+                day_num = int(r['day'])
+                wkday = str(r['weekday_name'])
+                tags, h_desc, e_names = _get_event_meta(d_str)
+
+                is_dump = False
+                dump_level = ""
+                loss_baseline = 0.0
+
+                if not is_wknd:
+                    # 平日門檻：OCC >= 75% 且 ADR <= 純平年線 * 1.03 (接近或跌破純平底線)
+                    limit_val = (y_pure_adr * 1.03) if y_pure_adr > 0 else (y_adr * 0.9 if y_adr > 0 else m_avg_adr * 0.85)
+                    if occ >= 75.0 and adr <= limit_val and adr > 0:
+                        is_dump = True
+                        loss_baseline = y_pure_adr if y_pure_adr > 0 else y_adr
+                        if y_pure_adr > 0 and adr < y_pure_adr:
+                            dump_level = "🚨 跌破純平底線"
+                        else:
+                            dump_level = "⚠️ 逼近純平底線"
+                else:
+                    # 週末門檻：OCC >= 85% 但 ADR 跌破年均線
+                    limit_val = y_adr if y_adr > 0 else (m_avg_adr if m_avg_adr > 0 else 3000.0)
+                    if occ >= 85.0 and adr < limit_val and adr > 0:
+                        is_dump = True
+                        loss_baseline = limit_val
+                        dump_level = "⚠️ 週末賤賣失守"
+
+                if is_dump:
+                    diff_per_room = max(0.0, loss_baseline - adr)
+                    cal_context = ""
+                    if m_num == 8 and day_num in [30, 31]:
+                        cal_context = "暑假收尾 / 開學日前夕家庭客急凍，現場恐慌性晚鳥削價吸單"
+                    elif m_num == 8 and day_num in [24, 25, 26, 27, 28]:
+                        cal_context = "8月下旬暑期出遊意願回落，缺乏商務客防線導致破盤"
+                    elif "日" in wkday:
+                        cal_context = "收假日前夕集客疲軟，低價專案過度放量"
+                    else:
+                        cal_context = "平日促銷底價過低，缺乏動態調價閥門"
+
+                    dump_rows.append({
+                        '日期': f"{m_num}/{day_num:02d} ({wkday})",
+                        '住房率': f"{occ:.1f}%",
+                        '實際 ADR': f"NT$ {int(adr):,}",
+                        '基準底線': f"NT$ {int(loss_baseline):,}",
+                        '風險等級': dump_level,
+                        '背景脈絡與診斷': cal_context,
+                        'day': day_num,
+                        'occ': occ,
+                        'adr': adr,
+                        'diff': diff_per_room
+                    })
+
+            # 2. 篩選：活動與節慶溢價收割日 (Event & Peak Compression Yield)
+            peak_rows = []
+            high_adr_cutoff = max(m_avg_adr * 1.15, 4200.0) if m_avg_adr > 0 else 4000.0
+            for _, r in df_m.iterrows():
+                d_str = str(r['date'])
+                occ = float(r['occ_val'])
+                adr = float(r['adr_val'])
+                day_num = int(r['day'])
+                wkday = str(r['weekday_name'])
+                tags, h_desc, e_names = _get_event_meta(d_str)
+
+                if adr >= high_adr_cutoff:
+                    event_summary = ""
+                    if e_names:
+                        event_summary += " / ".join(e_names[:2])
+                    if h_desc:
+                        event_summary = f"{h_desc} " + (f"({event_summary})" if event_summary else "")
+                    if not event_summary:
+                        event_summary = "週末度假人潮集中，散客溢價搶房"
+
+                    premium_pct = ((adr - m_avg_adr) / m_avg_adr * 100) if m_avg_adr > 0 else 0.0
+                    peak_rows.append({
+                        '日期': f"{m_num}/{day_num:02d} ({wkday})",
+                        '住房率': f"{occ:.1f}%",
+                        '尖峰 ADR': f"NT$ {int(adr):,}",
+                        '超越月均價': f"+{premium_pct:.1f}%",
+                        '帶動活動 / 節慶事件': event_summary,
+                        'adr': adr
+                    })
+            peak_rows = sorted(peak_rows, key=lambda x: x['adr'], reverse=True)
+
+            # 3. 旬期拆解模型 (上旬、中旬、下旬)
+            early_df = df_m[df_m['day'] <= 10]
+            mid_df = df_m[(df_m['day'] >= 11) & (df_m['day'] <= 20)]
+            late_df = df_m[df_m['day'] >= 21]
+
+            def _calc_pacing(sub):
+                if sub.empty: return 0.0, 0.0
+                return sub['occ_val'].mean(), sub['adr_val'].mean()
+
+            occ_e, adr_e = _calc_pacing(early_df)
+            occ_m, adr_m = _calc_pacing(mid_df)
+            occ_l, adr_l = _calc_pacing(late_df)
+
+            decay_pct = ((adr_l - adr_m) / adr_m * 100) if adr_m > 0 else 0.0
+
+            # ----------------- UI 渲染 -----------------
+            st.markdown("---")
+            st.markdown(f"#### 🧐 每日量價結構深度剖析：{m_lbl} 收益品質診斷")
+            st.caption("深挖每日長條圖背後之量價脫節、低價割肉吸單與尖峰活動溢價收割表現")
+
+            # 核心思維 Banner
+            st.markdown("""
+            <div style="background: rgba(231, 76, 60, 0.08); border-left: 5px solid #e74c3c; padding: 15px 18px; border-radius: 8px; margin-bottom: 20px;">
+                <div style="font-size: 15px; font-weight: bold; color: #e74c3c; margin-bottom: 5px;">
+                    💡 收益管理核心思維：高住房率 ＋ 低 ADR 絕非值得讚賞的表現！
+                </div>
+                <div style="font-size: 13px; color: #bbb; line-height: 1.6;">
+                    滿房如果伴隨房價跌破年線基準，本質上是<strong>「降價割肉、賠本賺吆喝」</strong>。不僅嚴重稀釋品牌溢價力，更因客滿帶來沉重的房務工時、備品水電消耗與早餐備料壓力，做的是高風險、低毛利的疲勞生意。健全的營收管理必須追求<strong>「在合理稼動下守住價格護城河，並於高需求日全力收割溢價」</strong>。
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 上中下旬走勢儀表
+            st.markdown("##### ⏱️ 全月上、中、下旬走勢節奏監測 (Pacing Purity)")
+            pace_col1, pace_col2, pace_col3 = st.columns(3)
+            with pace_col1:
+                st.markdown(f"""
+                <div style="background:#1e293b; padding:14px; border-radius:8px; border-left:4px solid #3b82f6;">
+                    <p style="margin:0; font-size:12px; color:#94a3b8; font-weight:bold;">上旬 (1 ~ 10日)</p>
+                    <p style="margin:4px 0 0 0; font-size:18px; color:#f8fafc; font-weight:bold;">{occ_e:.1f}% / NT$ {int(adr_e):,}</p>
+                    <p style="margin:4px 0 0 0; font-size:11px; color:#64748b;">開局蓄水期 · 週末支撐</p>
+                </div>
+                """, unsafe_allow_html=True)
+            with pace_col2:
+                st.markdown(f"""
+                <div style="background:#1e293b; padding:14px; border-radius:8px; border-left:4px solid #22c55e;">
+                    <p style="margin:0; font-size:12px; color:#94a3b8; font-weight:bold;">中旬 (11 ~ 20日)</p>
+                    <p style="margin:4px 0 0 0; font-size:18px; color:#f8fafc; font-weight:bold;">{occ_m:.1f}% / NT$ {int(adr_m):,}</p>
+                    <p style="margin:4px 0 0 0; font-size:11px; color:#64748b;">活動集中期 · 溢價收割</p>
+                </div>
+                """, unsafe_allow_html=True)
+            with pace_col3:
+                late_border = "#ef4444" if decay_pct < -8 else "#eab308"
+                late_status = "⚠️ 價格顯著衰竭" if decay_pct < -8 else "穩健收尾"
+                st.markdown(f"""
+                <div style="background:#1e293b; padding:14px; border-radius:8px; border-left:4px solid {late_border};">
+                    <p style="margin:0; font-size:12px; color:#94a3b8; font-weight:bold;">下旬 (21 ~ 底日) <span style="color:{late_border}; font-size:11px;">[{late_status}]</span></p>
+                    <p style="margin:4px 0 0 0; font-size:18px; color:#f8fafc; font-weight:bold;">{occ_l:.1f}% / NT$ {int(adr_l):,}</p>
+                    <p style="margin:4px 0 0 0; font-size:11px; color:{late_border};">較中旬 ADR {decay_pct:+.1f}%</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+            if decay_pct < -8:
+                st.warning(f"⚠️ **【全月走勢虎頭蛇尾警報】** 本月下旬 ADR (NT$ {int(adr_l):,}) 較中旬大幅下挫 **{abs(decay_pct):.1f}%**！前中期的豐厚溢價成果，在月末因集客焦慮與低價吸單遭到嚴重稀釋。需檢討月末現場是否有因業績達標壓力而放任 OTA 破盤清房的傾向。")
+
+            st.write("")
+
+            # 雙區展開剖析
+            sub_tab1, sub_tab2, sub_tab3 = st.tabs([
+                f"🔴 低價割肉吸單日檢討 ({len(dump_rows)} 天)",
+                f"🟢 活動與節慶溢價收割日 ({len(peak_rows)} 天)",
+                "📌 現場收益管理防護方針"
+            ])
+
+            with sub_tab1:
+                if dump_rows:
+                    st.markdown("""
+                    > **🚨 邊際貢獻深度剖析**：
+                    > 扣除每房之房務清潔工資、洗滌費、水電瓦斯、客房耗品與免費早餐食材等**固定變動成本 (約 NT$ 800 ~ 1,000 / 間)** 後，以低於底線的房價賣出，每房實質落袋毛利已被極限壓縮至不到 NT$ 1,800。**看似住房率破 80%~85%，實則全館承擔了滿房損耗，利潤卻被稀釋殆盡！**
+                    """)
+                    df_dump_show = pd.DataFrame(dump_rows)[['日期', '住房率', '實際 ADR', '基準底線', '風險等級', '背景脈絡與診斷']]
+                    st.dataframe(df_dump_show, use_container_width=True, hide_index=True)
+                else:
+                    st.success("🎉 本月未偵測到明顯跌破年線底線的割肉吸單日，定價紀律嚴明！")
+
+            with sub_tab2:
+                if peak_rows:
+                    st.markdown("""
+                    > **🏆 溢價收割成功點評**：
+                    > 成功鎖定強勁的外部展演活動與週末人流，敢於大膽拉升房價天花板、延後關閉高階房型，成功將外部流量轉化為實質的高額現金流，展現高度定價自信！
+                    """)
+                    df_peak_show = pd.DataFrame(peak_rows)[['日期', '住房率', '尖峰 ADR', '超越月均價', '帶動活動 / 節慶事件']]
+                    st.dataframe(df_peak_show, use_container_width=True, hide_index=True)
+                else:
+                    st.info("本月未出現超越月均價 15% 以上的超高溢價日。")
+
+            with sub_tab3:
+                st.markdown(f"""
+                **1. 設立「年線熔斷底價機制 (ADR Circuit Breaker)」**
+                - 嚴格規定平日 OTA 與晚鳥清房價**不得跌破年純平底線 (NT$ {int(y_pure_adr):,})**；週末不得跌破年均線 (NT$ {int(y_adr):,})。
+                - 寧可讓最後 10% 的房間空下以保留房務保養品質，亦嚴禁以每房不到 $1,800 邊際毛利的破盤價賤賣。
+
+                **2. 打破「月末降價衝量」的營運慣性**
+                - 面對開學潮或假期轉換期，家庭客回流是可預期的市場常態。現場應提前 2~3 週啟動商務長住、外籍商務客或加價套票專案，而非在最後 48 小時於 OTA 大幅削價清房。
+
+                **3. 以「增值服務包裝」取代「裸房直接砍價」**
+                - 遇到淡日集客困難，應嘗試贈送延遲退房、免費下午茶或周邊伴手禮等方式維持牌面房價，避免在消費者心目中將飯店定錨為廉價品牌。
+
+                **4. 尖峰活動提早 3~4 週實施階梯鎖價**
+                - 比對大巨蛋、小巨蛋演唱會等超大型活動，在活動公布首週即關閉早鳥促銷房，將房價階梯式拉升至 NT$ 5,500 以上，極大化尖峰收割效益。
+                """)
+
+        # 執行每日量價結構深度剖析
+        render_daily_yield_deep_dive(m_curr, selected_date, taipei_events_df)
+
         # --- A2. 去年同期軌跡對比 (YoY Daily Comparison) ---
         st.markdown("#### 📅 去年同期軌跡對比 (YoY Daily Comparison)")
         if not m_curr['df'].empty and not m_curr_ly['df'].empty:
