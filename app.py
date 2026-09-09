@@ -9909,6 +9909,24 @@ def render_report_tab():
     st.markdown("---")
     st.subheader(f"📊 1. 執行摘要 (Executive Summary) - {year}年{month}月")
     
+    # Revenue Calculation & Compact Formatting
+    def _fmt_compact(val, show_sign=False):
+        if val is None or pd.isna(val): return "0"
+        abs_v = abs(val)
+        sign = ("+" if val > 0 else "-") if show_sign else ("-" if val < 0 else "")
+        if abs_v >= 1_000_000:
+            num = abs_v / 1_000_000
+            return f"{sign}{num:.2f}M" if num < 10 else f"{sign}{num:.1f}M"
+        elif abs_v >= 1_000:
+            return f"{sign}{int(round(abs_v / 1_000))}K"
+        else:
+            return f"{sign}{int(round(abs_v))}"
+            
+    rev_val = curr_summary.get('rev', 0.0)
+    rev_ly = ly_summary.get('rev', 0.0)
+    rev_diff = rev_val - rev_ly
+    rev_status = "🟢 優" if rev_diff >= 0 else "🔴 差"
+    
     occ_val = curr_summary['avg_occ']
     occ_ly = ly_summary['avg_occ']
     occ_diff = occ_val - occ_ly
@@ -9922,10 +9940,12 @@ def render_report_tab():
         adr_diff = adr_val - adr_ly
         adr_delta_label = f"{int(adr_diff):+} vs 去年"
         adr_status = "🟢 優" if adr_diff >= 0 else ("🟡 平" if adr_diff >= -100 else "🔴 差")
+        rev_delta_label = f"{_fmt_compact(rev_diff, show_sign=True)} vs 去年"
     else:
         adr_diff = adr_val - y_adr
         adr_delta_label = f"{int(adr_diff):+} vs 年度均價"
         adr_status = "🟢 優" if adr_val >= y_adr else ("🟡 平" if adr_val >= y_adr*0.9 else "🔴 差")
+        rev_delta_label = "無歷史數據"
     
     revpar_val = curr_summary['revpar']
     revpar_ly = ly_summary['revpar']
@@ -9938,16 +9958,18 @@ def render_report_tab():
     fh_days = curr_summary['occ90_days']
     fh_status = "🟢 優" if fh_days >= 4 else ("🟡 平" if fh_days >= 1 else "🔴 差")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
-        st.metric("本月 OCC", f"{occ_val:.1f}%", f"{occ_diff:+.1f}% vs 去年", help=f"狀態: {occ_status}")
+        st.metric("本月 Revenue", f"NT$ {_fmt_compact(rev_val)}", rev_delta_label, help=f"狀態: {rev_status}")
     with col2:
-        st.metric("本月 ADR", f"NT$ {int(adr_val):,}", adr_delta_label, help=f"狀態: {adr_status}")
+        st.metric("本月 OCC", f"{occ_val:.1f}%", f"{occ_diff:+.1f}% vs 去年", help=f"狀態: {occ_status}")
     with col3:
-        st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", f"{int(revpar_diff):+} vs 去年", help=f"狀態: {revpar_status}")
+        st.metric("本月 ADR", f"NT$ {int(adr_val):,}", adr_delta_label, help=f"狀態: {adr_status}")
     with col4:
-        st.metric("食材 CPG", f"NT$ {int(cpg_actual):,}", f"{int(cpg_actual - cpg_target):+} vs 目標", help=f"狀態: {cpg_status}")
+        st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", f"{int(revpar_diff):+} vs 去年", help=f"狀態: {revpar_status}")
     with col5:
+        st.metric("食材 CPG", f"NT$ {int(cpg_actual):,}", f"{int(cpg_actual - cpg_target):+} vs 目標", help=f"狀態: {cpg_status}")
+    with col6:
         st.metric("滿房天數 (≥90%)", f"{fh_days} 天", f"狀態: {fh_status}")
 
     # CPG Variance UI
@@ -10277,6 +10299,7 @@ def render_report_tab():
     # (D) 收益歸因拆解說明
     attribution_lines = []
     if has_ly_data:
+        attribution_lines.append(f"- **總客房營收 (Revenue)**：本月達 **NT$ {_fmt_compact(rev_val)}** ({rev_delta_label})")
         attribution_lines.append(f"- **RevPAR 總體變動**：較去年同期 {'增加' if revpar_diff >= 0 else '減少'} **NT$ {abs(int(revpar_diff)):,}**")
         attribution_lines.append(f"- **價格效應 (ADR Impact)**：{'帶動' if impact_adr >= 0 else '拖累'} **NT$ {int(impact_adr):+}** (房價變動貢獻)")
         attribution_lines.append(f"- **住房量能效應 (OCC Impact)**：{'帶動' if impact_occ >= 0 else '拖累'} **NT$ {int(impact_occ):+}** (周轉率變動貢獻)")
