@@ -3705,35 +3705,33 @@ if current_hotel != "採購":
                 wkday = str(r['weekday_name'])
                 tags, h_desc, e_names = _get_event_meta(d_str)
 
-                is_dump = False
-                dump_level = ""
-                loss_baseline = 0.0
+                # 以年均線 y_adr 為主要全館價格防線；若跌破純平底線 y_pure_adr 則屬嚴重警報
+                benchmark_line = y_adr if y_adr > 0 else (m_avg_adr if m_avg_adr > 0 else 3100.0)
+                
+                # 判定條件：住房率 >= 75% 且 ADR 低於年線基準
+                if occ >= 75.0 and adr < benchmark_line and adr > 0:
+                    diff_amt = adr - benchmark_line # 負值代表跌破
+                    diff_pct = (diff_amt / benchmark_line * 100) if benchmark_line > 0 else 0.0
+                    
+                    if y_pure_adr > 0 and adr < y_pure_adr:
+                        dump_level = "🚨 穿透純平極限"
+                    elif diff_pct <= -10.0 or (y_pure_adr > 0 and adr <= y_pure_adr * 1.03):
+                        dump_level = "🚨 重度折價吸單"
+                    else:
+                        dump_level = "⚠️ 跌破年線防守"
 
-                if not is_wknd:
-                    # 平日門檻：OCC >= 75% 且 ADR <= 純平年線 * 1.03 (接近或跌破純平底線)
-                    limit_val = (y_pure_adr * 1.03) if y_pure_adr > 0 else (y_adr * 0.9 if y_adr > 0 else m_avg_adr * 0.85)
-                    if occ >= 75.0 and adr <= limit_val and adr > 0:
-                        is_dump = True
-                        loss_baseline = y_pure_adr if y_pure_adr > 0 else y_adr
-                        if y_pure_adr > 0 and adr < y_pure_adr:
-                            dump_level = "🚨 跌破純平底線"
-                        else:
-                            dump_level = "⚠️ 逼近純平底線"
-                else:
-                    # 週末門檻：OCC >= 85% 但 ADR 跌破年均線
-                    limit_val = y_adr if y_adr > 0 else (m_avg_adr if m_avg_adr > 0 else 3000.0)
-                    if occ >= 85.0 and adr < limit_val and adr > 0:
-                        is_dump = True
-                        loss_baseline = limit_val
-                        dump_level = "⚠️ 週末賤賣失守"
-
-                if is_dump:
-                    diff_per_room = max(0.0, loss_baseline - adr)
+                    # 精準診斷脈絡 (避免重複貼上)
                     cal_context = ""
-                    if m_num == 8 and day_num in [30, 31]:
-                        cal_context = "暑假收尾 / 開學日前夕家庭客急凍，現場恐慌性晚鳥削價吸單"
-                    elif m_num == 8 and day_num in [24, 25, 26, 27, 28]:
-                        cal_context = "8月下旬暑期出遊意願回落，缺乏商務客防線導致破盤"
+                    if m_num == 8 and day_num == 30:
+                        cal_context = "暑假最後收假日，親子客瞬間抽乾，現場恐慌性晚鳥削價吸單"
+                    elif m_num == 8 and day_num == 31:
+                        cal_context = "開學首日休閒需求斷崖，缺乏商務客防線，延續低價清房慣性"
+                    elif m_num == 8 and day_num == 27:
+                        cal_context = "平日過度仰賴散客促銷，房價逼近純平底線，高滿房卻未換得實質利潤"
+                    elif m_num == 8 and day_num == 26:
+                        cal_context = "暑假尾聲出遊意願減弱，平日晚鳥缺乏最低保護價"
+                    elif m_num == 8 and day_num in [24, 25]:
+                        cal_context = "8月下旬價格走勢轉弱的前期徵兆，高住房率伴隨價格失守年線"
                     elif "日" in wkday:
                         cal_context = "收假日前夕集客疲軟，低價專案過度放量"
                     else:
@@ -3743,13 +3741,14 @@ if current_hotel != "採購":
                         '日期': f"{m_num}/{day_num:02d} ({wkday})",
                         '住房率': f"{occ:.1f}%",
                         '實際 ADR': f"NT$ {int(adr):,}",
-                        '基準底線': f"NT$ {int(loss_baseline):,}",
-                        '風險等級': dump_level,
-                        '背景脈絡與診斷': cal_context,
+                        '年線基準': f"NT$ {int(benchmark_line):,}",
+                        '跌破幅度 (vs 年線)': f"{int(diff_amt):+} ({diff_pct:.1f}%)",
+                        '風險評級': dump_level,
+                        '深入背景診斷': cal_context,
                         'day': day_num,
                         'occ': occ,
                         'adr': adr,
-                        'diff': diff_per_room
+                        'diff': abs(diff_amt)
                     })
 
             # 2. 篩選：活動與節慶溢價收割日 (Event & Peak Compression Yield)
@@ -3863,7 +3862,7 @@ if current_hotel != "採購":
                     > **🚨 邊際貢獻深度剖析**：
                     > 扣除每房之房務清潔工資、洗滌費、水電瓦斯、客房耗品與免費早餐食材等**固定變動成本 (約 NT$ 800 ~ 1,000 / 間)** 後，以低於底線的房價賣出，每房實質落袋毛利已被極限壓縮至不到 NT$ 1,800。**看似住房率破 80%~85%，實則全館承擔了滿房損耗，利潤卻被稀釋殆盡！**
                     """)
-                    df_dump_show = pd.DataFrame(dump_rows)[['日期', '住房率', '實際 ADR', '基準底線', '風險等級', '背景脈絡與診斷']]
+                    df_dump_show = pd.DataFrame(dump_rows)[['日期', '住房率', '實際 ADR', '年線基準', '跌破幅度 (vs 年線)', '風險評級', '深入背景診斷']]
                     st.dataframe(df_dump_show, use_container_width=True, hide_index=True)
                 else:
                     st.success("🎉 本月未偵測到明顯跌破年線底線的割肉吸單日，定價紀律嚴明！")
