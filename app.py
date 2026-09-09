@@ -3694,36 +3694,63 @@ if current_hotel != "採購":
                 all_tags = h_flags + [f"[{n}]" for n in e_names[:2]]
                 return " ".join(all_tags), h_desc, e_names
 
-            # 1. 篩選：低價割肉吸單日 (Sub-Baseline Dumps)
+            # 預先計算當月各「天型 (Day-Type)」客觀均價
+            wknd_df = df_m[df_m['weekday_name'].isin(['五', '六'])]
+            m_wknd_adr = wknd_df['adr_val'].mean() if not wknd_df.empty else (y_adr if y_adr > 0 else 4500.0)
+
+            sun_df = df_m[df_m['weekday_name'] == '日']
+            m_sun_adr = sun_df['adr_val'].mean() if not sun_df.empty else (y_pure_adr if y_pure_adr > 0 else 3000.0)
+
+            wkday_df = df_m[df_m['weekday_name'].isin(['一', '二', '三', '四'])]
+            m_wkday_adr = wkday_df['adr_val'].mean() if not wkday_df.empty else (y_pure_adr if y_pure_adr > 0 else 3000.0)
+
+            # 1. 篩選：低價割肉吸單日 (Sub-Baseline Dumps - 按同天型動態比對)
             dump_rows = []
             for _, r in df_m.iterrows():
                 d_str = str(r['date'])
                 occ = float(r['occ_val'])
                 adr = float(r['adr_val'])
-                is_wknd = bool(r['is_weekend'])
                 day_num = int(r['day'])
                 wkday = str(r['weekday_name'])
                 tags, h_desc, e_names = _get_event_meta(d_str)
 
-                # 以年均線 y_adr 為主要全館價格防線；若跌破純平底線 y_pure_adr 則屬嚴重警報
-                benchmark_line = y_adr if y_adr > 0 else (m_avg_adr if m_avg_adr > 0 else 3100.0)
-                
-                # 判定條件：住房率 >= 75% 且 ADR 低於年線基準
-                if occ >= 75.0 and adr < benchmark_line and adr > 0:
-                    diff_amt = adr - benchmark_line # 負值代表跌破
-                    diff_pct = (diff_amt / benchmark_line * 100) if benchmark_line > 0 else 0.0
-                    
-                    if y_pure_adr > 0 and adr < y_pure_adr:
-                        dump_level = "🚨 穿透純平極限"
-                    elif diff_pct <= -10.0 or (y_pure_adr > 0 and adr <= y_pure_adr * 1.03):
-                        dump_level = "🚨 重度折價吸單"
-                    else:
-                        dump_level = "⚠️ 跌破年線防守"
+                # 動態分配天型期望基準
+                if wkday in ['五', '六']:
+                    day_type_label = "週末旺日"
+                    target_baseline = m_wknd_adr
+                    baseline_str = f"NT$ {int(m_wknd_adr):,} (週末均價)"
+                    # 週末警報門檻：OCC >= 85% 但 ADR 跌破週末均價 12% 以上或低於年均線
+                    is_dump = (occ >= 85.0 and adr < min(m_wknd_adr * 0.88, y_adr) and adr > 0)
+                elif wkday == '日':
+                    day_type_label = "週日收假日"
+                    target_baseline = m_sun_adr
+                    baseline_str = f"NT$ {int(m_sun_adr):,} (週日均價)"
+                    # 週日警報門檻：OCC >= 75% 且 (ADR 低於週日均價 8% 以上 或 跌破純平底線)
+                    is_dump = (occ >= 75.0 and (adr < m_sun_adr * 0.92 or (y_pure_adr > 0 and adr < y_pure_adr)) and adr > 0)
+                else:
+                    day_type_label = "常態平日"
+                    target_baseline = m_wkday_adr
+                    baseline_str = f"NT$ {int(m_wkday_adr):,} (平日均價)"
+                    # 平日警報門檻：OCC >= 75% 且 (ADR 低於平日均價 8% 以上 或 跌破純平底線 * 1.02)
+                    is_dump = (occ >= 75.0 and (adr < m_wkday_adr * 0.92 or (y_pure_adr > 0 and adr <= y_pure_adr * 1.02)) and adr > 0)
 
-                    # 精準診斷脈絡 (避免重複貼上)
+                if is_dump:
+                    diff_amt = adr - target_baseline # 負值代表折讓
+                    diff_pct = (diff_amt / target_baseline * 100) if target_baseline > 0 else 0.0
+
+                    if y_pure_adr > 0 and adr < y_pure_adr:
+                        dump_level = "🚨 穿透純平底線"
+                    elif diff_pct <= -10.0 or (y_pure_adr > 0 and adr <= y_pure_adr * 1.02):
+                        dump_level = "🚨 重度折價吸單"
+                    elif diff_pct < 0:
+                        dump_level = "⚠️ 跌破天型基準"
+                    else:
+                        dump_level = "⚠️ 逼近防守底線"
+
+                    # 精準診斷脈絡
                     cal_context = ""
                     if m_num == 8 and day_num == 30:
-                        cal_context = "暑假最後收假日，親子客瞬間抽乾，現場恐慌性晚鳥削價吸單"
+                        cal_context = "暑假最後收假日，親子客瞬間抽乾，現場恐慌啟動晚鳥破盤價吸單"
                     elif m_num == 8 and day_num == 31:
                         cal_context = "開學首日休閒需求斷崖，缺乏商務客防線，延續低價清房慣性"
                     elif m_num == 8 and day_num == 27:
@@ -3731,18 +3758,21 @@ if current_hotel != "採購":
                     elif m_num == 8 and day_num == 26:
                         cal_context = "暑假尾聲出遊意願減弱，平日晚鳥缺乏最低保護價"
                     elif m_num == 8 and day_num in [24, 25]:
-                        cal_context = "8月下旬價格走勢轉弱的前期徵兆，高住房率伴隨價格失守年線"
+                        cal_context = "8月下旬價格走勢轉弱的前期徵兆，高住房率伴隨價格失守同天型基準"
                     elif "日" in wkday:
                         cal_context = "收假日前夕集客疲軟，低價專案過度放量"
+                    elif wkday in ['五', '六']:
+                        cal_context = "高需求週末未能大膽調升溢價，屬嚴重賤賣失守"
                     else:
                         cal_context = "平日促銷底價過低，缺乏動態調價閥門"
 
                     dump_rows.append({
                         '日期': f"{m_num}/{day_num:02d} ({wkday})",
+                        '天型分類': day_type_label,
                         '住房率': f"{occ:.1f}%",
                         '實際 ADR': f"NT$ {int(adr):,}",
-                        '年線基準': f"NT$ {int(benchmark_line):,}",
-                        '跌破幅度 (vs 年線)': f"{int(diff_amt):+} ({diff_pct:.1f}%)",
+                        '天型期望基準': baseline_str,
+                        '折讓落差 (vs 天型)': f"{int(diff_amt):+} ({diff_pct:.1f}%)",
                         '風險評級': dump_level,
                         '深入背景診斷': cal_context,
                         'day': day_num,
@@ -3862,7 +3892,7 @@ if current_hotel != "採購":
                     > **🚨 邊際貢獻深度剖析**：
                     > 扣除每房之房務清潔工資、洗滌費、水電瓦斯、客房耗品與免費早餐食材等**固定變動成本 (約 NT$ 800 ~ 1,000 / 間)** 後，以低於底線的房價賣出，每房實質落袋毛利已被極限壓縮至不到 NT$ 1,800。**看似住房率破 80%~85%，實則全館承擔了滿房損耗，利潤卻被稀釋殆盡！**
                     """)
-                    df_dump_show = pd.DataFrame(dump_rows)[['日期', '住房率', '實際 ADR', '年線基準', '跌破幅度 (vs 年線)', '風險評級', '深入背景診斷']]
+                    df_dump_show = pd.DataFrame(dump_rows)[['日期', '天型分類', '住房率', '實際 ADR', '天型期望基準', '折讓落差 (vs 天型)', '風險評級', '深入背景診斷']]
                     st.dataframe(df_dump_show, use_container_width=True, hide_index=True)
                 else:
                     st.success("🎉 本月未偵測到明顯跌破年線底線的割肉吸單日，定價紀律嚴明！")
