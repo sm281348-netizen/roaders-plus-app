@@ -9915,8 +9915,17 @@ def render_report_tab():
     occ_status = "🟢 優" if occ_val >= 85 else ("🟡 平" if occ_val >= 70 else "🔴 差")
     
     adr_val = curr_summary['avg_adr']
-    adr_diff = adr_val - y_adr
-    adr_status = "🟢 優" if adr_val >= y_adr else ("🟡 平" if adr_val >= y_adr*0.9 else "🔴 差")
+    adr_ly = ly_summary.get('avg_adr', 0.0)
+    has_ly_data = bool(ly_summary.get('revpar', 0.0) > 0 and adr_ly > 0 and occ_ly > 0)
+    
+    if has_ly_data and adr_ly > 0:
+        adr_diff = adr_val - adr_ly
+        adr_delta_label = f"{int(adr_diff):+} vs 去年"
+        adr_status = "🟢 優" if adr_diff >= 0 else ("🟡 平" if adr_diff >= -100 else "🔴 差")
+    else:
+        adr_diff = adr_val - y_adr
+        adr_delta_label = f"{int(adr_diff):+} vs 年度均價"
+        adr_status = "🟢 優" if adr_val >= y_adr else ("🟡 平" if adr_val >= y_adr*0.9 else "🔴 差")
     
     revpar_val = curr_summary['revpar']
     revpar_ly = ly_summary['revpar']
@@ -9933,7 +9942,7 @@ def render_report_tab():
     with col1:
         st.metric("本月 OCC", f"{occ_val:.1f}%", f"{occ_diff:+.1f}% vs 去年", help=f"狀態: {occ_status}")
     with col2:
-        st.metric("本月 ADR", f"NT$ {int(adr_val):,}", f"{int(adr_diff):+} vs 年度均價", help=f"狀態: {adr_status}")
+        st.metric("本月 ADR", f"NT$ {int(adr_val):,}", adr_delta_label, help=f"狀態: {adr_status}")
     with col3:
         st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", f"{int(revpar_diff):+} vs 去年", help=f"狀態: {revpar_status}")
     with col4:
