@@ -2734,109 +2734,88 @@ if current_hotel != "採購":
             del st.session_state[f"monthly_report_{month_str}"]
             st.rerun()
 
-# 側邊欄底部移除多餘區塊
+# --- 側邊欄金旭 PMS 數據自動同步控制項 ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("⚡ 金旭 PMS 數據自動同步", expanded=False):
+    st.caption(f"📍 目前館別：**{current_hotel}**")
+    
+    # 檢查是否具備內網磁碟存取權限 (本地伺服器 vs 雲端環境)
+    import pms_parser
+    _cfg = pms_parser.HOTEL_CONFIGS.get(current_hotel, {})
+    _has_local_disk = os.path.exists(_cfg.get("eis_base", ""))
+    
+    if _has_local_disk:
+        st.success("🟢 已連線至飯店金旭內網磁碟")
+        sync_mode = st.radio("同步範圍", ["昨日數據", "最近 7 天", "自訂區間"], horizontal=True, key="pms_sync_mode")
+        
+        _today = datetime.date.today()
+        _yesterday = _today - datetime.timedelta(days=1)
+        
+        if sync_mode == "昨日數據":
+            _start_d = _yesterday
+            _end_d = _yesterday
+        elif sync_mode == "最近 7 天":
+            _start_d = _yesterday - datetime.timedelta(days=6)
+            _end_d = _yesterday
+        else:
+            _col_s1, _col_s2 = st.columns(2)
+            with _col_s1:
+                _start_d = st.date_input("開始", _yesterday - datetime.timedelta(days=3), key="pms_sync_start")
+            with _col_s2:
+                _end_d = st.date_input("結束", _yesterday, key="pms_sync_end")
+
+        if st.button("🚀 開始同步至資料庫", use_container_width=True, key="btn_run_pms_sync"):
+            try:
+                from pms_sync import sync_pms_to_gsheets
+                with st.spinner(f"正在從金旭同步 {current_hotel} {_start_d} ~ {_end_d} 數據..."):
+                    _res = sync_pms_to_gsheets(conn, current_hotel, _start_d, _end_d)
+                    st.success(
+                        f"✅ 同步完成！\n"
+                        f"- 住房日報 (occ_data): {_res['occ_synced']} 天\n"
+                        f"- 通路訂單 (marketing): {_res['channels_synced']} 筆\n"
+                        f"- 財務科目 (EIS_data): {_res['eis_synced']} 項"
+                    )
+                    _get_occ_data_cached_v2.clear()
+                    fetch_yearly_metrics.clear()
+                    st.cache_data.clear()
+                    st.rerun()
+            except Exception as _sync_err:
+                st.error(f"❌ 同步失敗: {_sync_err}")
+    else:
+        st.info("☁️ **雲端模式**\n\n金旭數據由飯店內部主機每日清晨（05:00）自動同步至此處資料庫。")
+        st.caption("提示：如需即時同步最新報表，請於飯店本地主機執行同步。")
 
 # -- 報表解析與寫入資料庫 --
 
 
-def sync_from_eis_local(d_str):
+def sync_from_eis_local(d_str, hotel_name=None):
     """
-    從 Y:\\ 網路磁碟自動讀取站前館 EIS XLS，解析當日核心營運數據。
-    僅適用於站前館（current_hotel == '站前館'）。
-    回傳 dict {'revenue', 'total_rooms', 'adr', 'occ_rate'} 或 None（失敗時）。
+    從內部網路磁碟自動讀取金旭 PMS 數據 (支援站前館與主題館)
     """
-    import xlrd
-    import os
-
     try:
-        year = d_str[:4]
-        month = d_str[5:7]
-        day = d_str[8:10]
-        folder = os.path.join("Y:\\", "櫃台", "金旭", "每日EIS", year, f"{year}{month}")
-        filename = f"EIS03{year}{month}{day}.XLS"
-        filepath = os.path.join(folder, filename)
-
-        if not os.path.exists(filepath):
-            import datetime as _dt
-            _req_date = _dt.date(int(year), int(month), int(day))
-            _today_date = _dt.date.today()
-            if _req_date >= _today_date:
-                _hint = f"\n⚠️ 提示：{_req_date.strftime('%Y/%m/%d')} 的 EIS 報表通常在當日深夜或隔日凌晨 3 點後才會產生，請稍後再試。"
-            else:
-                _hint = f"\n⚠️ 提示：{_req_date.strftime('%Y/%m/%d')} 的 EIS 檔案可能未產生（例如休館日），請確認。"
-            return None, f"找不到 EIS 檔案：{filepath}\n請確認 Y:\\ 磁碟已連線，且當日報表已產生。{_hint}"
-
-        wb = xlrd.open_workbook(filepath, encoding_override='cp950')
-        ws = wb.sheet_by_index(1)  # 工作表 1 = 住客來源
-
-        # 合計行在 Row08（欄位：col2=收入, col3=間數, col5=ADR, col6=OCC小數）
-        r = 8
-        revenue = int(ws.cell_value(r, 2))
-        total_rooms = int(ws.cell_value(r, 3))
-        adr = int(ws.cell_value(r, 5))
-        occ_raw = ws.cell_value(r, 6)
-        occ_rate = round(occ_raw * 100, 1) if occ_raw <= 1.0 else round(occ_raw, 1)
-
-        return {
-            'revenue': revenue,
-            'total_rooms': total_rooms,
-            'adr': adr,
-            'occ_rate': occ_rate,
-        }, None
-
+        from pms_parser import extract_pms_day
+        h = hotel_name or current_hotel
+        res = extract_pms_day(h, d_str)
+        if res and res["occ"]:
+            return res["occ"], None
+        return None, f"找不到 {h} {d_str} 的金旭報表檔案，請確認磁碟已連線且當日夜審已完成。"
     except Exception as e:
-        return None, f"讀取 EIS 失敗：{e}"
+        return None, f"讀取金旭報表失敗：{e}"
 
 
-def batch_sync_from_eis_local(start_date, end_date):
+def batch_sync_from_eis_local(start_date, end_date, hotel_name=None):
     """
-    批次掃描 start_date ~ end_date 範圍內所有存在的 EIS XLS 並解析。
-    回傳 (results, errors)：
-      results = [{'date': str, 'revenue': int, 'total_rooms': int, 'adr': int, 'occ_rate': float}, ...]
-      errors  = [{'date': str, 'reason': str}, ...]
+    批次掃描 start_date ~ end_date 範圍內所有存在的金旭報表並解析 (支援站前館與主題館)
     """
-    import xlrd
-    import os
-    import datetime
-
-    results = []
-    errors = []
-
-    cur = start_date
-    while cur <= end_date:
-        d_str = str(cur)
-        year = d_str[:4]
-        month = d_str[5:7]
-        day = d_str[8:10]
-        folder = os.path.join("Y:\\", "櫃台", "金旭", "每日EIS", year, f"{year}{month}")
-        filename = f"EIS03{year}{month}{day}.XLS"
-        filepath = os.path.join(folder, filename)
-
-        if not os.path.exists(filepath):
-            errors.append({'date': d_str, 'reason': '檔案不存在（可能為休館日或尚未產生）'})
-        else:
-            try:
-                wb = xlrd.open_workbook(filepath, encoding_override='cp950')
-                ws = wb.sheet_by_index(1)
-                r = 8
-                revenue = int(ws.cell_value(r, 2))
-                total_rooms = int(ws.cell_value(r, 3))
-                adr = int(ws.cell_value(r, 5))
-                occ_raw = ws.cell_value(r, 6)
-                occ_rate = round(occ_raw * 100, 1) if occ_raw <= 1.0 else round(occ_raw, 1)
-                results.append({
-                    'date': d_str,
-                    'revenue': revenue,
-                    'total_rooms': total_rooms,
-                    'adr': adr,
-                    'occ_rate': occ_rate,
-                })
-            except Exception as e:
-                errors.append({'date': d_str, 'reason': f'解析失敗：{e}'})
-
-        cur += datetime.timedelta(days=1)
-
-    return results, errors
+    try:
+        from pms_parser import extract_pms_range
+        h = hotel_name or current_hotel
+        res = extract_pms_range(h, start_date, end_date)
+        results = res["df_occ"].to_dict(orient="records") if not res["df_occ"].empty else []
+        errors = []
+        return results, errors
+    except Exception as e:
+        return [], [{'date': str(start_date), 'reason': f'批次解析失敗: {e}'}]
 
 
 def parse_and_save_jinxu(file):
