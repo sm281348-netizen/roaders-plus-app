@@ -3,13 +3,14 @@
 金旭 PMS 雙館每日定時同步腳本 (Daily Scheduled Sync Runner)
 ==============================================================
 執行方式：
-  python run_daily_sync.py [--date YYYY-MM-DD] [--days N]
+  python run_daily_sync.py [--date YYYY-MM-DD] [--days N] [--git-push]
 
 說明：
 1. 每日清晨 (例如 05:00) 於 Windows 工作排程器中自動無聲執行。
 2. 自動解析【站前館】與【主題館】之夜審結算報表 (EIS03 + RVR12)。
 3. 將當日及歷史最新數據儲存於本地備份庫 (data/pms_backup/)。
-4. 輸出執行日誌至 logs/pms_sync.log，方便維運追蹤。
+4. 支援 --git-push 自動提交並推播至 GitHub 倉庫，讓 Streamlit Cloud 零時差獲取最新數據。
+5. 輸出執行日誌至 logs/pms_sync.log，方便維運追蹤。
 """
 
 import os
@@ -17,6 +18,7 @@ import sys
 import datetime
 import logging
 import argparse
+import subprocess
 import pandas as pd
 
 # 解決 Windows 主控台編碼問題
@@ -42,9 +44,12 @@ logger = logging.getLogger("pms_sync")
 logger.setLevel(logging.INFO)
 logger.handlers.clear()
 
-file_h = logging.FileHandler(log_file, encoding="utf-8")
-file_h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-logger.addHandler(file_h)
+try:
+    file_h = logging.FileHandler(log_file, encoding="utf-8")
+    file_h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(file_h)
+except Exception:
+    pass
 
 stream_h = logging.StreamHandler(sys.stdout)
 stream_h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -101,21 +106,61 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
         logger.error(f"[FAIL] [{hotel_name}] 同步過程發生異常: {e}", exc_info=True)
         return False
 
+def push_to_cloud_git():
+    """
+    將 data/pms_backup/ 的最新數據自動提交並推播至 GitHub main 分支
+    """
+    logger.info("檢查是否需要推播數據至 GitHub 雲端倉庫...")
+    try:
+        # 1. 暫存 data/pms_backup/
+        subprocess.run(["git", "add", "data/pms_backup/"], cwd=APP_DIR, check=True)
+        
+        # 2. 檢查有無異動
+        diff_res = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=APP_DIR)
+        if diff_res.returncode != 0:
+            today_str = datetime.date.today().strftime('%Y-%m-%d')
+            commit_msg = f"chore(pms): auto-sync PMS data {today_str} [skip ci]"
+            logger.info(f"偵測到新數據，正在提交變更: {commit_msg}")
+            subprocess.run(["git", "commit", "-m", commit_msg], cwd=APP_DIR, check=True)
+            
+            logger.info("正在推播至遠端 GitHub (main 分支)...")
+            push_res = subprocess.run(
+                ["git", "push", "origin", "main"],
+                cwd=APP_DIR,
+                capture_output=True,
+                text=True,
+                encoding="utf-8"
+            )
+            if push_res.returncode == 0:
+                logger.info("[SUCCESS] 數據已成功推播至 GitHub！Streamlit Cloud 將自動同步呈現最新數據。")
+            else:
+                logger.error(f"[FAIL] Git 推播失敗: {push_res.stderr}")
+        else:
+            logger.info("[INFO] PMS 數據庫無新異動，無需推播。")
+    except Exception as e:
+        logger.error(f"[FAIL] 執行 Git 雲端推播時發生例外: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="金旭 PMS 雙館每日定時同步腳本")
     parser.add_argument("--date", default=None, help="目標日期 (YYYY-MM-DD)，預設為昨日")
     parser.add_argument("--days", type=int, default=1, help="回推天數，預設 1 天")
     parser.add_argument("--hotel", default="all", choices=["站前館", "主題館", "all"], help="指定館別")
+    parser.add_argument("--git-push", action="store_true", help="是否自動推播最新數據至 GitHub 雲端倉庫")
 
     args = parser.parse_args()
 
     target_date = to_date_obj(args.date) if args.date else datetime.date.today() - datetime.timedelta(days=1)
     hotels = ["站前館", "主題館"] if args.hotel == "all" else [args.hotel]
 
-    logger.info(f"啟動金旭 PMS 數據同步排程作業...")
+    logger.info(f"啟動金旭 PMS 數據同步排程作業 (目標: {target_date}, 範圍: {args.days} 天, 雲端推播: {args.git_push})...")
     for h in hotels:
         run_sync_for_hotel(h, target_date, days=args.days)
-    logger.info(f"雙館金旭數據同步作業完成。\n")
+    logger.info(f"雙館金旭數據解析與本地庫存檔作業完成。")
+
+    if args.git_push:
+        push_to_cloud_git()
+        
+    logger.info(f"所有排程任務執行完畢。\n")
 
 if __name__ == "__main__":
     main()

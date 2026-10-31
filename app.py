@@ -1333,7 +1333,7 @@ def _get_occ_data_cached_v2(hotel_type=""):
     try:
         df = conn.read(worksheet="occ_data", ttl=0)
     except Exception as e:
-        raise e
+        df = pd.DataFrame()
 
     if df is not None and not df.empty:
         df.columns = [str(c).strip().lower() for c in df.columns]
@@ -1379,6 +1379,24 @@ def _get_occ_data_cached_v2(hotel_type=""):
                 df['date'] = pd.Series(dtype='str')
             if 'revenue' not in df.columns:
                 df['revenue'] = 0
+
+    # === 整合金旭 PMS 本地/雲端備份數據 ===
+    try:
+        h_tag = "theme" if hotel_type == "主題館" else "station"
+        backup_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_occ_data.csv")
+        if os.path.exists(backup_path):
+            df_pms = pd.read_csv(backup_path)
+            if not df_pms.empty and 'date' in df_pms.columns:
+                df_pms['date'] = df_pms['date'].astype(str).str.strip()
+                if df is not None and not df.empty and 'date' in df.columns:
+                    df['date'] = df['date'].astype(str).str.strip()
+                    # 以 PMS 最新夜審數據覆蓋/補全現有資料
+                    df = df_pms.set_index('date').combine_first(df.set_index('date')).reset_index()
+                else:
+                    df = df_pms
+    except Exception:
+        pass
+
     return df
 
 @st.cache_data(ttl=3600)
@@ -1392,7 +1410,45 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
     try:
         df = conn.read(worksheet=worksheet, ttl=0)
     except Exception as e:
-        raise e
+        df = pd.DataFrame()
+
+    # === 整合金旭備份數據 (OTA 通路與財務科目) ===
+    try:
+        h_tag = "theme" if hotel_type == "主題館" else "station"
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        if worksheet == "marketing_channel_data":
+            chan_file = os.path.join(base_dir, "data", "pms_backup", f"{h_tag}_channels.csv")
+            if os.path.exists(chan_file):
+                df_chan = pd.read_csv(chan_file)
+                if not df_chan.empty and 'date' in df_chan.columns:
+                    df_chan['date'] = df_chan['date'].astype(str).str.strip()
+                    if df is not None and not df.empty and 'date' in df.columns:
+                        df['date'] = df['date'].astype(str).str.strip()
+                        new_dates = set(df_chan['date'].unique())
+                        df_clean = df[~df['date'].isin(new_dates)]
+                        df = pd.concat([df_clean, df_chan], ignore_index=True)
+                    else:
+                        df = df_chan
+
+        elif worksheet == "EIS_data":
+            import datetime as _dt
+            now_ym = _dt.date.today().strftime('%Y%m')
+            eis_file = os.path.join(base_dir, "data", "pms_backup", f"{h_tag}_eis_{now_ym}.csv")
+            if os.path.exists(eis_file):
+                df_eis = pd.read_csv(eis_file)
+                if not df_eis.empty:
+                    col_ym = next((c for c in df_eis.columns if '年' in c and '月' in c), '年/月')
+                    target_ym = df_eis[col_ym].iloc[0]
+                    if df is not None and not df.empty:
+                        col_orig_ym = next((c for c in df.columns if '年' in c and '月' in c), '年/月')
+                        df_clean = df[df[col_orig_ym] != target_ym]
+                        df = pd.concat([df_clean, df_eis[['年/月', '項目', '本月實際']]], ignore_index=True)
+                    else:
+                        df = df_eis
+    except Exception:
+        pass
+
     return df
 
 
