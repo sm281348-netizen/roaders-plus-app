@@ -30,6 +30,7 @@ except Exception:
 
 # 導入解析引擎
 from pms_parser import extract_pms_day, extract_pms_range, to_date_obj
+from pms_future_extractor import extract_future_pms_occ
 
 # 設定工作目錄
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,11 +66,11 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
         df_chan = res["df_chan"]
         df_eis = res["df_eis"]
 
-        # 1. 儲存至本地備份庫 (確保零資料遺失)
+        # 1. 儲存歷史數據至本地備份庫 (確保零資料遺失)
         h_tag = "station" if hotel_name == "站前館" else "theme"
+        occ_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_occ_data.csv")
         
         if not df_occ.empty:
-            occ_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_occ_data.csv")
             if os.path.exists(occ_backup_path):
                 df_old_occ = pd.read_csv(occ_backup_path)
                 df_occ['date'] = df_occ['date'].astype(str)
@@ -77,10 +78,37 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
                 df_final_occ = df_occ.set_index('date').combine_first(df_old_occ.set_index('date')).reset_index()
             else:
                 df_final_occ = df_occ
-            df_final_occ.sort_values('date').to_csv(occ_backup_path, index=False, encoding='utf-8-sig')
-            logger.info(f"[SUCCESS] [{hotel_name}] occ_data 解析成功: 共 {len(df_occ)} 天，已更新至本地備份庫")
+            logger.info(f"[SUCCESS] [{hotel_name}] 歷史 occ_data (EIS03) 解析成功: 共 {len(df_occ)} 天")
         else:
-            logger.warning(f"[WARN] [{hotel_name}] 未能解析到 occ_data (檢查報表是否存在)")
+            if os.path.exists(occ_backup_path):
+                df_final_occ = pd.read_csv(occ_backup_path)
+                df_final_occ['date'] = df_final_occ['date'].astype(str)
+            else:
+                df_final_occ = pd.DataFrame(columns=['date', 'sold_rooms', 'total_rooms', 'occ_rate', 'revenue', 'adr'])
+            logger.warning(f"[WARN] [{hotel_name}] 本次未解析到新 EIS03，沿用現有備份庫")
+
+        # 2. 抽取未來預約數據 (今天 ~ 2027-12-31 全量鏡像覆蓋)
+        future_start_date = target_date + datetime.timedelta(days=1)
+        future_start_str = future_start_date.strftime("%Y-%m-%d")
+        try:
+            df_future = extract_future_pms_occ(
+                hotel_name=hotel_name,
+                start_date=future_start_date,
+                end_date=datetime.date(2027, 12, 31)
+            )
+            if not df_future.empty:
+                df_future['date'] = df_future['date'].astype(str)
+                # 歷史部分 (<= target_date 結算封帳): 來自 EIS03 審定日報
+                # 未來部分 (> target_date): 100% 以今晨最新預約快照全量覆蓋 (鏡像覆蓋，避免退訂殘留)
+                df_hist_part = df_final_occ[df_final_occ['date'].astype(str) < future_start_str]
+                df_final_occ = pd.concat([df_hist_part, df_future], ignore_index=True).sort_values('date').reset_index(drop=True)
+                logger.info(f"[SUCCESS] [{hotel_name}] 未來在手預約全量刷新成功 (共 {len(df_future)} 天，覆蓋至 2027-12-31)")
+        except Exception as e_future:
+            logger.error(f"[ERROR] [{hotel_name}] 未來預約抽取發生異常: {e_future}", exc_info=True)
+
+        if not df_final_occ.empty:
+            df_final_occ.sort_values('date').to_csv(occ_backup_path, index=False, encoding='utf-8-sig')
+            logger.info(f"[SUCCESS] [{hotel_name}] occ_data 已儲存至本地備份庫: 共 {len(df_final_occ)} 天 (時間軸: {df_final_occ['date'].min()} ~ {df_final_occ['date'].max()})")
 
         if not df_chan.empty:
             chan_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_channels.csv")
@@ -112,8 +140,8 @@ def push_to_cloud_git():
     """
     logger.info("檢查是否需要推播數據至 GitHub 雲端倉庫...")
     try:
-        # 1. 暫存 data/pms_backup/
-        subprocess.run(["git", "add", "data/pms_backup/"], cwd=APP_DIR, check=True)
+        # 1. 暫存 data/pms_backup/ 與同步引擎腳本
+        subprocess.run(["git", "add", "data/pms_backup/", "pms_future_extractor.py", "run_daily_sync.py"], cwd=APP_DIR, check=True)
         
         # 2. 檢查有無異動
         diff_res = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=APP_DIR)
