@@ -1,69 +1,358 @@
 # -*- coding: utf-8 -*-
 r"""
-餐飲部 (The Peak 與 4F 餐車) 採購單全自動解析引擎 (F&B Purchase Extractor)
-========================================================================
-支援全量歷史回補與即時監控：
-1. 4F 餐車 (Happy Hour): Y:\餐務\{YYYY}(4F)\{M}月\ 採購單*.xlsx、菜商採購單*.xlsx
-2. The Peak (37F): Y:\餐務\The peak\{YYYY}(37F)\ 1@THEPEAK採購用4.0.xlsx、3@thepeak菜商叫貨單.xlsx
-3. 自動解析各工作表名稱（如 0261001, 10.5, 10 26, 11.2）對齊西元標準日期 (YYYY-MM-DD)。
-4. 精準比對品名、單價、數量、小計金額，支援跨月與跨週自動分流。
+餐飲部 (The Peak 與 4F 餐車) 採購單全自動解析引擎 (F&B Purchase Extractor - Production v2)
+========================================================================================
+重大升級與架構修復：
+1. 菜商生鮮單價 100% 連動 Google Sheets `supplier_prices` 官方半月報價庫：
+   - 依據叫貨日期動態鎖定最新生效期數 (例如 10/1~10/15 抓取 10/1 報價；10/16~10/31 抓取 10/16 報價)。
+   - 內建品名正規化與別名對照字典 (處理 紫色包心、青花菜、清雞腿肉、彩色甜椒 等現場簡寫)。
+   - 杜絕 0 元與過期單價污染。
+2. 嚴格年份與部門過濾：
+   - 僅採納 2026 年合法分頁 (如 026MMDD、2026MMDD，或 4F 之 M.D)。
+   - 徹底杜絕 2025 年 4 碼舊分頁 (如 1010, 1017, 1103 等)。
+   - 校驗儲存格 (3,6) 請購單位，嚴禁將餐車單據誤歸戶至 The Peak。
+3. 嚴防未來穿越日期：
+   - 請購日期不得大於今日 (<= today)。
 """
 
 import os
 import re
+import sys
 import datetime
 import logging
 import openpyxl
+import tomllib
 import pandas as pd
+import gspread
+
+# 確保輸出編碼正確
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 logger = logging.getLogger("pms_sync")
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKUP_DIR = os.path.join(APP_DIR, "data", "pms_backup")
+SECRETS_PATH = os.path.join(APP_DIR, ".streamlit", "secrets.toml")
 
 BASE_4F_DIR = r"Y:\餐務\2026(4F)"
 BASE_PEAK_DIR = r"Y:\餐務\The peak\2026(37F)"
 
-def parse_sheet_date(sheet_name: str, fallback_year: int = 2026) -> datetime.date:
+# 蔬果別名與標準報價品名對照表
+VEG_SYNONYMS = {
+    '紫包心': '紫色包心',
+    '綠花椰': '青花菜',
+    '青花椰': '青花菜',
+    '青蔥': '青蔥',
+    '青 蔥': '青蔥',
+    '火龍果(紅/白)': '火龍果',
+    '芭樂(粒)': '芭樂(粒)',
+    '芭 樂 (粒)': '芭樂(粒)',
+    '美生菜': '美生菜進口',
+    '美生菜(普通)': '美生菜進口',
+    '小黃瓜(普通)': '小黃瓜(普通)',
+    '蒜碎/蒜粗': '蒜碎/蒜粗',
+    '牛蕃茄': '牛蕃茄',
+    '洋蔥': '洋蔥',
+    '紅蘿蔔': '紅蘿蔔',
+    '甜黃椒': '彩色甜椒',
+    '甜紅椒': '彩色甜椒',
+    '洋菇(盒裝)': '洋菇(盒)',
+    '小番茄': '小番茄',
+    '南瓜': '南瓜(台灣)',
+    '巴西里': '巴西里',
+    '小豆苗': '小豆苗',
+    '羅蔓': '羅蔓',
+    '羅 蔓': '羅蔓',
+    '紅辣椒': '紅辣椒',
+    '油飯': '油飯',
+    '板豆腐': '板豆腐',
+    '老薑': '老薑',
+    '老 薑': '老薑',
+    '生薑': '老薑',
+    '綠色節瓜': '綠節瓜',
+    '綠節瓜': '綠節瓜',
+    '九層塔': '九層塔',
+    '薑絲': '薑絲',
+    '士林大香腸': '士林大香腸',
+    '綠檸檬': '檸檬',
+    '香吉士': '香吉士',
+    '清腿肉丁': '清雞腿肉',
+    '雞腿丁': '清雞腿肉',
+}
+
+_CACHED_SUPPLIER_PRICES_DF = None
+
+def load_supplier_prices_df():
+    """載入 Google Sheets supplier_prices 資料表 (含本地快取備份)"""
+    global _CACHED_SUPPLIER_PRICES_DF
+    if _CACHED_SUPPLIER_PRICES_DF is not None:
+        return _CACHED_SUPPLIER_PRICES_DF
+
+    backup_csv = os.path.join(BACKUP_DIR, "supplier_prices_cache.csv")
+
+    # 1. 優先從 Google Sheets API 讀取最新
+    try:
+        if os.path.exists(SECRETS_PATH):
+            with open(SECRETS_PATH, "rb") as f:
+                sec = tomllib.load(f)
+            c = sec.get("connections", {}).get("gsheets_station", {})
+            if c.get("type") == "service_account":
+                gc = gspread.service_account_from_dict(c)
+                sh = gc.open_by_url(c["spreadsheet"])
+                ws = sh.worksheet("supplier_prices")
+                df_sp = pd.DataFrame(ws.get_all_records())
+                if not df_sp.empty:
+                    df_sp['period_dt'] = pd.to_datetime(df_sp['period']).dt.date
+                    df_sp['clean_name'] = df_sp['item name'].astype(str).str.replace(' ', '').str.replace('　', '')
+                    # 存入快取
+                    df_sp.to_csv(backup_csv, index=False, encoding='utf-8-sig')
+                    _CACHED_SUPPLIER_PRICES_DF = df_sp
+                    return df_sp
+    except Exception as e:
+        logger.warning(f"[EXTRACTOR] 無法直連 Google Sheets supplier_prices: {e}，嘗試載入本地快取...")
+
+    # 2. 次選本地快取
+    if os.path.exists(backup_csv):
+        try:
+            df_sp = pd.read_csv(backup_csv)
+            df_sp['period_dt'] = pd.to_datetime(df_sp['period']).dt.date
+            df_sp['clean_name'] = df_sp['item name'].astype(str).str.replace(' ', '').str.replace('　', '')
+            _CACHED_SUPPLIER_PRICES_DF = df_sp
+            return df_sp
+        except Exception:
+            pass
+
+    return pd.DataFrame()
+
+def lookup_veg_price(item_name: str, order_date: datetime.date):
     """
-    從工作表名稱解析西元日期 (YYYY-MM-DD)
-    支援格式:
-    - '0261102', '261102', '20261102' -> 2026-11-02
-    - '11.2', '10.5', '10.12', '10.21', '9.28' -> 2026-11-02, 2026-10-05...
-    - '10 26', '8 24' -> 2026-10-26, 2026-08-24
-    - '1010', '1015' -> 2026-10-10
+    依據請購日期，在 supplier_prices 中尋找當期核定單價與單位
+    """
+    df_sp = load_supplier_prices_df()
+    if df_sp.empty:
+        return None, None, None
+
+    valid = df_sp[df_sp['period_dt'] <= order_date]
+    if valid.empty:
+        valid = df_sp
+    latest_period = valid['period_dt'].max()
+    sub = valid[valid['period_dt'] == latest_period]
+
+    raw_name = str(item_name).strip()
+    clean_target = re.sub(r'[\s\(\)（）\-\_]', '', raw_name)
+
+    # 1. 原始名稱無空格精確對應
+    m = sub[sub['clean_name'] == raw_name.replace(' ', '')]
+    if not m.empty:
+        p_val = pd.to_numeric(m.iloc[0]['price'], errors='coerce')
+        if pd.notna(p_val) and p_val > 0:
+            return float(p_val), str(m.iloc[0]['unit']).strip(), latest_period
+
+    # 2. 別名字典對應
+    if raw_name in VEG_SYNONYMS:
+        syn = VEG_SYNONYMS[raw_name]
+        m_syn = sub[sub['clean_name'] == syn.replace(' ', '')]
+        if not m_syn.empty:
+            p_val = pd.to_numeric(m_syn.iloc[0]['price'], errors='coerce')
+            if pd.notna(p_val) and p_val > 0:
+                return float(p_val), str(m_syn.iloc[0]['unit']).strip(), latest_period
+
+    # 3. 去標點字串模糊對應
+    for _, row in sub.iterrows():
+        cn = re.sub(r'[\s\(\)（）\-\_]', '', str(row['clean_name']))
+        if clean_target == cn or clean_target in cn or cn in clean_target:
+            p_val = pd.to_numeric(row['price'], errors='coerce')
+            if pd.notna(p_val) and p_val > 0:
+                return float(p_val), str(row['unit']).strip(), latest_period
+
+    return None, None, latest_period
+
+def parse_peak_sheet_date(sheet_name: str, target_year: int = 2026) -> datetime.date:
+    """
+    嚴格解析 The Peak 工作表名稱：只允許明確包含 026 / 2026 的分頁
+    徹底杜絕 2025 年 4 碼舊分頁 (如 1010, 1103 等)
     """
     s = str(sheet_name).strip()
 
     # 1. 026MMDD 或 26MMDD
-    m_tw = re.match(r"^0?26(\d{2})(\d{2})", s)
-    if m_tw:
-        m, d = int(m_tw.group(1)), int(m_tw.group(2))
-        return datetime.date(fallback_year, m, d)
+    m_026 = re.match(r"^0?26(\d{2})(\d{2})$", s)
+    if m_026:
+        m, d = int(m_026.group(1)), int(m_026.group(2))
+        if 1 <= m <= 12 and 1 <= d <= 31:
+            return datetime.date(target_year, m, d)
 
     # 2. 2026MMDD
-    m_full = re.match(r"^2026(\d{2})(\d{2})", s)
-    if m_full:
-        m, d = int(m_full.group(1)), int(m_full.group(2))
-        return datetime.date(2026, m, d)
+    m_2026 = re.match(r"^2026(\d{2})(\d{2})$", s)
+    if m_2026:
+        m, d = int(m_2026.group(1)), int(m_2026.group(2))
+        if 1 <= m <= 12 and 1 <= d <= 31:
+            return datetime.date(2026, m, d)
 
-    # 3. M.D 或 M.DD 或 MM.DD (例如 11.2, 10.5, 10.19)
-    m_dot = re.match(r"^(\d{1,2})\.(\d{1,2})", s)
+    return None
+
+def parse_4f_sheet_date(sheet_name: str, fallback_year: int = 2026) -> datetime.date:
+    """
+    解析 4F 餐車工作表名稱 (例如 11.2, 10.5, 10 26, 0260629)
+    """
+    s = str(sheet_name).strip()
+
+    m_026 = re.match(r"^0?26(\d{2})(\d{2})$", s)
+    if m_026:
+        m, d = int(m_026.group(1)), int(m_026.group(2))
+        return datetime.date(fallback_year, m, d)
+
+    m_dot = re.match(r"^(\d{1,2})\.(\d{1,2})$", s)
     if m_dot:
         m, d = int(m_dot.group(1)), int(m_dot.group(2))
         return datetime.date(fallback_year, m, d)
 
-    # 4. M D 或 MM DD (例如 '10 26', '8 24')
-    m_space = re.match(r"^(\d{1,2})\s+(\d{1,2})", s)
+    m_space = re.match(r"^(\d{1,2})\s+(\d{1,2})$", s)
     if m_space:
         m, d = int(m_space.group(1)), int(m_space.group(2))
         return datetime.date(fallback_year, m, d)
 
-    # 5. MMDD 4位數字 (例如 '1008', '1012')
-    m_4d = re.match(r"^(\d{2})(\d{2})$", s)
-    if m_4d:
-        m, d = int(m_4d.group(1)), int(m_4d.group(2))
-        if 1 <= m <= 12 and 1 <= d <= 31:
-            return datetime.date(fallback_year, m, d)
-
     return None
+
+def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None) -> pd.DataFrame:
+    """
+    抽取 The Peak (37F) 叫貨單數據 (全面核對 supplier_prices 官方報價單)
+    """
+    records = []
+    base_dir = rf"Y:\餐務\The peak\{target_year}(37F)"
+    if not os.path.exists(base_dir):
+        base_dir = BASE_PEAK_DIR
+
+    if not os.path.exists(base_dir):
+        logger.warning(f"The Peak 目錄不存在: {base_dir}")
+        return pd.DataFrame()
+
+    today = datetime.date.today()
+
+    target_files = [
+        ("1@THEPEAK採購用4.0.xlsx", False, "常規採購"),
+        ("3@thepeak菜商叫貨單.xlsx", True, "菜商生鮮")
+    ]
+
+    for fname, is_veg, category in target_files:
+        fp = os.path.join(base_dir, fname)
+        if not os.path.exists(fp):
+            continue
+
+        try:
+            wb = openpyxl.load_workbook(fp, data_only=True)
+            for sname in wb.sheetnames:
+                if any(k in sname for k in ["複製", "常用", "品項", "空白", "價格", "工作表", "班表"]):
+                    continue
+
+                d_obj = parse_peak_sheet_date(sname, target_year)
+                if not d_obj:
+                    continue
+
+                # 嚴防未來穿越日期
+                if d_obj > today:
+                    continue
+
+                if target_month and d_obj.month != target_month:
+                    continue
+
+                ws = wb[sname]
+
+                # 校驗儲存格 (3,6) 請購單位：若是餐車則略過
+                dept_val = str(ws.cell(3, 6).value or "").strip()
+                if "餐車" in dept_val:
+                    continue
+
+                date_str = d_obj.strftime("%Y-%m-%d")
+
+                if not is_veg:
+                    # 常規採購單 (自帶單價與金額)
+                    for r in range(5, ws.max_row + 1):
+                        name = ws.cell(r, 5).value
+                        if not name:
+                            continue
+                        name = str(name).strip()
+                        if any(k in name for k in ["合計", "總計", "品名", "備註"]):
+                            continue
+
+                        price = ws.cell(r, 6).value
+                        unit = ws.cell(r, 7).value
+                        qty = ws.cell(r, 8).value
+                        tot = ws.cell(r, 9).value
+
+                        try:
+                            qty_f = float(qty) if qty is not None else 0.0
+                            if qty_f <= 0:
+                                continue
+                            price_f = float(price) if price is not None else 0.0
+                            tot_f = float(tot) if tot is not None else (price_f * qty_f)
+
+                            records.append({
+                                "date": date_str,
+                                "item_name": name,
+                                "quantity": qty_f,
+                                "unit": str(unit or "").strip(),
+                                "price": price_f,
+                                "total_amount": tot_f,
+                                "category": category,
+                                "department": "The Peak",
+                                "source_file": fname,
+                                "source_sheet": sname
+                            })
+                        except Exception:
+                            continue
+                else:
+                    # 菜商生鮮叫貨單：無單價欄位，必須由 supplier_prices 核對當期單價
+                    for r in range(5, 45):
+                        for c_name, c_qty, c_unit in [(2, 3, 4), (7, 8, 9)]:
+                            name = ws.cell(r, c_name).value
+                            qty = ws.cell(r, c_qty).value
+                            unit = ws.cell(r, c_unit).value
+
+                            if not name or qty is None:
+                                continue
+                            name = str(name).strip()
+                            if any(k in name for k in ["品名", "合計", "備註"]):
+                                continue
+
+                            try:
+                                qty_f = float(qty)
+                                if qty_f <= 0:
+                                    continue
+
+                                p_val, u_val, p_date = lookup_veg_price(name, d_obj)
+                                if p_val is None or p_val <= 0:
+                                    logger.warning(f"[THE PEAK] 菜商品項 '{name}' 在報價期 ({p_date}) 查無有效單價，暫略過。")
+                                    continue
+
+                                final_unit = u_val or str(unit or "").strip()
+                                tot_f = round(p_val * qty_f, 2)
+
+                                records.append({
+                                    "date": date_str,
+                                    "item_name": name,
+                                    "quantity": qty_f,
+                                    "unit": final_unit,
+                                    "price": p_val,
+                                    "total_amount": tot_f,
+                                    "category": category,
+                                    "department": "The Peak",
+                                    "source_file": fname,
+                                    "source_sheet": sname
+                                })
+                            except Exception:
+                                continue
+            wb.close()
+        except Exception as e:
+            logger.error(f"讀取 The Peak 檔案異常: {fname}, 錯誤: {e}")
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df = df.sort_values(["date", "item_name"]).reset_index(drop=True)
+    return df
 
 def extract_4f_purchases(target_year: int = 2026, target_month: int = None) -> pd.DataFrame:
     """
@@ -78,7 +367,8 @@ def extract_4f_purchases(target_year: int = 2026, target_month: int = None) -> p
         logger.warning(f"4F 目錄不存在: {base_dir}")
         return pd.DataFrame()
 
-    # 決定要掃描的月份子目錄
+    today = datetime.date.today()
+
     month_folders = []
     if target_month:
         month_folders.append(f"{target_month}月")
@@ -98,261 +388,65 @@ def extract_4f_purchases(target_year: int = 2026, target_month: int = None) -> p
             if "採購" not in fname and "叫貨" not in fname:
                 continue
 
-            file_path = os.path.join(folder_path, fname)
-            is_veg = "菜商" in fname
-            category = "菜商生鮮" if is_veg else "常規採購"
-
+            fp = os.path.join(folder_path, fname)
             try:
-                wb = openpyxl.load_workbook(file_path, data_only=True)
+                wb = openpyxl.load_workbook(fp, data_only=True)
                 for sname in wb.sheetnames:
-                    # 排除非訂單範本表
-                    if any(k in sname for k in ["複製", "常用", "品項", "空白", "價格"]):
+                    if any(k in sname for k in ["複製", "常用", "品項", "空白", "價格", "工作表", "班表"]):
                         continue
 
-                    d_obj = parse_sheet_date(sname, target_year)
+                    d_obj = parse_4f_sheet_date(sname, target_year)
                     if not d_obj:
                         continue
+
+                    if d_obj > today:
+                        continue
+
                     if target_month and d_obj.month != target_month:
                         continue
 
                     ws = wb[sname]
                     date_str = d_obj.strftime("%Y-%m-%d")
 
-                    if not is_veg:
-                        # 4F 常規請購單 (標準表頭在 Row 4)
-                        for r in range(5, ws.max_row + 1):
-                            item_name = ws.cell(r, 5).value
-                            price = ws.cell(r, 6).value
-                            unit = ws.cell(r, 7).value
-                            qty = ws.cell(r, 8).value
-                            amount = ws.cell(r, 9).value
-
-                            if item_name and qty and qty not in [0, "0", None]:
-                                try:
-                                    q = float(qty)
-                                    p = float(price) if price else 0.0
-                                    amt = float(amount) if amount else (q * p)
-                                    records.append({
-                                        "date": date_str,
-                                        "dept": "Happy Hour",
-                                        "item_name": str(item_name).strip(),
-                                        "quantity": q,
-                                        "unit": str(unit).strip() if unit else "",
-                                        "price": p,
-                                        "total_amount": round(amt, 2),
-                                        "category": category,
-                                        "sheet_name": sname,
-                                        "source_file": fname
-                                    })
-                                except Exception:
-                                    pass
-                    else:
-                        # 4F 菜商叫貨單 (雙欄排版)
-                        for r in range(5, ws.max_row + 1):
-                            # 左半欄
-                            n1, q1, u1 = ws.cell(r, 2).value, ws.cell(r, 3).value, ws.cell(r, 4).value
-                            if n1 and q1 and q1 not in [0, "0", None]:
-                                try:
-                                    records.append({
-                                        "date": date_str,
-                                        "dept": "Happy Hour",
-                                        "item_name": str(n1).strip(),
-                                        "quantity": float(q1),
-                                        "unit": str(u1).strip() if u1 else "",
-                                        "price": 0.0,
-                                        "total_amount": 0.0,
-                                        "category": category,
-                                        "sheet_name": sname,
-                                        "source_file": fname
-                                    })
-                                except Exception:
-                                    pass
-                            # 右半欄
-                            n2, q2, u2 = ws.cell(r, 7).value, ws.cell(r, 8).value, ws.cell(r, 9).value
-                            if n2 and q2 and q2 not in [0, "0", None]:
-                                try:
-                                    records.append({
-                                        "date": date_str,
-                                        "dept": "Happy Hour",
-                                        "item_name": str(n2).strip(),
-                                        "quantity": float(q2),
-                                        "unit": str(u2).strip() if u2 else "",
-                                        "price": 0.0,
-                                        "total_amount": 0.0,
-                                        "category": category,
-                                        "sheet_name": sname,
-                                        "source_file": fname
-                                    })
-                                except Exception:
-                                    pass
-                wb.close()
-            except Exception as e:
-                logger.error(f"解析 4F 檔案失敗 {file_path}: {e}")
-
-    df = pd.DataFrame(records)
-    return df
-
-def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None) -> pd.DataFrame:
-    """
-    抽取 The Peak (37F) 叫貨單數據
-    """
-    records = []
-    base_dir = rf"Y:\餐務\The peak\{target_year}(37F)"
-    if not os.path.exists(base_dir):
-        base_dir = BASE_PEAK_DIR
-
-    if not os.path.exists(base_dir):
-        logger.warning(f"The Peak 目錄不存在: {base_dir}")
-        return pd.DataFrame()
-
-    # 1. 菜商價格對照表解析 (預先載入單價)
-    veg_prices = {}
-    veg_file = os.path.join(base_dir, "3@thepeak菜商叫貨單.xlsx")
-    if os.path.exists(veg_file):
-        try:
-            wb_v = openpyxl.load_workbook(veg_file, data_only=True)
-            for sname in wb_v.sheetnames:
-                if "價格" in sname:
-                    ws_p = wb_v[sname]
-                    for r in range(6, ws_p.max_row + 1):
-                        n1, p1 = ws_p.cell(r, 2).value, ws_p.cell(r, 5).value
-                        if n1 and p1:
-                            try:
-                                veg_prices[str(n1).strip().replace(" ", "")] = float(p1)
-                            except:
-                                pass
-                        n2, p2 = ws_p.cell(r, 7).value, ws_p.cell(r, 10).value
-                        if n2 and p2:
-                            try:
-                                veg_prices[str(n2).strip().replace(" ", "")] = float(p2)
-                            except:
-                                pass
-                    break
-            wb_v.close()
-        except Exception:
-            pass
-
-    # 2. 遍歷 The Peak 檔案
-    target_files = [
-        ("1@THEPEAK採購用4.0.xlsx", False, "常規採購"),
-        ("3@thepeak菜商叫貨單.xlsx", True, "菜商生鮮")
-    ]
-
-    for fname, is_veg, category in target_files:
-        fp = os.path.join(base_dir, fname)
-        if not os.path.exists(fp):
-            continue
-
-        try:
-            wb = openpyxl.load_workbook(fp, data_only=True)
-            for sname in wb.sheetnames:
-                if any(k in sname for k in ["複製", "常用", "品項", "空白", "價格", "工作表", "班表"]):
-                    continue
-
-                d_obj = parse_sheet_date(sname, target_year)
-                if not d_obj:
-                    continue
-                if target_month and d_obj.month != target_month:
-                    continue
-
-                ws = wb[sname]
-                date_str = d_obj.strftime("%Y-%m-%d")
-
-                if not is_veg:
-                    # 常規請購單
                     for r in range(5, ws.max_row + 1):
-                        item_name = ws.cell(r, 5).value
+                        name = ws.cell(r, 5).value
+                        if not name:
+                            continue
+                        name = str(name).strip()
+                        if any(k in name for k in ["合計", "總計", "品名", "備註"]):
+                            continue
+
                         price = ws.cell(r, 6).value
                         unit = ws.cell(r, 7).value
                         qty = ws.cell(r, 8).value
-                        amount = ws.cell(r, 9).value
+                        tot = ws.cell(r, 9).value
 
-                        if item_name and qty and qty not in [0, "0", None]:
-                            try:
-                                q = float(qty)
-                                p = float(price) if price else 0.0
-                                amt = float(amount) if amount else (q * p)
-                                records.append({
-                                    "date": date_str,
-                                    "dept": "The Peak",
-                                    "item_name": str(item_name).strip(),
-                                    "quantity": q,
-                                    "unit": str(unit).strip() if unit else "",
-                                    "price": p,
-                                    "total_amount": round(amt, 2),
-                                    "category": category,
-                                    "sheet_name": sname,
-                                    "source_file": fname
-                                })
-                            except Exception:
-                                pass
-                else:
-                    # 菜商叫貨單
-                    for r in range(5, ws.max_row + 1):
-                        # 左半欄
-                        n1, q1, u1 = ws.cell(r, 2).value, ws.cell(r, 3).value, ws.cell(r, 4).value
-                        if n1 and q1 and q1 not in [0, "0", None]:
-                            try:
-                                q = float(q1)
-                                clean_n = str(n1).strip().replace(" ", "")
-                                p = veg_prices.get(clean_n, 0.0)
-                                amt = round(q * p, 2)
-                                records.append({
-                                    "date": date_str,
-                                    "dept": "The Peak",
-                                    "item_name": str(n1).strip(),
-                                    "quantity": q,
-                                    "unit": str(u1).strip() if u1 else "",
-                                    "price": p,
-                                    "total_amount": amt,
-                                    "category": category,
-                                    "sheet_name": sname,
-                                    "source_file": fname
-                                })
-                            except Exception:
-                                pass
-                        # 右半欄
-                        n2, q2, u2 = ws.cell(r, 7).value, ws.cell(r, 8).value, ws.cell(r, 9).value
-                        if n2 and q2 and q2 not in [0, "0", None]:
-                            try:
-                                q = float(q2)
-                                clean_n = str(n2).strip().replace(" ", "")
-                                p = veg_prices.get(clean_n, 0.0)
-                                amt = round(q * p, 2)
-                                records.append({
-                                    "date": date_str,
-                                    "dept": "The Peak",
-                                    "item_name": str(n2).strip(),
-                                    "quantity": q,
-                                    "unit": str(u2).strip() if u2 else "",
-                                    "price": p,
-                                    "total_amount": amt,
-                                    "category": category,
-                                    "sheet_name": sname,
-                                    "source_file": fname
-                                })
-                            except Exception:
-                                pass
-            wb.close()
-        except Exception as e:
-            logger.error(f"解析 The Peak 檔案失敗 {fp}: {e}")
+                        try:
+                            qty_f = float(qty) if qty is not None else 0.0
+                            if qty_f <= 0:
+                                continue
+                            price_f = float(price) if price is not None else 0.0
+                            tot_f = float(tot) if tot is not None else (price_f * qty_f)
+
+                            records.append({
+                                "date": date_str,
+                                "item_name": name,
+                                "quantity": qty_f,
+                                "unit": str(unit or "").strip(),
+                                "price": price_f,
+                                "total_amount": tot_f,
+                                "category": "餐車採購",
+                                "department": "4F Happy Hour",
+                                "source_file": fname,
+                                "source_sheet": sname
+                            })
+                        except Exception:
+                            continue
+                wb.close()
+            except Exception as e:
+                logger.error(f"讀取 4F 檔案異常: {fname}, 錯誤: {e}")
 
     df = pd.DataFrame(records)
+    if not df.empty:
+        df = df.sort_values(["date", "item_name"]).reset_index(drop=True)
     return df
-
-def scan_october_audit():
-    """專門掃描 10 月份漏更請購單診斷報告"""
-    df_4f = extract_4f_purchases(2026, 10)
-    df_peak = extract_thepeak_purchases(2026, 10)
-    df_all = pd.concat([df_4f, df_peak], ignore_index=True)
-    return df_all
-
-if __name__ == "__main__":
-    df_oct = scan_october_audit()
-    print(f"Total October orders extracted: {len(df_oct)} rows")
-    if not df_oct.empty:
-        summary = df_oct.groupby(["dept", "date"]).agg({
-            "total_amount": "sum",
-            "item_name": "count"
-        }).reset_index()
-        print(summary.to_string(index=False))
