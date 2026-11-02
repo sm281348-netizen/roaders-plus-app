@@ -31,6 +31,7 @@ except Exception:
 # 導入解析引擎
 from pms_parser import extract_pms_day, extract_pms_range, to_date_obj
 from pms_future_extractor import extract_future_pms_occ
+from fb_purchase_sync import run_fb_purchase_sync
 
 # 設定工作目錄
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -141,13 +142,20 @@ def push_to_cloud_git():
     logger.info("檢查是否需要推播數據至 GitHub 雲端倉庫...")
     try:
         # 1. 暫存 data/pms_backup/ 與同步引擎腳本
-        subprocess.run(["git", "add", "data/pms_backup/", "pms_future_extractor.py", "run_daily_sync.py"], cwd=APP_DIR, check=True)
+        subprocess.run([
+            "git", "add", 
+            "data/pms_backup/", 
+            "pms_future_extractor.py", 
+            "run_daily_sync.py",
+            "fb_purchase_extractor.py",
+            "fb_purchase_sync.py"
+        ], cwd=APP_DIR, check=True)
         
         # 2. 檢查有無異動
         diff_res = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=APP_DIR)
         if diff_res.returncode != 0:
             today_str = datetime.date.today().strftime('%Y-%m-%d')
-            commit_msg = f"chore(pms): auto-sync PMS data {today_str} [skip ci]"
+            commit_msg = f"chore(sync): auto-sync PMS & FB purchase data {today_str} [skip ci]"
             logger.info(f"偵測到新數據，正在提交變更: {commit_msg}")
             subprocess.run(["git", "commit", "-m", commit_msg], cwd=APP_DIR, check=True)
             
@@ -164,7 +172,7 @@ def push_to_cloud_git():
             else:
                 logger.error(f"[FAIL] Git 推播失敗: {push_res.stderr}")
         else:
-            logger.info("[INFO] PMS 數據庫無新異動，無需推播。")
+            logger.info("[INFO] PMS 與餐飲數據庫無新異動，無需推播。")
     except Exception as e:
         logger.error(f"[FAIL] 執行 Git 雲端推播時發生例外: {e}")
 
@@ -184,6 +192,12 @@ def main():
     for h in hotels:
         run_sync_for_hotel(h, target_date, days=args.days)
     logger.info(f"雙館金旭數據解析與本地庫存檔作業完成。")
+
+    # 執行餐飲請購單 (The Peak 與 4F 餐車) 自動比對與雲端同步
+    try:
+        run_fb_purchase_sync(target_date=datetime.date.today())
+    except Exception as e_fb:
+        logger.error(f"[FAIL] 餐飲請購單同步發生例外: {e_fb}", exc_info=True)
 
     if args.git_push:
         push_to_cloud_git()
