@@ -175,6 +175,8 @@ def extract_fnb_daily_details(hotel_name: str, start_co_date: str = "20260101") 
             curr_d += datetime.timedelta(days=1)
 
     df_out = pd.DataFrame(expanded_records)
+    if not df_out.empty:
+        df_out = df_out.sort_values(by=['服務日期', '房號', '訂房碼', '服務事項']).reset_index(drop=True)
     logger.info(f"[{hotel_name}] 餐期日曆展開完成: 共 {len(df_out)} 筆每日服務明細")
     return df_out
 
@@ -238,14 +240,37 @@ def sync_hotel_fnb_data(hotel_name: str, cutoff_days: int = 14) -> pd.DataFrame:
     df_new_active = df_new[df_new['服務日期'] >= cutoff_str].copy()
     logger.info(f"[{hotel_name}] [f&b_data] 抽取最新在手預約 (>= {cutoff_str}): 共 {len(df_new_active)} 筆")
 
-    # 3. 合併資料
-    new_rows_list = df_new_active[headers].astype(str).values.tolist() if not df_new_active.empty else []
-    final_rows = [headers] + preserved_rows + new_rows_list
+    # 3. 合併資料並進行嚴格防呆排序與去重
+    df_pres = pd.DataFrame(preserved_rows, columns=headers) if preserved_rows else pd.DataFrame(columns=headers)
+    df_combined = pd.concat([df_pres, df_new_active[headers]], ignore_index=True)
+    
+    if not df_combined.empty:
+        # 清理服務日期
+        df_combined['服務日期'] = df_combined['服務日期'].astype(str).str.strip().str.replace('.0', '', regex=False)
+        # 去重：若同訂單在同日期同事項重複出現，優先保留有實際房號與 CO 已結帳狀態的記錄
+        df_combined['has_room'] = df_combined['房號'].str.strip() != ''
+        df_combined['is_co'] = df_combined['訂房狀況'].str.strip().str.startswith('CO')
+        
+        df_sorted = df_combined.sort_values(
+            by=['服務日期', 'is_co', 'has_room', '訂房碼'], 
+            ascending=[True, False, False, True]
+        )
+        df_dedup = df_sorted.drop_duplicates(
+            subset=['訂房碼', '服務日期', '服務事項', '訂房名稱/旅客姓名'], 
+            keep='first'
+        ).copy()
+        df_dedup = df_dedup.drop(columns=['has_room', 'is_co'])
+        
+        # 嚴格按「服務日期 -> 房號 -> 訂房碼 -> 服務事項」由小到大嚴格遞增排序
+        df_final = df_dedup.sort_values(by=['服務日期', '房號', '訂房碼', '服務事項']).reset_index(drop=True)
+        final_rows = [headers] + df_final[headers].astype(str).values.tolist()
+    else:
+        final_rows = [headers]
 
     # 4. 寫回 Google Sheet
     ws.clear()
     ws.update(values=final_rows, range_name="A1")
-    logger.info(f"[SUCCESS] [{hotel_name}] [f&b_data] Google Sheets 同步成功！總筆數: {len(final_rows) - 1} 筆 (歷史: {len(preserved_rows)}, 最新: {len(new_rows_list)})")
+    logger.info(f"[SUCCESS] [{hotel_name}] [f&b_data] Google Sheets 同步成功！總筆數: {len(final_rows) - 1} 筆 (嚴格按服務日期遞增排序，已消除錯亂與重複)")
 
     return df_new
 
