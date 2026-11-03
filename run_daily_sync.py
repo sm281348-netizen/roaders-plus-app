@@ -32,6 +32,7 @@ except Exception:
 from pms_parser import extract_pms_day, extract_pms_range, to_date_obj
 from pms_future_extractor import extract_future_pms_occ
 from fb_purchase_sync import run_fb_purchase_sync
+from pms_fnb_extractor import run_fnb_scheduled_sync
 
 # 設定工作目錄
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -148,7 +149,8 @@ def push_to_cloud_git():
             "pms_future_extractor.py", 
             "run_daily_sync.py",
             "fb_purchase_extractor.py",
-            "fb_purchase_sync.py"
+            "fb_purchase_sync.py",
+            "pms_fnb_extractor.py"
         ], cwd=APP_DIR, check=True)
         
         # 2. 檢查有無異動
@@ -192,6 +194,12 @@ def main():
     for h in hotels:
         run_sync_for_hotel(h, target_date, days=args.days)
     logger.info(f"雙館金旭數據解析與本地庫存檔作業完成。")
+
+    # 執行雙館 F&B 附加服務 (f&b_data 及 f&b_report 預估) 全自動同步
+    try:
+        run_fnb_scheduled_sync()
+    except Exception as e_fnb:
+        logger.error(f"[FAIL] F&B 附加服務同步發生例外: {e_fnb}", exc_info=True)
 
     # 執行餐飲請購單 (The Peak 與 4F 餐車) 自動比對與雲端同步
     try:

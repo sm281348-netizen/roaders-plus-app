@@ -1744,7 +1744,280 @@ def get_combined_fb_future_data():
     df_th = fetch_fb_future_data(hotel_type="主題館")
     return pd.concat([df_st, df_th], ignore_index=True)
 
-@st.cache_data(ttl=3600)
+
+def fetch_fb_report_raw_dict():
+    """
+    讀取 f&b_report 全部列並轉為以日期為 key 的 dictionary。
+    格式: { 'YYYY-MM-DD': [th_bf_est, th_bf_act, zq_bf_est, zq_bf_act, th_af_est, th_af_act, zq_af_est, zq_af_act, hh_act] }
+    """
+    import toml, gspread
+    try:
+        cfg = st.secrets['connections']['gsheets_station']
+        sa_info = {
+            k: cfg[k] for k in [
+                'type', 'project_id', 'private_key_id', 'private_key',
+                'client_email', 'client_id', 'auth_uri', 'token_uri',
+                'auth_provider_x509_cert_url', 'client_x509_cert_url'
+            ]
+        }
+        gc = gspread.service_account_from_dict(sa_info)
+        sh = gc.open_by_url(cfg['spreadsheet'])
+        ws = sh.worksheet('f&b_report')
+        all_rows = ws.get_all_values()
+        
+        result_map = {}
+        for r in all_rows[3:]:  # 跳過前三列表頭
+            if r and len(r) > 0:
+                d_val = r[0].strip().replace('/', '-')
+                if len(d_val) == 10 and d_val[4] == '-' and d_val[7] == '-':
+                    vals = [x.strip() for x in r[1:10]] + [''] * max(0, 9 - len(r[1:10]))
+                    result_map[d_val] = vals
+        return result_map, None
+    except Exception as e:
+        return {}, str(e)
+
+
+def update_fb_report_daily_row(date_str, th_bf_est, th_bf_act, zq_bf_est, zq_bf_act, th_af_est, th_af_act, zq_af_est, zq_af_act, hh_act):
+    """
+    精準原地更新 f&b_report 特定日期的整列數據 (保留多層表頭與其他歷史列)。
+    若日期不在現存表格中，自動在末端追加新日期列。
+    """
+    import toml, gspread
+    try:
+        cfg = st.secrets['connections']['gsheets_station']
+        sa_info = {
+            k: cfg[k] for k in [
+                'type', 'project_id', 'private_key_id', 'private_key',
+                'client_email', 'client_id', 'auth_uri', 'token_uri',
+                'auth_provider_x509_cert_url', 'client_x509_cert_url'
+            ]
+        }
+        gc = gspread.service_account_from_dict(sa_info)
+        sh = gc.open_by_url(cfg['spreadsheet'])
+        ws = sh.worksheet('f&b_report')
+        all_rows = ws.get_all_values()
+        
+        target_row_idx = None
+        for i, r in enumerate(all_rows):
+            if r and len(r) > 0 and r[0].strip().replace('/', '-') == str(date_str).strip():
+                target_row_idx = i + 1  # 1-indexed
+                break
+                
+        new_row_values = [
+            str(date_str).strip(),
+            str(th_bf_est).strip() if str(th_bf_est).strip() != '' else '',
+            str(th_bf_act).strip() if str(th_bf_act).strip() != '' else '',
+            str(zq_bf_est).strip() if str(zq_bf_est).strip() != '' else '',
+            str(zq_bf_act).strip() if str(zq_bf_act).strip() != '' else '',
+            str(th_af_est).strip() if str(th_af_est).strip() != '' else '',
+            str(th_af_act).strip() if str(th_af_act).strip() != '' else '',
+            str(zq_af_est).strip() if str(zq_af_est).strip() != '' else '',
+            str(zq_af_act).strip() if str(zq_af_act).strip() != '' else '',
+            str(hh_act).strip() if str(hh_act).strip() != '' else ''
+        ]
+        
+        if target_row_idx:
+            ws.update(values=[new_row_values], range_name=f"A{target_row_idx}:J{target_row_idx}")
+        else:
+            ws.append_row(new_row_values)
+            
+        # 清除系統相關快取，確保所有圖表即刻更新
+        fetch_fb_daily_df.clear()
+        compute_fb_mtd.clear()
+        fetch_month_summary.clear()
+        return True, "儲存成功"
+    except Exception as e:
+        return False, str(e)
+
+
+def render_fb_report_keyin_page(selected_date=None, current_hotel="站前館"):
+    """
+    現場餐期每日來客登記 (f&b_report) 專屬填報介面
+    """
+    import datetime
+    import pandas as pd
+
+    st.header("🍽️ 現場餐期每日來客登記 (f&b_report)")
+    st.info("💡 **現場同仁每日工作流**：請選取今日或補登日期。系統已自金旭系統自動核算帶入雙館「預估人數」。請於各餐期結束後（早餐 10:30、下午茶 17:00、Happy Hour 22:00）填入現場「實際來客數」，點擊儲存即可即時連動全飯店營運報表與採購分析！")
+
+    default_d = selected_date if isinstance(selected_date, datetime.date) else datetime.date.today()
+    
+    col_d1, col_d2, col_d3 = st.columns([2, 2, 3])
+    with col_d1:
+        keyin_date = st.date_input("📅 選擇填報日期：", value=default_d, key="fb_keyin_picker")
+        keyin_str = keyin_date.strftime("%Y-%m-%d")
+    with col_d2:
+        st.write("")
+        st.write("")
+        if st.button("🔄 重新整理最新數據", key="btn_refresh_fb_report"):
+            fetch_fb_daily_df.clear()
+            compute_fb_mtd.clear()
+            st.rerun()
+
+    # 讀取現有 f&b_report
+    report_dict, err = fetch_fb_report_raw_dict()
+    if err:
+        st.warning(f"⚠️ 讀取 f&b_report 提示：{err}")
+
+    raw_vals = report_dict.get(keyin_str, ['', '', '', '', '', '', '', '', ''])
+
+    def to_int(v):
+        try:
+            return int(float(str(v).replace(',', '').strip()))
+        except:
+            return 0
+
+    init_th_bf_est = to_int(raw_vals[0])
+    init_th_bf_act = to_int(raw_vals[1])
+    init_zq_bf_est = to_int(raw_vals[2])
+    init_zq_bf_act = to_int(raw_vals[3])
+    init_th_af_est = to_int(raw_vals[4])
+    init_th_af_act = to_int(raw_vals[5])
+    init_zq_af_est = to_int(raw_vals[6])
+    init_zq_af_act = to_int(raw_vals[7])
+    init_hh_act    = to_int(raw_vals[8])
+
+    # 頂部即時 KPI Cards 預覽
+    total_bf_act = init_th_bf_act + init_zq_bf_act
+    total_bf_est = init_th_bf_est + init_zq_bf_est
+    total_af_act = init_th_af_act + init_zq_af_act
+    total_af_est = init_th_af_est + init_zq_af_est
+    peak_total_act = total_bf_act + total_af_act
+    peak_total_est = total_bf_est + total_af_est
+    all_day_total_act = peak_total_act + init_hh_act
+
+    bf_rate_str = f"{(total_bf_act / total_bf_est * 100):.1f}%" if total_bf_est > 0 else ("散客" if total_bf_act > 0 else "-")
+    af_rate_str = f"{(total_af_act / total_af_est * 100):.1f}%" if total_af_est > 0 else ("散客" if total_af_act > 0 else "-")
+
+    st.markdown("##### 📌 當前填報日即時營運指標總覽")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(make_card("全日總來客 (早+午+HH)", f"{all_day_total_act} 人", "card-theme-blue", "實際總接待人數", "👥"), unsafe_allow_html=True)
+    k2.markdown(make_card("The Peak 來客 (早+午)", f"{peak_total_act} 人", "card-theme-purple", f"預估: {peak_total_est} 人", "🏔️"), unsafe_allow_html=True)
+    k3.markdown(make_card("早餐到餐率", bf_rate_str, "card-theme-orange", f"實際 {total_bf_act} / 預估 {total_bf_est}", "🥐"), unsafe_allow_html=True)
+    k4.markdown(make_card("下午茶到餐率", af_rate_str, "card-theme-green", f"實際 {total_af_act} / 預估 {total_af_est}", "🍰"), unsafe_allow_html=True)
+
+    st.divider()
+
+    # 填報表單
+    with st.form(key=f"form_fnb_keyin_{keyin_str}"):
+        st.subheader(f"📝 填報登記表單 — 日期：`{keyin_str}`")
+
+        c_bf, c_af = st.columns(2)
+
+        with c_bf:
+            st.markdown("""
+            <div style="background-color: #fff9f0; padding: 12px; border-radius: 8px; border-left: 4px solid #f39c12; margin-bottom: 12px;">
+                <h4 style="margin:0; color:#d35400;">🥐 早餐時段 (The Peak Breakfast 07:00 ~ 10:30)</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            b_th1, b_th2 = st.columns(2)
+            with b_th1:
+                th_bf_est = st.number_input("主題早預估 (人)", min_value=0, max_value=999, value=init_th_bf_est, step=1, key=f"th_bf_est_{keyin_str}")
+            with b_th2:
+                th_bf_act = st.number_input("主題早實際 (人) ⭐", min_value=0, max_value=999, value=init_th_bf_act, step=1, key=f"th_bf_act_{keyin_str}")
+
+            b_zq1, b_zq2 = st.columns(2)
+            with b_zq1:
+                zq_bf_est = st.number_input("站前早預估 (人)", min_value=0, max_value=999, value=init_zq_bf_est, step=1, key=f"zq_bf_est_{keyin_str}")
+            with b_zq2:
+                zq_bf_act = st.number_input("站前早實際 (人) ⭐", min_value=0, max_value=999, value=init_zq_bf_act, step=1, key=f"zq_bf_act_{keyin_str}")
+
+        with c_af:
+            st.markdown("""
+            <div style="background-color: #f7f0fa; padding: 12px; border-radius: 8px; border-left: 4px solid #8e44ad; margin-bottom: 12px;">
+                <h4 style="margin:0; color:#6c3483;">🍰 下午茶時段 (The Peak Afternoon Tea 14:00 ~ 17:00)</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            a_th1, a_th2 = st.columns(2)
+            with a_th1:
+                th_af_est = st.number_input("主題下午預估 (人)", min_value=0, max_value=999, value=init_th_af_est, step=1, key=f"th_af_est_{keyin_str}")
+            with a_th2:
+                th_af_act = st.number_input("主題下午實際 (人) ⭐", min_value=0, max_value=999, value=init_th_af_act, step=1, key=f"th_af_act_{keyin_str}")
+
+            a_zq1, a_zq2 = st.columns(2)
+            with a_zq1:
+                zq_af_est = st.number_input("站前下午預估 (人)", min_value=0, max_value=999, value=init_zq_af_est, step=1, key=f"zq_af_est_{keyin_str}")
+            with a_zq2:
+                zq_af_act = st.number_input("站前下午實際 (人) ⭐", min_value=0, max_value=999, value=init_zq_af_act, step=1, key=f"zq_af_act_{keyin_str}")
+
+        st.markdown("""
+        <div style="background-color: #f0f4f8; padding: 12px; border-radius: 8px; border-left: 4px solid #2980b9; margin-top: 10px; margin-bottom: 12px;">
+            <h4 style="margin:0; color:#1a5276;">🍷 Happy Hour 時段 (4F 餐車 17:00 ~ 22:00)</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        hh_col1, hh_col2 = st.columns([1, 1])
+        with hh_col1:
+            hh_act = st.number_input("4F Happy Hour 實際來客數 (人) ⭐", min_value=0, max_value=999, value=init_hh_act, step=1, key=f"hh_act_{keyin_str}")
+
+        st.write("")
+        submit_save = st.form_submit_button("💾 儲存並同步至 Google Sheets", type="primary", use_container_width=True)
+
+    if submit_save:
+        with st.spinner(f"正在將 {keyin_str} 餐期數據寫入雲端 Google Sheets..."):
+            ok, msg = update_fb_report_daily_row(
+                date_str=keyin_str,
+                th_bf_est=th_bf_est, th_bf_act=th_bf_act,
+                zq_bf_est=zq_bf_est, zq_bf_act=zq_bf_act,
+                th_af_est=th_af_est, th_af_act=th_af_act,
+                zq_af_est=zq_af_est, zq_af_act=zq_af_act,
+                hh_act=hh_act
+            )
+            if ok:
+                st.success(f"🎉 儲存成功！`{keyin_str}` 餐期來客資料已精準寫入 Google Sheets，全系統分析已同步更新！")
+                import time; time.sleep(1.2)
+                st.rerun()
+            else:
+                st.error(f"❌ 儲存失敗：{msg}")
+
+    # 最近一週總覽核對表格
+    st.divider()
+    st.subheader("📋 最近 7 天現場登記核對總覽")
+    
+    ref_d = keyin_date
+    recent_dates = [(ref_d - datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+    
+    table_rows = []
+    for d in recent_dates:
+        r_vals = report_dict.get(d, ['', '', '', '', '', '', '', '', ''])
+        d_th_be = to_int(r_vals[0])
+        d_th_ba = to_int(r_vals[1])
+        d_zq_be = to_int(r_vals[2])
+        d_zq_ba = to_int(r_vals[3])
+        d_th_ae = to_int(r_vals[4])
+        d_th_aa = to_int(r_vals[5])
+        d_zq_ae = to_int(r_vals[6])
+        d_zq_aa = to_int(r_vals[7])
+        d_hh    = to_int(r_vals[8])
+        
+        tot_be = d_th_be + d_zq_be
+        tot_ba = d_th_ba + d_zq_ba
+        tot_ae = d_th_ae + d_zq_ae
+        tot_aa = d_th_aa + d_zq_aa
+        tot_peak = tot_ba + tot_aa
+        
+        bf_rate = f"{(tot_ba / tot_be * 100):.1f}%" if tot_be > 0 else ("-" if tot_ba == 0 else "散客")
+        af_rate = f"{(tot_aa / tot_ae * 100):.1f}%" if tot_ae > 0 else ("-" if tot_aa == 0 else "散客")
+        
+        status = "🟢 已完成" if (tot_ba > 0 and tot_aa > 0 and d_hh > 0) else ("🟡 部分填報" if (tot_ba > 0 or tot_aa > 0 or d_hh > 0) else "⚪ 待填")
+        
+        table_rows.append({
+            '日期': d,
+            '狀態': status,
+            '早餐預估': tot_be,
+            '早餐實際': tot_ba,
+            '早餐到餐率': bf_rate,
+            '下午茶預估': tot_ae,
+            '下午茶實際': tot_aa,
+            '下午茶到餐率': af_rate,
+            '4F HH 實際': d_hh,
+            'The Peak 總客數': tot_peak,
+            '全日總客數': tot_peak + d_hh
+        })
+        
+    df_recent = pd.DataFrame(table_rows)
+    st.dataframe(df_recent, use_container_width=True, hide_index=True)
 
 
 @st.cache_data(ttl=3600)
@@ -3156,12 +3429,12 @@ st.title(f"Hotel Master - {current_hotel}")
 st.sidebar.divider()
 st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    menu_options = ["💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
+    menu_options = ["💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🍽️ 現場餐期每日登記", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
 else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
         "💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🧹 房務數據", 
-        "🍽️ 餐廳數據", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
+        "🍽️ 餐廳數據", "🍽️ 現場餐期每日登記", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
         "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告",
         "🏔️ The Peak 專案總評", "⚖️ 雙館餐飲成本攤提", "💡 專案：免費服務成本優化"
     ]
@@ -4728,72 +5001,82 @@ if current_hotel != "採購":
     if selected_page == "🍽️ 餐廳數據":
         st.header("🍽️ 餐廳數據")
         
-        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
-        # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
-        fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
-        rest_mrev = fb['revenue']
+        tab_rest_analytics, tab_rest_keyin = st.tabs(["📊 餐廳營運分析 (MTD)", "📝 現場餐期每日登記 (f&b_report)"])
+        
+        with tab_rest_analytics:
+            start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
+            # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
+            fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
+            rest_mrev = fb['revenue']
 
-        st.write("##### 🍽️ 餐廳營運累計 (MTD)")
+            st.write("##### 🍽️ 餐廳營運累計 (MTD)")
 
-        if fb['error']:
-            st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
+            if fb['error']:
+                st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
 
-        mtd_bf_theme = fb['bf_theme_act']
-        mtd_bf_zq    = fb['bf_zq_act']
-        mtd_af_theme = fb['af_theme_act']
-        mtd_af_zq    = fb['af_zq_act']
-        mtd_total_bf_act = fb['total_act_bf']
-        mtd_total_af_act = fb['total_act_af']
+            mtd_bf_theme = fb['bf_theme_act']
+            mtd_bf_zq    = fb['bf_zq_act']
+            mtd_af_theme = fb['af_theme_act']
+            mtd_af_zq    = fb['af_zq_act']
+            mtd_total_bf_act = fb['total_act_bf']
+            mtd_total_af_act = fb['total_act_af']
 
-        active_bf_days = fb['matched_days']
-        active_af_days = fb.get('active_af_days', active_bf_days)
-        avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
-        avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
-        mtd_avg_total = avg_total_bf + avg_total_af
+            active_bf_days = fb['matched_days']
+            active_af_days = fb.get('active_af_days', active_bf_days)
+            avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
+            avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
+            mtd_avg_total = avg_total_bf + avg_total_af
 
-        rest_avg_spent = fb['avg_spent']
+            rest_avg_spent = fb['avg_spent']
 
-        st.markdown(
-            "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
-        sz1, sz2, sz3 = st.columns(3)
-        sz1.markdown(make_card(
-            "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-        sz2.markdown(make_card(
-            "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-        sz3.markdown(make_card(
-            "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+            st.markdown(
+                "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
+            sz1, sz2, sz3 = st.columns(3)
+            sz1.markdown(make_card(
+                "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+            sz2.markdown(make_card(
+                "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+            sz3.markdown(make_card(
+                "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
 
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
-        st1, st2, st3 = st.columns(3)
-        st1.markdown(make_card(
-            "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-        st2.markdown(make_card(
-            "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-        st3.markdown(make_card(
-            "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
+            st1, st2, st3 = st.columns(3)
+            st1.markdown(make_card(
+                "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+            st2.markdown(make_card(
+                "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+            st3.markdown(make_card(
+                "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
 
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
-                    "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
-        m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
-                    "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
-        m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
-                    "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
-        m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
-                    "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
+                        "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
+            m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
+                        "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
+            m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
+                        "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
+            m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
+                        "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
 
-        st.markdown(
-            "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
-        a1, a2, a3 = st.columns(3)
-        a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
-                    "card-theme-orange", "", "✨"), unsafe_allow_html=True)
-        a2.markdown(make_card(
-            "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
-        a3.markdown(make_card(
-            "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
+            st.markdown(
+                "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
+            a1, a2, a3 = st.columns(3)
+            a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
+                        "card-theme-orange", "", "✨"), unsafe_allow_html=True)
+            a2.markdown(make_card(
+                "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
+            a3.markdown(make_card(
+                "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
+
+        with tab_rest_keyin:
+            render_fb_report_keyin_page(selected_date, current_hotel)
+
+if selected_page == "🍽️ 現場餐期每日登記":
+    render_fb_report_keyin_page(selected_date, current_hotel)
+
 
 if current_hotel != "採購":
     if selected_page == "🔧 工務數據":
