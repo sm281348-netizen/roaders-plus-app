@@ -1750,7 +1750,7 @@ def fetch_fb_report_raw_dict():
     讀取 f&b_report 全部列並轉為以日期為 key 的 dictionary。
     格式: { 'YYYY-MM-DD': [th_bf_est, th_bf_act, zq_bf_est, zq_bf_act, th_af_est, th_af_act, zq_af_est, zq_af_act, hh_act] }
     """
-    import toml, gspread
+    import gspread
     try:
         cfg = st.secrets['connections']['gsheets_station']
         sa_info = {
@@ -1782,7 +1782,7 @@ def update_fb_report_daily_row(date_str, th_bf_est, th_bf_act, zq_bf_est, zq_bf_
     精準原地更新 f&b_report 特定日期的整列數據 (保留多層表頭與其他歷史列)。
     若日期不在現存表格中，自動在末端追加新日期列。
     """
-    import toml, gspread
+    import gspread
     try:
         cfg = st.secrets['connections']['gsheets_station']
         sa_info = {

@@ -10,3 +10,5 @@ holidays
 deep-translator
 plotly>=5.18.0
 PyPDF2
+gspread
+toml
