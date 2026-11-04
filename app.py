@@ -1822,9 +1822,18 @@ def update_fb_report_daily_row(date_str, th_bf_est, th_bf_act, zq_bf_est, zq_bf_
             ws.append_row(new_row_values)
             
         # 清除系統相關快取，確保所有圖表即刻更新
-        fetch_fb_daily_df.clear()
-        compute_fb_mtd.clear()
-        fetch_month_summary.clear()
+        try:
+            fetch_fb_daily_df.clear()
+        except Exception:
+            pass
+        try:
+            compute_fb_mtd.clear()
+        except Exception:
+            pass
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
         return True, "儲存成功"
     except Exception as e:
         return False, str(e)
@@ -1850,8 +1859,18 @@ def render_fb_report_keyin_page(selected_date=None, current_hotel="站前館"):
         st.write("")
         st.write("")
         if st.button("🔄 重新整理最新數據", key="btn_refresh_fb_report"):
-            fetch_fb_daily_df.clear()
-            compute_fb_mtd.clear()
+            try:
+                fetch_fb_daily_df.clear()
+            except Exception:
+                pass
+            try:
+                compute_fb_mtd.clear()
+            except Exception:
+                pass
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
             st.rerun()
 
     # 讀取現有 f&b_report
