@@ -3429,7 +3429,11 @@ st.title(f"Hotel Master - {current_hotel}")
 st.sidebar.divider()
 st.sidebar.subheader("📌 系統功能導覽")
 if current_hotel == "採購":
-    menu_options = ["💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🍽️ 現場餐期每日登記", "📋 營運檢討報告", "💡 專案：免費服務成本優化"]
+    menu_options = [
+        "💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", 
+        "🍽️ 餐廳數據", "🍽️ 現場餐期每日登記", "📋 營運檢討報告", 
+        "🏔️ The Peak 專案總評", "⚖️ 雙館餐飲成本攤提", "💡 專案：免費服務成本優化"
+    ]
 else:
     menu_options = [
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
@@ -3465,56 +3469,56 @@ if st.sidebar.button("📤 匯出本月完整數據報告", use_container_width=
             st.sidebar.code(traceback.format_exc())
 
 
+# 注入專屬 CSS 與 Card 產生器 (共用於全館與各角色頁面)
+st.markdown("""
+<style>
+.metric-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 8px 0 16px 0;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    border-left: 6px solid #4CAF50;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.12);
+}
+.metric-title {
+    color: #7f8c8d;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.metric-value {
+    color: #2c3e50;
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+.card-theme-blue { border-left-color: #3498db; }
+.card-theme-orange { border-left-color: #f39c12; }
+.card-theme-purple { border-left-color: #9b59b6; }
+.card-theme-red { border-left-color: #e74c3c; }
+.card-theme-green { border-left-color: #2ecc71; }
+.card-bg-dark {
+    background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
+}
+.card-bg-dark .metric-title { color: #d8e2fb; }
+.card-bg-dark .metric-value { color: #ffffff; }
+</style>
+""", unsafe_allow_html=True)
+
+def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
+    return f'''
+    <div class="metric-card {color_class} {bg_class}">
+        <div class="metric-title">{icon} {title}</div>
+        <div class="metric-value">{value}</div>
+    </div>
+    '''
+
 if current_hotel != "採購":
-    # 注入專屬 CSS 與 Card 產生器 (共用於多個頁面)
-    st.markdown("""
-    <style>
-    .metric-card {
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 18px 20px;
-        margin: 8px 0 16px 0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.06);
-        border-left: 6px solid #4CAF50;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.12);
-    }
-    .metric-title {
-        color: #7f8c8d;
-        font-size: 0.95rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .metric-value {
-        color: #2c3e50;
-        font-size: 1.8rem;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-    }
-    .card-theme-blue { border-left-color: #3498db; }
-    .card-theme-orange { border-left-color: #f39c12; }
-    .card-theme-purple { border-left-color: #9b59b6; }
-    .card-theme-red { border-left-color: #e74c3c; }
-    .card-theme-green { border-left-color: #2ecc71; }
-    .card-bg-dark {
-        background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%);
-    }
-    .card-bg-dark .metric-title { color: #d8e2fb; }
-    .card-bg-dark .metric-value { color: #ffffff; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    def make_card(title, value, color_class="card-theme-blue", bg_class="", icon=""):
-        return f'''
-        <div class="metric-card {color_class} {bg_class}">
-            <div class="metric-title">{icon} {title}</div>
-            <div class="metric-value">{value}</div>
-        </div>
-        '''
-
     if selected_page == "📊 營運總覽":
         st.header("📊 營運總覽")
 
@@ -4997,82 +5001,81 @@ if current_hotel != "採購":
             df_daily_report=_df_hk_daily,
         )
 
-if current_hotel != "採購":
-    if selected_page == "🍽️ 餐廳數據":
-        st.header("🍽️ 餐廳數據")
-        
-        tab_rest_analytics, tab_rest_keyin = st.tabs(["📊 餐廳營運分析 (MTD)", "📝 現場餐期每日登記 (f&b_report)"])
-        
-        with tab_rest_analytics:
-            start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
-            # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
-            fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
-            rest_mrev = fb['revenue']
+if selected_page == "🍽️ 餐廳數據":
+    st.header("🍽️ 餐廳數據")
+    
+    tab_rest_analytics, tab_rest_keyin = st.tabs(["📊 餐廳營運分析 (MTD)", "📝 現場餐期每日登記 (f&b_report)"])
+    
+    with tab_rest_analytics:
+        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
+        # --- 讀取 F&B 資料（直接呼叫獨立函數，不走 daily_data 快取）---
+        fb = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
+        rest_mrev = fb['revenue']
 
-            st.write("##### 🍽️ 餐廳營運累計 (MTD)")
+        st.write("##### 🍽️ 餐廳營運累計 (MTD)")
 
-            if fb['error']:
-                st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
+        if fb['error']:
+            st.warning(f"⚠️ F&B 資料載入提示：{fb['error']}")
 
-            mtd_bf_theme = fb['bf_theme_act']
-            mtd_bf_zq    = fb['bf_zq_act']
-            mtd_af_theme = fb['af_theme_act']
-            mtd_af_zq    = fb['af_zq_act']
-            mtd_total_bf_act = fb['total_act_bf']
-            mtd_total_af_act = fb['total_act_af']
+        mtd_bf_theme = fb['bf_theme_act']
+        mtd_bf_zq    = fb['bf_zq_act']
+        mtd_af_theme = fb['af_theme_act']
+        mtd_af_zq    = fb['af_zq_act']
+        mtd_total_bf_act = fb['total_act_bf']
+        mtd_total_af_act = fb['total_act_af']
 
-            active_bf_days = fb['matched_days']
-            active_af_days = fb.get('active_af_days', active_bf_days)
-            avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
-            avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
-            mtd_avg_total = avg_total_bf + avg_total_af
+        active_bf_days = fb['matched_days']
+        active_af_days = fb.get('active_af_days', active_bf_days)
+        avg_total_bf = (mtd_total_bf_act / active_bf_days) if active_bf_days > 0 else 0
+        avg_total_af = (mtd_total_af_act / active_af_days) if active_af_days > 0 else 0
+        mtd_avg_total = avg_total_bf + avg_total_af
 
-            rest_avg_spent = fb['avg_spent']
+        rest_avg_spent = fb['avg_spent']
 
-            st.markdown(
-                "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
-            sz1, sz2, sz3 = st.columns(3)
-            sz1.markdown(make_card(
-                "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-            sz2.markdown(make_card(
-                "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-            sz3.markdown(make_card(
-                "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+        st.markdown(
+            "<h6 style='color:#555; margin-top:15px;'>📌【站前館】MTD 累計</h6>", unsafe_allow_html=True)
+        sz1, sz2, sz3 = st.columns(3)
+        sz1.markdown(make_card(
+            "早餐 (實際)", f"{int(mtd_bf_zq)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+        sz2.markdown(make_card(
+            "下午茶 (實際)", f"{int(mtd_af_zq)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+        sz3.markdown(make_card(
+            "站前合計 (實際)", f"{int(mtd_bf_zq + mtd_af_zq)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
 
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
-            st1, st2, st3 = st.columns(3)
-            st1.markdown(make_card(
-                "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
-            st2.markdown(make_card(
-                "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
-            st3.markdown(make_card(
-                "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>📌【主題館】MTD 累計</h6>", unsafe_allow_html=True)
+        st1, st2, st3 = st.columns(3)
+        st1.markdown(make_card(
+            "早餐 (實際)", f"{int(mtd_bf_theme)} 人", "card-theme-orange", "", "🥐"), unsafe_allow_html=True)
+        st2.markdown(make_card(
+            "下午茶 (實際)", f"{int(mtd_af_theme)} 人", "card-theme-purple", "", "🍰"), unsafe_allow_html=True)
+        st3.markdown(make_card(
+            "主題合計 (實際)", f"{int(mtd_bf_theme + mtd_af_theme)} 人", "card-theme-blue", "", "👥"), unsafe_allow_html=True)
 
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
-                        "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
-            m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
-                        "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
-            m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
-                        "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
-            m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
-                        "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>👑【兩館合併總覽】</h6>", unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.markdown(make_card("兩館早餐 (實際)", f"{int(mtd_total_bf_act)} 人",
+                    "card-theme-orange", "card-bg-dark", "🥐"), unsafe_allow_html=True)
+        m2.markdown(make_card("兩館下午茶 (實際)", f"{int(mtd_total_af_act)} 人",
+                    "card-theme-purple", "card-bg-dark", "🍰"), unsafe_allow_html=True)
+        m3.markdown(make_card("全月結算營收", f"NT$ {int(rest_mrev):,}",
+                    "card-theme-green", "card-bg-dark", "💰"), unsafe_allow_html=True)
+        m4.markdown(make_card("平均客單價", f"NT$ {int(rest_avg_spent):,}",
+                    "card-theme-red", "card-bg-dark", "🧾"), unsafe_allow_html=True)
 
-            st.markdown(
-                "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
-            a1, a2, a3 = st.columns(3)
-            a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
-                        "card-theme-orange", "", "✨"), unsafe_allow_html=True)
-            a2.markdown(make_card(
-                "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
-            a3.markdown(make_card(
-                "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
+        st.markdown(
+            "<h6 style='color:#555; margin-top:20px;'>📉【兩館日平均來客】</h6>", unsafe_allow_html=True)
+        a1, a2, a3 = st.columns(3)
+        a1.markdown(make_card("兩館早餐平均", f"{avg_total_bf:.1f} 人/日",
+                    "card-theme-orange", "", "✨"), unsafe_allow_html=True)
+        a2.markdown(make_card(
+            "兩館下午茶平均", f"{avg_total_af:.1f} 人/日", "card-theme-purple", "", "✨"), unsafe_allow_html=True)
+        a3.markdown(make_card(
+            "兩館整體總平均", f"{mtd_avg_total:.1f} 人/日", "card-theme-blue", "", "📈"), unsafe_allow_html=True)
 
-        with tab_rest_keyin:
-            render_fb_report_keyin_page(selected_date, current_hotel)
+    with tab_rest_keyin:
+        render_fb_report_keyin_page(selected_date, current_hotel)
 
 if selected_page == "🍽️ 現場餐期每日登記":
     render_fb_report_keyin_page(selected_date, current_hotel)
