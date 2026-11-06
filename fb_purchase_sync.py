@@ -169,6 +169,13 @@ def run_fb_purchase_sync(target_date: datetime.date = None):
     count_4f = sync_department_purchases(sh, "4FHH_daily_purchase_report", df_4f_total, "4F 餐車 Happy Hour")
     count_peak = sync_department_purchases(sh, "thepeak_daily_purchase_report", df_peak_total, "THE PEAK 37F")
 
+    # 執行菜商報價 (supplier_prices) 動態價格校準
+    try:
+        from sync_supplier_prices import sync_veg_prices
+        sync_veg_prices(target_year=year, target_month=target_date.month, auto_git_push=False)
+    except Exception as e_sp:
+        logger.warning(f"[FB_SYNC] 菜商報價動態校準跳過或發生異常: {e_sp}")
+
     logger.info(f"========== 餐飲請購單同步完成 (4FHH 補入: {max(count_4f, 0)} 筆, THE PEAK 補入: {max(count_peak, 0)} 筆) ==========\n")
     return True
 

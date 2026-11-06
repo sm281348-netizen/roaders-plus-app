@@ -82,14 +82,17 @@ VEG_SYNONYMS = {
     '香吉士': '香吉士',
     '清腿肉丁': '清雞腿肉',
     '雞腿丁': '清雞腿肉',
+    '去骨雞腿肉切塊': '清雞腿肉',
+    '去骨雞腿肉': '清雞腿肉',
+    '紫色包心': '紫色包心',
 }
 
 _CACHED_SUPPLIER_PRICES_DF = None
 
-def load_supplier_prices_df():
-    """載入 Google Sheets supplier_prices 資料表 (含本地快取備份)"""
+def load_supplier_prices_df(force_reload: bool = False):
+    """載入 Google Sheets supplier_prices 資料表 (含本地快取備份，支援強制重載)"""
     global _CACHED_SUPPLIER_PRICES_DF
-    if _CACHED_SUPPLIER_PRICES_DF is not None:
+    if not force_reload and _CACHED_SUPPLIER_PRICES_DF is not None:
         return _CACHED_SUPPLIER_PRICES_DF
 
     backup_csv = os.path.join(BACKUP_DIR, "supplier_prices_cache.csv")
@@ -106,7 +109,8 @@ def load_supplier_prices_df():
                 ws = sh.worksheet("supplier_prices")
                 df_sp = pd.DataFrame(ws.get_all_records())
                 if not df_sp.empty:
-                    df_sp['period_dt'] = pd.to_datetime(df_sp['period']).dt.date
+                    df_sp['period_dt'] = pd.to_datetime(df_sp['period'], errors='coerce').dt.date
+                    df_sp = df_sp.dropna(subset=['period_dt']).reset_index(drop=True)
                     df_sp['clean_name'] = df_sp['item name'].astype(str).str.replace(' ', '').str.replace('　', '')
                     # 存入快取
                     df_sp.to_csv(backup_csv, index=False, encoding='utf-8-sig')
@@ -119,7 +123,8 @@ def load_supplier_prices_df():
     if os.path.exists(backup_csv):
         try:
             df_sp = pd.read_csv(backup_csv)
-            df_sp['period_dt'] = pd.to_datetime(df_sp['period']).dt.date
+            df_sp['period_dt'] = pd.to_datetime(df_sp['period'], errors='coerce').dt.date
+            df_sp = df_sp.dropna(subset=['period_dt']).reset_index(drop=True)
             df_sp['clean_name'] = df_sp['item name'].astype(str).str.replace(' ', '').str.replace('　', '')
             _CACHED_SUPPLIER_PRICES_DF = df_sp
             return df_sp
@@ -128,11 +133,11 @@ def load_supplier_prices_df():
 
     return pd.DataFrame()
 
-def lookup_veg_price(item_name: str, order_date: datetime.date):
+def lookup_veg_price(item_name: str, order_date: datetime.date, force_reload: bool = False):
     """
-    依據請購日期，在 supplier_prices 中尋找當期核定單價與單位
+    依據請購日期，在 supplier_prices 中尋找當期核定單價與單位 (防誤判階層式演算法)
     """
-    df_sp = load_supplier_prices_df()
+    df_sp = load_supplier_prices_df(force_reload=force_reload)
     if df_sp.empty:
         return None, None, None
 
@@ -145,14 +150,14 @@ def lookup_veg_price(item_name: str, order_date: datetime.date):
     raw_name = str(item_name).strip()
     clean_target = re.sub(r'[\s\(\)（）\-\_]', '', raw_name)
 
-    # 1. 原始名稱無空格精確對應
+    # 1. 原始名稱無空格精確對應 (Priority 1)
     m = sub[sub['clean_name'] == raw_name.replace(' ', '')]
     if not m.empty:
         p_val = pd.to_numeric(m.iloc[0]['price'], errors='coerce')
         if pd.notna(p_val) and p_val > 0:
             return float(p_val), str(m.iloc[0]['unit']).strip(), latest_period
 
-    # 2. 別名字典對應
+    # 2. 別名字典精確對應 (Priority 2)
     if raw_name in VEG_SYNONYMS:
         syn = VEG_SYNONYMS[raw_name]
         m_syn = sub[sub['clean_name'] == syn.replace(' ', '')]
@@ -161,13 +166,39 @@ def lookup_veg_price(item_name: str, order_date: datetime.date):
             if pd.notna(p_val) and p_val > 0:
                 return float(p_val), str(m_syn.iloc[0]['unit']).strip(), latest_period
 
-    # 3. 去標點字串模糊對應
+    # 3. 去標點符號後之精確對應 (Priority 3)
     for _, row in sub.iterrows():
         cn = re.sub(r'[\s\(\)（）\-\_]', '', str(row['clean_name']))
-        if clean_target == cn or clean_target in cn or cn in clean_target:
+        if clean_target == cn:
             p_val = pd.to_numeric(row['price'], errors='coerce')
             if pd.notna(p_val) and p_val > 0:
                 return float(p_val), str(row['unit']).strip(), latest_period
+
+    # 4. 長度安全之模糊匹配 (Priority 4，嚴禁短字串逆向包含，如"玉米"誤配"玉米筍")
+    best_candidate = None
+    best_match_len = 0
+    for _, row in sub.iterrows():
+        cn = re.sub(r'[\s\(\)（）\-\_]', '', str(row['clean_name']))
+        if not cn or not clean_target:
+            continue
+        # 情況 A: 叫貨單品名較短，完整包含於報價品名 (例如 叫貨單寫 "青花菜"，報價單寫 "青花菜(進口)")
+        if len(clean_target) >= 2 and clean_target in cn:
+            p_val = pd.to_numeric(row['price'], errors='coerce')
+            if pd.notna(p_val) and p_val > 0:
+                if len(clean_target) > best_match_len:
+                    best_match_len = len(clean_target)
+                    best_candidate = (float(p_val), str(row['unit']).strip(), latest_period)
+        # 情況 B: 報價單品名較短，包含於叫貨單品名 (例如 叫貨單寫 "美生菜進口"，報價單寫 "美生菜")
+        # 嚴格限制：cn 長度必須 >= 3，嚴防 2 字元短詞 (如"玉米") 誤配較長品名 (如"玉米筍")
+        elif len(cn) >= 3 and cn in clean_target:
+            p_val = pd.to_numeric(row['price'], errors='coerce')
+            if pd.notna(p_val) and p_val > 0:
+                if len(cn) > best_match_len:
+                    best_match_len = len(cn)
+                    best_candidate = (float(p_val), str(row['unit']).strip(), latest_period)
+
+    if best_candidate is not None:
+        return best_candidate
 
     return None, None, latest_period
 
@@ -217,10 +248,13 @@ def parse_4f_sheet_date(sheet_name: str, fallback_year: int = 2026) -> datetime.
 
     return None
 
-def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None) -> pd.DataFrame:
+def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None, force_reload_prices: bool = False, veg_only: bool = False) -> pd.DataFrame:
     """
     抽取 The Peak (37F) 叫貨單數據 (全面核對 supplier_prices 官方報價單)
     """
+    if force_reload_prices:
+        load_supplier_prices_df(force_reload=True)
+
     records = []
     base_dir = rf"Y:\餐務\The peak\{target_year}(37F)"
     if not os.path.exists(base_dir):
@@ -232,10 +266,13 @@ def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None)
 
     today = datetime.date.today()
 
-    target_files = [
-        ("1@THEPEAK採購用4.0.xlsx", False, "常規採購"),
-        ("3@thepeak菜商叫貨單.xlsx", True, "菜商生鮮")
-    ]
+    if veg_only:
+        target_files = [("3@thepeak菜商叫貨單.xlsx", True, "菜商生鮮")]
+    else:
+        target_files = [
+            ("1@THEPEAK採購用4.0.xlsx", False, "常規採購"),
+            ("3@thepeak菜商叫貨單.xlsx", True, "菜商生鮮")
+        ]
 
     for fname, is_veg, category in target_files:
         fp = os.path.join(base_dir, fname)
@@ -325,11 +362,13 @@ def extract_thepeak_purchases(target_year: int = 2026, target_month: int = None)
 
                                 p_val, u_val, p_date = lookup_veg_price(name, d_obj)
                                 if p_val is None or p_val <= 0:
-                                    logger.warning(f"[THE PEAK] 菜商品項 '{name}' 在報價期 ({p_date}) 查無有效單價，暫略過。")
-                                    continue
+                                    logger.warning(f"[THE PEAK] 菜商品項 '{name}' 在報價期 ({p_date}) 查無有效單價，記錄為 0 元待補。")
+                                    p_val = 0.0
+                                    tot_f = 0.0
+                                else:
+                                    tot_f = round(p_val * qty_f, 2)
 
                                 final_unit = u_val or str(unit or "").strip()
-                                tot_f = round(p_val * qty_f, 2)
 
                                 records.append({
                                     "date": date_str,

@@ -150,7 +150,8 @@ def push_to_cloud_git():
             "run_daily_sync.py",
             "fb_purchase_extractor.py",
             "fb_purchase_sync.py",
-            "pms_fnb_extractor.py"
+            "pms_fnb_extractor.py",
+            "sync_supplier_prices.py"
         ], cwd=APP_DIR, check=True)
         
         # 2. 檢查有無異動
