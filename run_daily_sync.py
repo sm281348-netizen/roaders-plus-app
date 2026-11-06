@@ -151,7 +151,9 @@ def push_to_cloud_git():
             "fb_purchase_extractor.py",
             "fb_purchase_sync.py",
             "pms_fnb_extractor.py",
-            "sync_supplier_prices.py"
+            "sync_supplier_prices.py",
+            "hk_purchase_extractor.py",
+            "hk_purchase_sync.py"
         ], cwd=APP_DIR, check=True)
         
         # 2. 檢查有無異動
@@ -207,6 +209,13 @@ def main():
         run_fb_purchase_sync(target_date=datetime.date.today())
     except Exception as e_fb:
         logger.error(f"[FAIL] 餐飲請購單同步發生例外: {e_fb}", exc_info=True)
+
+    # 執行房務部請購單全量與增量自動比對與雲端同步
+    try:
+        from hk_purchase_sync import sync_hk_purchases
+        sync_hk_purchases()
+    except Exception as e_hk:
+        logger.error(f"[FAIL] 房務請購單同步發生例外: {e_hk}", exc_info=True)
 
     if args.git_push:
         push_to_cloud_git()

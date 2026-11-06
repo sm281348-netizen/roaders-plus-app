@@ -4999,26 +4999,23 @@ if current_hotel != "採購":
 
 if current_hotel != "採購":
     if selected_page == "🧹 房務數據":
-        st.header("🧹 房務數據")
-
-        import hk_procurement
+        import hk_dashboard
         _occ_hk = _get_occ_data_cached_v2()
-        hk_procurement.render_hk_procurement_dashboard(_occ_hk)
+        hk_dashboard.render_hk_dashboard(hotel_name=current_hotel, occ_df=_occ_hk, date_str=date_str)
 
         st.markdown("---")
-        st.subheader("📦 房務採購紀律分析")
-        st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
-        _df_all_purch_hk = _get_all_purchase_clean()
-        _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
-        _occ_hk = _get_occ_data_cached_v2()
-        _df_hk_daily = fetch_hk_daily_purchase_report()
-        _render_dept_procurement_modules(
-            df_dept=_df_hk_dept,
-            dept_label="房務",
-            occ_df=_occ_hk,
-            enable_prediction=True,
-            df_daily_report=_df_hk_daily,
-        )
+        with st.expander("📦 房務官方會計採購與跨部門攤提分析 (點擊展開)"):
+            st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
+            _df_all_purch_hk = _get_all_purchase_clean()
+            _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
+            _df_hk_daily = fetch_hk_daily_purchase_report()
+            _render_dept_procurement_modules(
+                df_dept=_df_hk_dept,
+                dept_label="房務",
+                occ_df=_occ_hk,
+                enable_prediction=False,
+                df_daily_report=_df_hk_daily,
+            )
 
 if selected_page == "🍽️ 餐廳數據":
     st.header("🍽️ 餐廳數據")
