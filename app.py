@@ -11198,8 +11198,12 @@ if selected_page == "📋 營運檢討報告":
 
 def render_store_meeting_tab():
     import datetime
-    import plotly.graph_objects as go
-    import store_meeting_generator as smg
+    try:
+        import store_meeting_generator as smg
+    except ImportError as e:
+        st.error(f"⚠️ 載入店務會議模組失敗: {e}。請確認 requirements.txt 已安裝 matplotlib, python-pptx。")
+        st.info("💡 若您剛更新 requirements.txt，Streamlit Cloud 正在背景重新安裝套件，請稍候 1-2 分鐘後重新整理頁面。")
+        return
 
     st.header("📑 店務會議簡報 (PPTX) 全自動產生與數據管理專區")
     st.caption("每月店務會議 13 頁 PowerPoint 簡報一鍵全自動組裝引擎，包含雙館營收、渠道、國籍、住房率走勢圖，以及 RPG 會員數據填報。")

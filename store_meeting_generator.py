@@ -38,10 +38,41 @@ TEMPLATE_PPTX = os.path.join(BASE_DIR, 'data', 'templates', 'store_meeting_templ
 RPG_CSV_PATH = os.path.join(BASE_DIR, 'data', 'pms_backup', 'rpg_monthly_data.csv')
 DEFAULT_Y_BACKUP_DIR = r'Y:\房務\強生用\2@店務會議\2026雙館'
 
-FONT_PATH = 'C:/Windows/Fonts/msjh.ttc'
-FONT_BOLD_PATH = 'C:/Windows/Fonts/msjhbd.ttc'
+def get_pil_font(size=18, bold=False):
+    """跨平台 (Windows / Linux) 安全取得中文字型"""
+    candidates = []
+    if bold:
+        candidates.append('C:/Windows/Fonts/msjhbd.ttc')
+        candidates.append('C:/Windows/Fonts/simhei.ttf')
+    else:
+        candidates.append('C:/Windows/Fonts/msjh.ttc')
+        candidates.append('C:/Windows/Fonts/simsun.ttc')
+        
+    # Linux / Streamlit Cloud 開源字型
+    candidates.extend([
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    ])
+    
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+                
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
 
-plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'sans-serif']
+plt.rcParams['font.sans-serif'] = [
+    'Microsoft JhengHei', 'WenQuanYi Zen Hei', 'WenQuanYi Micro Hei', 
+    'SimHei', 'Noto Sans CJK TC', 'sans-serif'
+]
 plt.rcParams['axes.unicode_minus'] = False
 
 
@@ -152,10 +183,10 @@ def render_revenue_table_png(stats_list, hotel_name):
     img = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    f_title = ImageFont.truetype(FONT_BOLD_PATH, 19)
-    f_cell = ImageFont.truetype(FONT_PATH, 17)
-    f_cell_bold = ImageFont.truetype(FONT_BOLD_PATH, 17)
-    f_sub = ImageFont.truetype(FONT_BOLD_PATH, 16)
+    f_title = get_pil_font(19, bold=True)
+    f_cell = get_pil_font(17, bold=False)
+    f_cell_bold = get_pil_font(17, bold=True)
+    f_sub = get_pil_font(16, bold=True)
 
     col_widths = [84, 96, 88, 96, 88, 96, 114, 94, 116] # sum = 872
     row_height = 52
@@ -255,10 +286,10 @@ def render_kpi_summary_png(cur_stat, hotel_name, year_month_str):
     img = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    f_title = ImageFont.truetype(FONT_BOLD_PATH, 22)
-    f_label = ImageFont.truetype(FONT_PATH, 16)
-    f_val = ImageFont.truetype(FONT_BOLD_PATH, 36)
-    f_badge = ImageFont.truetype(FONT_BOLD_PATH, 14)
+    f_title = get_pil_font(22, bold=True)
+    f_label = get_pil_font(16, bold=False)
+    f_val = get_pil_font(36, bold=True)
+    f_badge = get_pil_font(14, bold=True)
 
     ym_clean = str(year_month_str).replace('-', '').replace('/', '').strip()
     y_str = ym_clean[:4]
@@ -311,9 +342,9 @@ def render_channel_table_png(channel_rows, hotel_name):
     img = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    f_head = ImageFont.truetype(FONT_BOLD_PATH, 20)
-    f_cell = ImageFont.truetype(FONT_PATH, 18)
-    f_cell_bold = ImageFont.truetype(FONT_BOLD_PATH, 18)
+    f_head = get_pil_font(20, bold=True)
+    f_cell = get_pil_font(18, bold=False)
+    f_cell_bold = get_pil_font(18, bold=True)
 
     col_widths = [312, 230, 230] # sum = 772
     row_height = 48
@@ -378,9 +409,9 @@ def render_nationality_table_png(cur_rows, prev_rows, cur_label, prev_label, cur
     img = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    f_title_bold = ImageFont.truetype(FONT_BOLD_PATH, 20)
-    f_head = ImageFont.truetype(FONT_BOLD_PATH, 18)
-    f_cell = ImageFont.truetype(FONT_PATH, 17)
+    f_title_bold = get_pil_font(20, bold=True)
+    f_head = get_pil_font(18, bold=True)
+    f_cell = get_pil_font(17, bold=False)
 
     col_w = [145, 115, 115]
     row_height = 44

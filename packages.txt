@@ -1,2 +1,4 @@
 chromium
 chromium-driver
+fonts-wqy-zenhei
+fonts-wqy-microhei

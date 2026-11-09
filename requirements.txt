@@ -12,3 +12,6 @@ plotly>=5.18.0
 PyPDF2
 gspread
 toml
+matplotlib>=3.8.0
+python-pptx>=1.0.0
+Pillow>=10.0.0
