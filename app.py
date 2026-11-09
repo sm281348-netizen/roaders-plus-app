@@ -2791,6 +2791,57 @@ def get_other_revenue(year_month_str):
     
     return float(df_filtered[col_actual].sum())
 
+
+def get_rest_metrics(year_month_str, hotel_type=None):
+    """
+    取得特定月份（例如 '202609'）的休息 (DUS / 日宿) 指標。
+    優先順序：
+    1. 本地備份庫 data/pms_backup/{h_tag}_rest_data.csv
+    2. 若 CSV 無資料則嘗試從本機 EIS03 報表即時解析
+    回傳字典: {'occ': float, 'adr': int, 'rooms': int, 'revenue': int}
+    """
+    target_ym_clean = str(year_month_str).replace('/', '').replace('-', '').strip()
+    h = hotel_type if hotel_type is not None else globals().get('current_hotel', '站前館')
+    h_tag = "theme" if h == "主題館" else "station"
+    
+    rest_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_rest_data.csv")
+    if os.path.exists(rest_file):
+        try:
+            df = pd.read_csv(rest_file)
+            if not df.empty and 'year_month' in df.columns:
+                df['year_month'] = df['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                row = df[df['year_month'] == target_ym_clean]
+                if not row.empty:
+                    occ_pct = float(row.iloc[0].get('occ_pct', 0.0))
+                    adr = int(round(float(row.iloc[0].get('adr', 0.0))))
+                    rooms = int(round(float(row.iloc[0].get('rooms', 0.0))))
+                    revenue = int(round(float(row.iloc[0].get('revenue', 0.0))))
+                    return {'occ': occ_pct, 'adr': adr, 'rooms': rooms, 'revenue': revenue}
+        except Exception:
+            pass
+
+    # 若 CSV 尚無此月份記錄，嘗試從本機 EIS 報表即時動態解析
+    try:
+        from pms_parser import resolve_file_paths, parse_eis03_dus
+        from datetime import datetime
+        import calendar
+        if len(target_ym_clean) == 6:
+            y = int(target_ym_clean[:4])
+            m = int(target_ym_clean[4:])
+            _, last_day = calendar.monthrange(y, m)
+            for d in range(last_day, 0, -1):
+                f_date = datetime(y, m, d)
+                p = resolve_file_paths(h, f_date)
+                if p.get('eis03') and os.path.exists(p['eis03']):
+                    dus_info = parse_eis03_dus(p['eis03'])
+                    if dus_info:
+                        return dus_info
+    except Exception:
+        pass
+
+    return {'occ': 0.0, 'adr': 0, 'rooms': 0, 'revenue': 0}
+
+
 @st.cache_data(ttl=3600)
 def fetch_yearly_metrics(year):
     try:
@@ -9708,6 +9759,7 @@ def render_channel_tab():
             y, m = d.year, d.month
             msum = fetch_month_summary(y, m)
             other_rev = get_other_revenue(f"{y}{m:02d}")
+            auto_rest = get_rest_metrics(f"{y}{m:02d}", hotel_type=current_hotel)
             stats.append({
                 'month_label': f"{m}月",
                 'occ': msum['avg_occ'],
@@ -9715,28 +9767,68 @@ def render_channel_tab():
                 'revpar': msum['revpar'],
                 'room_rev': msum['rev'],
                 'other_rev': other_rev,
+                'auto_rest': auto_rest,
                 'year': y,
                 'month': m
             })
             
+        # 讀取使用者手動覆蓋設定 (keyed by "{current_hotel}_{year}_{month}")
+        custom_rest = st.session_state.get('_rest_custom_overrides', {})
+        
         with st.expander("📝 填寫 / 編輯休息數據 (點擊展開)", expanded=False):
-            st.caption("填寫完成後，點擊「🔄 更新表格」，下方表格才會更新（不會再每個欄位觸發一次）。")
+            st.caption("💡 系統已自動從金旭 PMS 歷史總日報表 (EIS03) 抓取休息(日宿)指標。如需自訂數值，請修改後點擊「儲存手動覆蓋」，或點擊「↩️ 還原為系統自動抓取」清除自訂覆蓋。")
             with st.form("form_rest_stats"):
                 cols = st.columns(3)
-                rest_inputs_temp = []
+                rest_inputs_temp = {}
                 for i, s in enumerate(stats):
+                    k_override = f"{current_hotel}_{s['year']}_{s['month']}"
+                    cur_val = custom_rest.get(k_override, s['auto_rest'])
                     with cols[i]:
                         st.markdown(f"**{s['month_label']} 休息數據**")
-                        r_occ = st.number_input("使用率 (%)", value=0.00, step=0.01, format="%.2f", key=f"r_occ_{s['year']}_{s['month']}")
-                        r_adr = st.number_input("ADR (元)", value=0, step=10, key=f"r_adr_{s['year']}_{s['month']}")
-                        rest_inputs_temp.append({'occ': r_occ, 'adr': r_adr})
-                if st.form_submit_button("🔄 更新表格", type="primary", use_container_width=True):
-                    st.session_state['_rest_inputs_submitted'] = rest_inputs_temp
-
-        # 從 session_state 讀取已提交的數值（只有按「更新表格」後才會 rerun）
-        rest_inputs = st.session_state.get('_rest_inputs_submitted', [{'occ': 0, 'adr': 0}] * len(stats))
-        if len(rest_inputs) < len(stats):
-            rest_inputs = rest_inputs + [{'occ': 0, 'adr': 0}] * (len(stats) - len(rest_inputs))
+                        sys_occ = s['auto_rest']['occ']
+                        sys_adr = s['auto_rest']['adr']
+                        st.caption(f"系統抓取: {sys_occ:.2f}% / ${sys_adr:,}" if sys_occ > 0 else "系統抓取: 0 間 (無休息)")
+                        
+                        r_occ = st.number_input(
+                            "使用率 (%)",
+                            value=float(cur_val.get('occ', 0.0)),
+                            step=0.01,
+                            format="%.2f",
+                            key=f"r_occ_{current_hotel}_{s['year']}_{s['month']}"
+                        )
+                        r_adr = st.number_input(
+                            "ADR (元)",
+                            value=int(round(float(cur_val.get('adr', 0)))),
+                            step=10,
+                            key=f"r_adr_{current_hotel}_{s['year']}_{s['month']}"
+                        )
+                        rest_inputs_temp[k_override] = {'occ': r_occ, 'adr': r_adr}
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    btn_save = st.form_submit_button("💾 儲存手動覆蓋", type="primary", use_container_width=True)
+                with col_btn2:
+                    btn_reset = st.form_submit_button("↩️ 還原為系統自動抓取", use_container_width=True)
+                    
+                if btn_save:
+                    if '_rest_custom_overrides' not in st.session_state:
+                        st.session_state['_rest_custom_overrides'] = {}
+                    st.session_state['_rest_custom_overrides'].update(rest_inputs_temp)
+                    st.session_state.pop('_rest_inputs_submitted', None)
+                    st.success("已更新手動自訂休息數據！")
+                    st.rerun()
+                    
+                if btn_reset:
+                    if '_rest_custom_overrides' in st.session_state:
+                        for s in stats:
+                            k_override = f"{current_hotel}_{s['year']}_{s['month']}"
+                            st.session_state['_rest_custom_overrides'].pop(k_override, None)
+                    for s in stats:
+                        st.session_state.pop(f"r_occ_{current_hotel}_{s['year']}_{s['month']}", None)
+                        st.session_state.pop(f"r_adr_{current_hotel}_{s['year']}_{s['month']}", None)
+                    st.session_state.pop('_rest_inputs_submitted', None)
+                    st.info("已還原為系統自動抓取數據！")
+                    st.rerun()
 
         table_html = f"""
 <div style="display: flex; justify-content: flex-start;">
@@ -9763,9 +9855,13 @@ def render_channel_tab():
             month_color = "red" if i == 0 else "black"
             font_weight = "bold" if i == 0 else "normal"
             
-            r_in = rest_inputs[i]
-            rest_occ_str = f"{r_in['occ']:g}" if r_in['occ'] > 0 else ""
-            rest_adr_str = f"${int(r_in['adr']):,}" if r_in['adr'] > 0 else ""
+            k_override = f"{current_hotel}_{s['year']}_{s['month']}"
+            r_in = custom_rest.get(k_override, s['auto_rest'])
+            r_occ = float(r_in.get('occ', 0.0))
+            r_adr = float(r_in.get('adr', 0.0))
+            
+            rest_occ_str = f"{r_occ:.2f}%" if r_occ > 0 else "／"
+            rest_adr_str = f"${int(round(r_adr)):,}" if r_adr > 0 else "／"
             
             total_room_rev = s['room_rev']
             other_rev = s['other_rev']
@@ -9776,7 +9872,7 @@ def render_channel_tab():
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color}; font-weight: {font_weight};">{s['month_label']}</td>
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{s['occ']:.1f}%</td>
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(s['adr']):,}</td>
-<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{rest_occ_str}{'%' if rest_occ_str else ''}</td>
+<td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{rest_occ_str}</td>
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">{rest_adr_str}</td>
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(s['revpar']):,}</td>
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(total_room_rev):,}</td>
@@ -9784,7 +9880,7 @@ def render_channel_tab():
 <td style="border: 1px solid white; padding: 12px 15px; color: {month_color};">${int(total_revenue):,}</td>
 </tr>
 """
-            
+        
         table_html += "</table></div><br>"
         st.markdown(table_html, unsafe_allow_html=True)
         st.divider()

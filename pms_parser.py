@@ -89,12 +89,18 @@ def resolve_file_paths(hotel_name: str, d_obj: datetime.date):
             if os.path.exists(eis_path_alt):
                 eis_path = eis_path_alt
     else:
-        # 主題館為扁平目錄或月份目錄
-        eis_path = os.path.join(cfg["eis_base"], f"EIS03{ymd_str}.XLS")
-        if not os.path.exists(eis_path):
-            eis_path_alt = os.path.join(cfg["eis_base"], ym_str, f"EIS03{ymd_str}.XLS")
-            if os.path.exists(eis_path_alt):
-                eis_path = eis_path_alt
+        # 主題館為多層備援目錄 (夜櫃結帳與金旭帳務)
+        theme_candidates = [
+            os.path.join(r"W:\主題-櫃台\夜櫃結帳\EIS表", f"{y_str}年", ym_str, f"EIS03{ymd_str}.XLS"),
+            os.path.join(r"W:\主題-櫃台\夜櫃結帳\EIS表", ym_str, f"EIS03{ymd_str}.XLS"),
+            os.path.join(cfg["eis_base"], f"EIS03{ymd_str}.XLS"),
+            os.path.join(cfg["eis_base"], ym_str, f"EIS03{ymd_str}.XLS"),
+        ]
+        eis_path = theme_candidates[0]
+        for cand in theme_candidates:
+            if os.path.exists(cand):
+                eis_path = cand
+                break
 
     # 2. RVR12 路徑
     if hotel_name == "站前館":
@@ -219,6 +225,45 @@ def parse_eis03_financial(file_path: str, hotel_name: str, d_obj: datetime.date)
 
     return pd.DataFrame(records)
 
+def parse_eis03_dus(file_path: str) -> dict:
+    """
+    從 EIS03 營業總日報表提取日宿 (DUS/休息) 統計數據
+    回傳字典:
+    { 'rooms': int(累計間數), 'occ_pct': float(累計使用率%), 'adr': int(累計平均房價), 'revenue': int(累計實銷營收) }
+    """
+    if not os.path.exists(file_path):
+        return {'rooms': 0, 'occ_pct': 0.0, 'adr': 0, 'revenue': 0}
+
+    try:
+        wb = xlrd.open_workbook(file_path, encoding_override='cp950')
+        ws0 = wb.sheet_by_name('營業總日報表')
+        for r in range(ws0.nrows):
+            c0 = str(ws0.cell_value(r, 0)).strip()
+            if c0 == '(DUS)':
+                try: rooms = float(ws0.cell_value(r, 4))
+                except: rooms = 0.0
+                try: occ = float(ws0.cell_value(r, 5)) * 100
+                except: occ = 0.0
+                adr = 0
+                rev = 0.0
+                for i in range(r + 1, min(r + 7, ws0.nrows)):
+                    val = ws0.cell_value(i, 4)
+                    if isinstance(val, (int, float)) and val > 0:
+                        if i == r + 1: rev = float(val)
+                        elif i == r + 5: adr = int(round(float(val)))
+                if adr == 0 and rooms > 0 and rev > 0:
+                    adr = int(round(rev / rooms))
+                return {
+                    'rooms': int(rooms),
+                    'occ_pct': round(occ, 2),
+                    'adr': int(adr),
+                    'revenue': int(rev)
+                }
+    except Exception:
+        pass
+
+    return {'rooms': 0, 'occ_pct': 0.0, 'adr': 0, 'revenue': 0}
+
 def parse_rvr12_channels(file_path: str, hotel_name: str, d_obj: datetime.date) -> pd.DataFrame:
     """
     從 RVR12 訂房日報表提取 OTA 渠道通路數據 (對應 marketing_channel_data)
@@ -308,6 +353,7 @@ def extract_pms_day(hotel_name: str, date_val):
     occ_data = parse_eis03_occ(eis_path, hotel_name, d_obj)
     eis_df = parse_eis03_financial(eis_path, hotel_name, d_obj)
     chan_df = parse_rvr12_channels(rvr_path, hotel_name, d_obj)
+    dus_data = parse_eis03_dus(eis_path)
 
     files_found = os.path.exists(eis_path) or os.path.exists(rvr_path)
 
@@ -317,6 +363,7 @@ def extract_pms_day(hotel_name: str, date_val):
         "occ": occ_data,
         "eis": eis_df,
         "channels": chan_df,
+        "dus": dus_data,
         "files_found": files_found,
         "eis_path": eis_path,
         "rvr_path": rvr_path
@@ -349,12 +396,15 @@ def extract_pms_range(hotel_name: str, start_date, end_date):
     df_occ = pd.DataFrame(occ_rows) if occ_rows else pd.DataFrame()
     df_chan = pd.concat(chan_rows, ignore_index=True) if chan_rows else pd.DataFrame()
     df_eis = eis_dfs[-1] if eis_dfs else pd.DataFrame()  # 財務取區間最後一天累計
+    latest_eis_path, _ = resolve_file_paths(hotel_name, e_obj)
+    dus_data = parse_eis03_dus(latest_eis_path)
 
     return {
         "hotel": hotel_name,
         "df_occ": df_occ,
         "df_chan": df_chan,
-        "df_eis": df_eis
+        "df_eis": df_eis,
+        "dus": dus_data
     }
 
 if __name__ == "__main__":

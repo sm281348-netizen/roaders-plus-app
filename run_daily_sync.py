@@ -135,6 +135,32 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
             df_eis.to_csv(eis_backup_path, index=False, encoding='utf-8-sig')
             logger.info(f"[SUCCESS] [{hotel_name}] EIS_data 會計科目解析成功: 共 {len(df_eis)} 項，已儲存至備份庫")
 
+        # 3. 日宿 (DUS/休息) 數據更新
+        dus_data = res.get("dus", {})
+        if dus_data:
+            ym_key = target_date.strftime("%Y%m")
+            rest_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_rest_data.csv")
+            new_row = pd.DataFrame([{
+                'year_month': ym_key,
+                'rooms': dus_data.get('rooms', 0),
+                'occ_pct': dus_data.get('occ_pct', 0.0),
+                'adr': dus_data.get('adr', 0),
+                'revenue': dus_data.get('revenue', 0),
+                'source_file': f"EIS03{target_date.strftime('%Y%m%d')}.XLS"
+            }])
+            if os.path.exists(rest_backup_path):
+                try:
+                    df_old_rest = pd.read_csv(rest_backup_path)
+                    df_old_rest['year_month'] = df_old_rest['year_month'].astype(str).str.strip()
+                    df_clean_rest = df_old_rest[df_old_rest['year_month'] != ym_key]
+                    df_final_rest = pd.concat([df_clean_rest, new_row], ignore_index=True)
+                except Exception:
+                    df_final_rest = new_row
+            else:
+                df_final_rest = new_row
+            df_final_rest.sort_values('year_month').to_csv(rest_backup_path, index=False, encoding='utf-8-sig')
+            logger.info(f"[SUCCESS] [{hotel_name}] 日宿 (DUS) 解析成功: {dus_data}")
+
         return True
     except Exception as e:
         logger.error(f"[FAIL] [{hotel_name}] 同步過程發生異常: {e}", exc_info=True)
