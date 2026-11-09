@@ -3547,7 +3547,7 @@ else:
         "📊 營運總覽", "📈 月分析專區", "📝 每日營運紀錄", 
         "💰 採購分析", "🛒 菜價分析", "🥬 H1 菜價戰略總評", "🧹 房務數據", 
         "🍽️ 餐廳數據", "🍽️ 現場餐期每日登記", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
-        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告",
+        "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告", "📑 店務會議專區",
         "🏔️ The Peak 專案總評", "⚖️ 雙館餐飲成本攤提", "💡 專案：免費服務成本優化"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
@@ -11195,6 +11195,214 @@ if current_hotel != "採購":
 
 if selected_page == "📋 營運檢討報告":
     render_report_tab()
+
+def render_store_meeting_tab():
+    import datetime
+    import plotly.graph_objects as go
+    import store_meeting_generator as smg
+
+    st.header("📑 店務會議簡報 (PPTX) 全自動產生與數據管理專區")
+    st.caption("每月店務會議 13 頁 PowerPoint 簡報一鍵全自動組裝引擎，包含雙館營收、渠道、國籍、住房率走勢圖，以及 RPG 會員數據填報。")
+
+    # 1. 會議期別與設定
+    today = datetime.date.today()
+    month_options = []
+    for i in range(1, 13):
+        d = today.replace(day=1) - datetime.timedelta(days=i*28)
+        month_options.append(d.strftime("%Y-%m"))
+    for default_target in ["2026-10", "2026-09"]:
+        if default_target not in month_options:
+            month_options.insert(0, default_target)
+
+    st.markdown("### 📅 1. 會議期別與報告設定")
+    c_m1, c_m2 = st.columns([1, 1])
+    with c_m1:
+        selected_report_month = st.selectbox(
+            "選擇會議報告月份 (對應投影片呈現數據)",
+            month_options,
+            index=0 if "2026-10" in month_options else 0
+        )
+    with c_m2:
+        selected_meeting_date = st.date_input("開會日期 (顯示於封面)", value=today)
+
+    meeting_date_str = selected_meeting_date.strftime("%Y/%m/%d")
+    report_ym_clean = selected_report_month.replace("-", "").strip()
+
+    st.divider()
+
+    # 2. RPG 會員組數填報與即時視覺化看板
+    st.markdown("### 👥 2. RPG 會員組數填報與即時視覺化看板")
+    st.info("💡 **使用說明**：請填入當月「國人」與「外國人」組數，系統將即時動態計算總組數、300 組達標率並更新走勢圖。填妥後點擊「儲存 RPG 數據」即可永久保存。")
+
+    theme_rpg_recs = smg.get_rpg_recent_months("主題館", report_ym_clean, n=3)
+    station_rpg_recs = smg.get_rpg_recent_months("站前館", report_ym_clean, n=3)
+
+    cur_theme_rpg = theme_rpg_recs[-1]
+    cur_station_rpg = station_rpg_recs[-1]
+
+    col_th, col_st = st.columns(2)
+
+    with col_th:
+        st.markdown("#### 🎪 主題館 RPG 會員組數")
+        th_dom = st.number_input(
+            "主題館 - 當月國人組數",
+            min_value=0,
+            value=int(cur_theme_rpg['domestic']),
+            step=1,
+            key=f"rpg_th_dom_{report_ym_clean}"
+        )
+        th_forg = st.number_input(
+            "主題館 - 當月外國人組數",
+            min_value=0,
+            value=int(cur_theme_rpg['foreign']),
+            step=1,
+            key=f"rpg_th_forg_{report_ym_clean}"
+        )
+
+        th_tot = th_dom + th_forg
+        th_achieve = (th_tot / 300.0) * 100.0
+        th_diff = th_tot - 300
+
+        col_kpi1, col_kpi2 = st.columns(2)
+        col_kpi1.metric("主題館本月總組數", f"{th_tot} 組", f"{th_diff:+} vs 目標")
+        col_kpi2.metric("目標 300 組達標率", f"{th_achieve:.1f}%")
+
+        if th_tot >= 300:
+            st.success(f"🎉 主題館已成功達標！超額 +{th_diff} 組")
+        else:
+            st.warning(f"⏳ 距 300 組目標尚差 {abs(th_diff)} 組")
+
+        th_cats = [r['month_label'] for r in theme_rpg_recs[:-1]] + [f"{int(report_ym_clean[4:]):d}月"]
+        th_dom_list = [r['domestic'] for r in theme_rpg_recs[:-1]] + [th_dom]
+        th_forg_list = [r['foreign'] for r in theme_rpg_recs[:-1]] + [th_forg]
+
+        fig_th = go.Figure()
+        fig_th.add_trace(go.Bar(name='國人', x=th_cats, y=th_dom_list, marker_color='#f39c12', text=th_dom_list, textposition='auto'))
+        fig_th.add_trace(go.Bar(name='外國人', x=th_cats, y=th_forg_list, marker_color='#3498db', text=th_forg_list, textposition='auto'))
+        fig_th.add_hline(y=300, line_dash="dash", line_color="#e74c3c", annotation_text="目標 300 組")
+        fig_th.update_layout(barmode='group', height=260, margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", y=1.15))
+        st.plotly_chart(fig_th, use_container_width=True)
+
+    with col_st:
+        st.markdown("#### 🏢 站前館 RPG 會員組數")
+        st_dom = st.number_input(
+            "站前館 - 當月國人組數",
+            min_value=0,
+            value=int(cur_station_rpg['domestic']),
+            step=1,
+            key=f"rpg_st_dom_{report_ym_clean}"
+        )
+        st_forg = st.number_input(
+            "站前館 - 當月外國人組數",
+            min_value=0,
+            value=int(cur_station_rpg['foreign']),
+            step=1,
+            key=f"rpg_st_forg_{report_ym_clean}"
+        )
+
+        st_tot = st_dom + st_forg
+        st_achieve = (st_tot / 300.0) * 100.0
+        st_diff = st_tot - 300
+
+        col_kpi3, col_kpi4 = st.columns(2)
+        col_kpi3.metric("站前館本月總組數", f"{st_tot} 組", f"{st_diff:+} vs 目標")
+        col_kpi4.metric("目標 300 組達標率", f"{st_achieve:.1f}%")
+
+        if st_tot >= 300:
+            st.success(f"🎉 站前館已成功達標！超額 +{st_diff} 組")
+        else:
+            st.warning(f"⏳ 距 300 組目標尚差 {abs(st_diff)} 組")
+
+        st_cats = [r['month_label'] for r in station_rpg_recs[:-1]] + [f"{int(report_ym_clean[4:]):d}月"]
+        st_dom_list = [r['domestic'] for r in station_rpg_recs[:-1]] + [st_dom]
+        st_forg_list = [r['foreign'] for r in station_rpg_recs[:-1]] + [st_forg]
+
+        fig_st = go.Figure()
+        fig_st.add_trace(go.Bar(name='國人', x=st_cats, y=st_dom_list, marker_color='#f39c12', text=st_dom_list, textposition='auto'))
+        fig_st.add_trace(go.Bar(name='外國人', x=st_cats, y=st_forg_list, marker_color='#3498db', text=st_forg_list, textposition='auto'))
+        fig_st.add_hline(y=300, line_dash="dash", line_color="#e74c3c", annotation_text="目標 300 組")
+        fig_st.update_layout(barmode='group', height=260, margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", y=1.15))
+        st.plotly_chart(fig_st, use_container_width=True)
+
+    if st.button("💾 儲存雙館 RPG 會員數據至資料庫", use_container_width=True):
+        smg.save_rpg_record(report_ym_clean, "主題館", th_dom, th_forg)
+        smg.save_rpg_record(report_ym_clean, "站前館", st_dom, st_forg)
+        st.success(f"✅ 已成功儲存 {selected_report_month} 雙館 RPG 會員組數至 `{smg.RPG_CSV_PATH}`！")
+
+    st.divider()
+
+    # 3. Slide 12 營運事項與維修照片
+    st.markdown("### 🛠️ 3. 營運事項與現場維修照片 (Slide 12)")
+    notes_val = st.text_area(
+        "營運修繕重點事項 (每行一項，將自動填入投影片文字方塊)",
+        value="1. 星空區投影機修繕完成 (原流明異常不足)\n2. 33F室外機溫感器故障已更換更新完成\n3. 37F用餐區走道安全防撞防滑巡檢完成",
+        height=90
+    )
+
+    uploaded_photos = st.file_uploader(
+        "上傳現場照片 (最多 3 張，支援 PNG/JPG，將自動置換 Slide 12 現場照片)",
+        type=['png', 'jpg', 'jpeg'],
+        accept_multiple_files=True
+    )
+
+    photo_bytes_list = []
+    if uploaded_photos:
+        cols_p = st.columns(min(3, len(uploaded_photos)))
+        for p_i, p_file in enumerate(uploaded_photos[:3]):
+            p_bytes = p_file.read()
+            photo_bytes_list.append(p_bytes)
+            with cols_p[p_i]:
+                st.image(p_bytes, caption=f"照片 {p_i+1}: {p_file.name}", width=180)
+
+    st.divider()
+
+    # 4. 🚀 一鍵全自動產生 13 頁 PPTX 簡報
+    st.markdown("### 🚀 4. 一鍵全自動組裝 13 頁店務會議簡報")
+    if st.button("🚀 一鍵生成完整 13 頁店務會議 PowerPoint 簡報 (.pptx)", type="primary", use_container_width=True):
+        with st.spinner("正在整合雙館歷史與當月數據、繪製高品質報表圖檔並組裝 PPTX 簡報中..."):
+            try:
+                smg.save_rpg_record(report_ym_clean, "主題館", th_dom, th_forg)
+                smg.save_rpg_record(report_ym_clean, "站前館", st_dom, st_forg)
+
+                live_helpers = {
+                    'fetch_month_summary': lambda y, m, h: fetch_month_summary(y, m) if globals().get('current_hotel') == h else None,
+                    'get_other_revenue': lambda ym, hotel_type: get_other_revenue(ym),
+                    'get_rest_metrics': lambda ym, hotel_type: get_rest_metrics(ym, hotel_type)
+                }
+
+                pptx_bytes, backup_path = smg.build_store_meeting_pptx(
+                    year_month=report_ym_clean,
+                    meeting_date=meeting_date_str,
+                    notes_text=notes_val,
+                    uploaded_photos=photo_bytes_list,
+                    live_helpers=live_helpers
+                )
+
+                st.balloons()
+                meeting_date_clean = re.sub(r'[^\d]', '', meeting_date_str)
+                download_filename = f"{meeting_date_clean} RH+主題館站前館店務會議.pptx"
+
+                if backup_path:
+                    st.success(f"🎉 簡報已全自動生成，並成功備份至 Y 槽：`{backup_path}`")
+                else:
+                    st.info(f"🎉 簡報已全自動生成！(Y 槽備份目錄 `{smg.DEFAULT_Y_BACKUP_DIR}` 暫未連線，可直接從下方下載)")
+
+                st.download_button(
+                    label="📥 立即下載店務會議簡報 (.pptx)",
+                    data=pptx_bytes,
+                    file_name=download_filename,
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    use_container_width=True,
+                    type="primary"
+                )
+            except Exception as e:
+                st.error(f"簡報生成過程發生錯誤: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+if selected_page == "📑 店務會議專區":
+    render_store_meeting_tab()
+
 
 
 
