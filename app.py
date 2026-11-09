@@ -11198,6 +11198,7 @@ if selected_page == "📋 營運檢討報告":
 
 def render_store_meeting_tab():
     import datetime
+    import plotly.graph_objects as go
     try:
         import store_meeting_generator as smg
     except ImportError as e:
