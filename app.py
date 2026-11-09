@@ -1443,20 +1443,27 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
                 df = df.loc[:, ~df.columns.duplicated()]
 
         elif worksheet == "EIS_data":
-            import datetime as _dt
-            now_ym = _dt.date.today().strftime('%Y%m')
-            eis_file = os.path.join(base_dir, "data", "pms_backup", f"{h_tag}_eis_{now_ym}.csv")
-            if os.path.exists(eis_file):
-                df_eis = pd.read_csv(eis_file)
-                if not df_eis.empty:
-                    col_ym = next((c for c in df_eis.columns if '年' in c and '月' in c), '年/月')
-                    target_ym = df_eis[col_ym].iloc[0]
-                    if df is not None and not df.empty:
-                        col_orig_ym = next((c for c in df.columns if '年' in c and '月' in c), '年/月')
-                        df_clean = df[df[col_orig_ym] != target_ym]
-                        df = pd.concat([df_clean, df_eis[['年/月', '項目', '本月實際']]], ignore_index=True)
-                    else:
-                        df = df_eis
+            import glob as _glob
+            eis_pattern = os.path.join(base_dir, "data", "pms_backup", f"{h_tag}_eis_*.csv")
+            eis_files = _glob.glob(eis_pattern)
+            for eis_file in sorted(eis_files):
+                try:
+                    df_eis = pd.read_csv(eis_file)
+                    if not df_eis.empty:
+                        col_ym = next((c for c in df_eis.columns if '年' in c and '月' in c), '年/月')
+                        if col_ym in df_eis.columns and '項目' in df_eis.columns and '本月實際' in df_eis.columns:
+                            df_eis[col_ym] = df_eis[col_ym].astype(str).str.strip().str.replace('/', '', regex=False).str.replace('-', '', regex=False).str.replace('.0', '', regex=False)
+                            target_ym = df_eis[col_ym].iloc[0]
+                            if df is not None and not df.empty:
+                                col_orig_ym = next((c for c in df.columns if '年' in c and '月' in c), '年/月')
+                                df[col_orig_ym] = df[col_orig_ym].replace('', pd.NA).ffill()
+                                df[col_orig_ym] = df[col_orig_ym].astype(str).str.strip().str.replace('/', '', regex=False).str.replace('-', '', regex=False).str.replace('.0', '', regex=False)
+                                df_clean = df[df[col_orig_ym] != target_ym]
+                                df = pd.concat([df_clean, df_eis[[col_ym, '項目', '本月實際']].rename(columns={col_ym: col_orig_ym})], ignore_index=True)
+                            else:
+                                df = df_eis[[col_ym, '項目', '本月實際']]
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -2715,34 +2722,55 @@ def get_other_revenue(year_month_str):
     從 EIS_data 分頁取得特定月份（例如 '202601'）的「其他收入」。
     白名單項目：['電話費', '影印費', '傳真費', '冰箱飲料', '洗衣費', '付費電視', '清潔費', '場租', '設施使用費', '雜項', '客房其他收入', '餐飲費', '商品收入']
     """
+    target_ym_clean = str(year_month_str).replace('/', '').replace('-', '').strip()
     try:
         df = _get_cached_sheet_v3("EIS_data", hotel_type=current_hotel)
     except Exception:
-        return 0.0
+        df = None
         
+    h_tag = "theme" if current_hotel == "主題館" else "station"
+    backup_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_eis_{target_ym_clean}.csv")
+    if (df is None or df.empty) and os.path.exists(backup_file):
+        try:
+            df = pd.read_csv(backup_file)
+        except Exception:
+            pass
+
     if df is None or df.empty:
         return 0.0
     
     # 清理欄位名稱
+    df = df.copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
     
-    if '年/月' not in df.columns or '項目' not in df.columns or '本月實際' not in df.columns:
-        col_ym = next((c for c in df.columns if '年' in c and '月' in c), None)
-        col_item = next((c for c in df.columns if '項目' in c), None)
-        col_actual = next((c for c in df.columns if '本月' in c and '實際' in c), None)
-        if not col_ym or not col_item or not col_actual:
-            return 0.0
-    else:
-        col_ym = '年/月'
-        col_item = '項目'
-        col_actual = '本月實際'
+    col_ym = next((c for c in df.columns if '年' in c and '月' in c), '年/月')
+    col_item = next((c for c in df.columns if '項目' in c), '項目')
+    col_actual = next((c for c in df.columns if '本月' in c and '實際' in c), '本月實際')
+    
+    if col_ym not in df.columns or col_item not in df.columns or col_actual not in df.columns:
+        return 0.0
         
-    # 向下填滿「年月」欄位
+    # 向下填滿「年月」欄位並統一標準化為 YYYYMM
     df[col_ym] = df[col_ym].replace('', pd.NA).ffill()
-    df[col_ym] = df[col_ym].astype(str).str.strip().str.replace('.0', '', regex=False)
+    df[col_ym] = df[col_ym].astype(str).str.strip().str.replace('/', '', regex=False).str.replace('-', '', regex=False).str.replace('.0', '', regex=False)
     
     # 篩選月份
-    df_month = df[df[col_ym] == str(year_month_str)]
+    df_month = df[df[col_ym] == target_ym_clean].copy()
+    
+    # 若篩選為空但本地備份庫存在，精確讀取本地備份
+    if df_month.empty and os.path.exists(backup_file):
+        try:
+            df_local = pd.read_csv(backup_file)
+            df_local.columns = [str(c).strip().lower() for c in df_local.columns]
+            loc_ym = next((c for c in df_local.columns if '年' in c and '月' in c), '年/月')
+            loc_item = next((c for c in df_local.columns if '項目' in c), '項目')
+            loc_actual = next((c for c in df_local.columns if '本月' in c and '實際' in c), '本月實際')
+            if loc_ym in df_local.columns and loc_item in df_local.columns and loc_actual in df_local.columns:
+                df_local[loc_ym] = df_local[loc_ym].astype(str).str.strip().str.replace('/', '', regex=False).str.replace('-', '', regex=False).str.replace('.0', '', regex=False)
+                df_month = df_local[df_local[loc_ym] == target_ym_clean].rename(columns={loc_item: col_item, loc_actual: col_actual})
+        except Exception:
+            pass
+
     if df_month.empty:
         return 0.0
         
@@ -2750,7 +2778,6 @@ def get_other_revenue(year_month_str):
     whitelist = ['電話費', '影印費', '傳真費', '冰箱飲料', '洗衣費', '付費電視', '清潔費', '場租', '設施使用費', '雜項', '客房其他收入', '餐飲費', '商品收入']
     
     # 過濾與加總
-    df_month = df_month.copy()
     df_month[col_item] = df_month[col_item].astype(str).str.strip()
     mask = df_month[col_item].isin(whitelist)
     
