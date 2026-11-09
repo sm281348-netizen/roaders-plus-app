@@ -911,8 +911,13 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     cur_rpg_theme = rpg_theme_records[-1]
 
     for s in slide6.shapes:
-        if s.has_text_frame and ('會員總組數' in s.text_frame.text or '本月會員' in s.text_frame.text):
-            s.text_frame.text = f"本月會員總組數: {cur_rpg_theme['total']}組"
+        if s.has_text_frame and ('總組數' in s.text_frame.text or '會員' in s.text_frame.text):
+            if s.text_frame.paragraphs and s.text_frame.paragraphs[0].runs:
+                s.text_frame.paragraphs[0].runs[0].text = f"{month_label}總組數: {cur_rpg_theme['total']}組"
+                for r in s.text_frame.paragraphs[0].runs[1:]:
+                    r.text = ""
+            else:
+                s.text_frame.text = f"{month_label}總組數: {cur_rpg_theme['total']}組"
             break
 
     chart_shape = next((s for s in slide6.shapes if s.has_chart), None)
@@ -1023,8 +1028,13 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     cur_rpg_station = rpg_station_records[-1]
 
     for s in slide11.shapes:
-        if s.has_text_frame and ('會員總組數' in s.text_frame.text or '本月會員' in s.text_frame.text):
-            s.text_frame.text = f"{month_label}會員總組數: {cur_rpg_station['total']}組"
+        if s.has_text_frame and ('總組數' in s.text_frame.text or '會員' in s.text_frame.text):
+            if s.text_frame.paragraphs and s.text_frame.paragraphs[0].runs:
+                s.text_frame.paragraphs[0].runs[0].text = f"{month_label}總組數: {cur_rpg_station['total']}組"
+                for r in s.text_frame.paragraphs[0].runs[1:]:
+                    r.text = ""
+            else:
+                s.text_frame.text = f"{month_label}總組數: {cur_rpg_station['total']}組"
             break
 
     chart_shape_s = next((s for s in slide11.shapes if s.has_chart), None)

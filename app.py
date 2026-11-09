@@ -11237,7 +11237,11 @@ def render_store_meeting_tab():
 
     # 2. RPG 會員組數填報與即時視覺化看板
     st.markdown("### 👥 2. RPG 會員組數填報與即時視覺化看板")
-    st.info("💡 **使用說明**：請填入當月「國人」與「外國人」組數，系統將即時動態計算總組數、300 組達標率並更新走勢圖。填妥後點擊「儲存 RPG 數據」即可永久保存。")
+    st.info(
+        "📌 **RPG 達成評核標準**：全月「**國人 + 外國人**」組數合計**達到或超過 300 組**即算達標！\n"
+        "• 圖表採用與 PPT 母版完全一致的 **堆疊長條圖 (Stacked Bar)**：下層為國人（小鹿橘），上層為外國人（石板黑/深藍），兩者相加之**總高度**即代表全月總組數。\n"
+        "• **紅色虛線為 300 組目標線**，堆疊總高度跨越紅線即一目了然判定達標！"
+    )
 
     theme_rpg_recs = smg.get_rpg_recent_months("主題館", report_ym_clean, n=3)
     station_rpg_recs = smg.get_rpg_recent_months("站前館", report_ym_clean, n=3)
@@ -11249,84 +11253,180 @@ def render_store_meeting_tab():
 
     with col_th:
         st.markdown("#### 🎪 主題館 RPG 會員組數")
-        th_dom = st.number_input(
-            "主題館 - 當月國人組數",
-            min_value=0,
-            value=int(cur_theme_rpg['domestic']),
-            step=1,
-            key=f"rpg_th_dom_{report_ym_clean}"
-        )
-        th_forg = st.number_input(
-            "主題館 - 當月外國人組數",
-            min_value=0,
-            value=int(cur_theme_rpg['foreign']),
-            step=1,
-            key=f"rpg_th_forg_{report_ym_clean}"
-        )
+        col_in1, col_in2 = st.columns(2)
+        with col_in1:
+            th_dom = st.number_input(
+                "主題館 - 當月國人組數",
+                min_value=0,
+                value=int(cur_theme_rpg['domestic']),
+                step=1,
+                key=f"rpg_th_dom_{report_ym_clean}"
+            )
+        with col_in2:
+            th_forg = st.number_input(
+                "主題館 - 當月外國人組數",
+                min_value=0,
+                value=int(cur_theme_rpg['foreign']),
+                step=1,
+                key=f"rpg_th_forg_{report_ym_clean}"
+            )
 
         th_tot = th_dom + th_forg
         th_achieve = (th_tot / 300.0) * 100.0
         th_diff = th_tot - 300
 
-        col_kpi1, col_kpi2 = st.columns(2)
-        col_kpi1.metric("主題館本月總組數", f"{th_tot} 組", f"{th_diff:+} vs 目標")
-        col_kpi2.metric("目標 300 組達標率", f"{th_achieve:.1f}%")
+        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+        col_kpi1.metric("國人組數", f"{th_dom} 組")
+        col_kpi2.metric("外國人組數", f"{th_forg} 組")
+        col_kpi3.metric("本月合計總組數", f"{th_tot} 組", f"{th_diff:+} vs 300目標")
 
         if th_tot >= 300:
-            st.success(f"🎉 主題館已成功達標！超額 +{th_diff} 組")
+            st.success(f"🎉 **【主題館】成功達標！** 國人 ({th_dom}) + 外國人 ({th_forg}) = **{th_tot} 組**（達成率 **{th_achieve:.1f}%**，超額 **+{th_diff} 組**）")
         else:
-            st.warning(f"⏳ 距 300 組目標尚差 {abs(th_diff)} 組")
+            st.warning(f"⏳ **【主題館】距離目標尚差 {abs(th_diff)} 組**：國人 ({th_dom}) + 外國人 ({th_forg}) = **{th_tot} 組**（達成率 **{th_achieve:.1f}%**）")
 
         th_cats = [r['month_label'] for r in theme_rpg_recs[:-1]] + [f"{int(report_ym_clean[4:]):d}月"]
         th_dom_list = [r['domestic'] for r in theme_rpg_recs[:-1]] + [th_dom]
         th_forg_list = [r['foreign'] for r in theme_rpg_recs[:-1]] + [th_forg]
+        th_tot_list = [d + f for d, f in zip(th_dom_list, th_forg_list)]
 
         fig_th = go.Figure()
-        fig_th.add_trace(go.Bar(name='國人', x=th_cats, y=th_dom_list, marker_color='#f39c12', text=th_dom_list, textposition='auto'))
-        fig_th.add_trace(go.Bar(name='外國人', x=th_cats, y=th_forg_list, marker_color='#3498db', text=th_forg_list, textposition='auto'))
-        fig_th.add_hline(y=300, line_dash="dash", line_color="#e74c3c", annotation_text="目標 300 組")
-        fig_th.update_layout(barmode='group', height=260, margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", y=1.15))
+        fig_th.add_trace(go.Bar(
+            name='國人',
+            x=th_cats,
+            y=th_dom_list,
+            marker_color='#f39c12',
+            text=[f"國人 {v}" for v in th_dom_list],
+            textposition='inside',
+            insidetextanchor='middle',
+            hovertemplate='<b>%{x} 國人</b>: %{y} 組<extra></extra>'
+        ))
+        fig_th.add_trace(go.Bar(
+            name='外國人',
+            x=th_cats,
+            y=th_forg_list,
+            marker_color='#2c3e50',
+            text=[f"外國人 {v}" for v in th_forg_list],
+            textposition='inside',
+            insidetextanchor='middle',
+            hovertemplate='<b>%{x} 外國人</b>: %{y} 組<extra></extra>'
+        ))
+        fig_th.add_trace(go.Scatter(
+            name='目標 300 組',
+            x=th_cats,
+            y=[300]*len(th_cats),
+            mode='lines+markers',
+            line=dict(color='#e74c3c', width=3, dash='dash'),
+            marker=dict(symbol='diamond', size=8, color='#e74c3c'),
+            hovertemplate='<b>目標門檻</b>: 300 組<extra></extra>'
+        ))
+        fig_th.add_trace(go.Scatter(
+            x=th_cats,
+            y=[t + 8 for t in th_tot_list],
+            mode='text',
+            text=[f"<b>合計 {t}組</b><br>{'✅達標' if t>=300 else '⏳未達'}" for t in th_tot_list],
+            textposition='top center',
+            textfont=dict(size=12, color='#2c3e50'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        fig_th.update_layout(
+            barmode='stack',
+            height=340,
+            margin=dict(l=20, r=20, t=35, b=20),
+            legend=dict(orientation="h", y=1.18, x=0.5, xanchor="center"),
+            yaxis=dict(title='會員組數', range=[0, max(max(th_tot_list) + 70, 420)], gridcolor='#f0f0f0'),
+            xaxis=dict(title=None)
+        )
         st.plotly_chart(fig_th, use_container_width=True)
 
     with col_st:
         st.markdown("#### 🏢 站前館 RPG 會員組數")
-        st_dom = st.number_input(
-            "站前館 - 當月國人組數",
-            min_value=0,
-            value=int(cur_station_rpg['domestic']),
-            step=1,
-            key=f"rpg_st_dom_{report_ym_clean}"
-        )
-        st_forg = st.number_input(
-            "站前館 - 當月外國人組數",
-            min_value=0,
-            value=int(cur_station_rpg['foreign']),
-            step=1,
-            key=f"rpg_st_forg_{report_ym_clean}"
-        )
+        col_sin1, col_sin2 = st.columns(2)
+        with col_sin1:
+            st_dom = st.number_input(
+                "站前館 - 當月國人組數",
+                min_value=0,
+                value=int(cur_station_rpg['domestic']),
+                step=1,
+                key=f"rpg_st_dom_{report_ym_clean}"
+            )
+        with col_sin2:
+            st_forg = st.number_input(
+                "站前館 - 當月外國人組數",
+                min_value=0,
+                value=int(cur_station_rpg['foreign']),
+                step=1,
+                key=f"rpg_st_forg_{report_ym_clean}"
+            )
 
         st_tot = st_dom + st_forg
         st_achieve = (st_tot / 300.0) * 100.0
         st_diff = st_tot - 300
 
-        col_kpi3, col_kpi4 = st.columns(2)
-        col_kpi3.metric("站前館本月總組數", f"{st_tot} 組", f"{st_diff:+} vs 目標")
-        col_kpi4.metric("目標 300 組達標率", f"{st_achieve:.1f}%")
+        col_kpi4, col_kpi5, col_kpi6 = st.columns(3)
+        col_kpi4.metric("國人組數", f"{st_dom} 組")
+        col_kpi5.metric("外國人組數", f"{st_forg} 組")
+        col_kpi6.metric("本月合計總組數", f"{st_tot} 組", f"{st_diff:+} vs 300目標")
 
         if st_tot >= 300:
-            st.success(f"🎉 站前館已成功達標！超額 +{st_diff} 組")
+            st.success(f"🎉 **【站前館】成功達標！** 國人 ({st_dom}) + 外國人 ({st_forg}) = **{st_tot} 組**（達成率 **{st_achieve:.1f}%**，超額 **+{st_diff} 組**）")
         else:
-            st.warning(f"⏳ 距 300 組目標尚差 {abs(st_diff)} 組")
+            st.warning(f"⏳ **【站前館】距離目標尚差 {abs(st_diff)} 組**：國人 ({st_dom}) + 外國人 ({st_forg}) = **{st_tot} 組**（達成率 **{st_achieve:.1f}%**）")
 
         st_cats = [r['month_label'] for r in station_rpg_recs[:-1]] + [f"{int(report_ym_clean[4:]):d}月"]
         st_dom_list = [r['domestic'] for r in station_rpg_recs[:-1]] + [st_dom]
         st_forg_list = [r['foreign'] for r in station_rpg_recs[:-1]] + [st_forg]
+        st_tot_list = [d + f for d, f in zip(st_dom_list, st_forg_list)]
 
         fig_st = go.Figure()
-        fig_st.add_trace(go.Bar(name='國人', x=st_cats, y=st_dom_list, marker_color='#f39c12', text=st_dom_list, textposition='auto'))
-        fig_st.add_trace(go.Bar(name='外國人', x=st_cats, y=st_forg_list, marker_color='#3498db', text=st_forg_list, textposition='auto'))
-        fig_st.add_hline(y=300, line_dash="dash", line_color="#e74c3c", annotation_text="目標 300 組")
-        fig_st.update_layout(barmode='group', height=260, margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", y=1.15))
+        fig_st.add_trace(go.Bar(
+            name='國人',
+            x=st_cats,
+            y=st_dom_list,
+            marker_color='#f39c12',
+            text=[f"國人 {v}" for v in st_dom_list],
+            textposition='inside',
+            insidetextanchor='middle',
+            hovertemplate='<b>%{x} 國人</b>: %{y} 組<extra></extra>'
+        ))
+        fig_st.add_trace(go.Bar(
+            name='外國人',
+            x=st_cats,
+            y=st_forg_list,
+            marker_color='#2c3e50',
+            text=[f"外國人 {v}" for v in st_forg_list],
+            textposition='inside',
+            insidetextanchor='middle',
+            hovertemplate='<b>%{x} 外國人</b>: %{y} 組<extra></extra>'
+        ))
+        fig_st.add_trace(go.Scatter(
+            name='目標 300 組',
+            x=st_cats,
+            y=[300]*len(st_cats),
+            mode='lines+markers',
+            line=dict(color='#e74c3c', width=3, dash='dash'),
+            marker=dict(symbol='diamond', size=8, color='#e74c3c'),
+            hovertemplate='<b>目標門檻</b>: 300 組<extra></extra>'
+        ))
+        fig_st.add_trace(go.Scatter(
+            x=st_cats,
+            y=[t + 8 for t in st_tot_list],
+            mode='text',
+            text=[f"<b>合計 {t}組</b><br>{'✅達標' if t>=300 else '⏳未達'}" for t in st_tot_list],
+            textposition='top center',
+            textfont=dict(size=12, color='#2c3e50'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        fig_st.update_layout(
+            barmode='stack',
+            height=340,
+            margin=dict(l=20, r=20, t=35, b=20),
+            legend=dict(orientation="h", y=1.18, x=0.5, xanchor="center"),
+            yaxis=dict(title='會員組數', range=[0, max(max(st_tot_list) + 70, 420)], gridcolor='#f0f0f0'),
+            xaxis=dict(title=None)
+        )
         st.plotly_chart(fig_st, use_container_width=True)
 
     if st.button("💾 儲存雙館 RPG 會員數據至資料庫", use_container_width=True):
