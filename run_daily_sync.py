@@ -113,14 +113,18 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
             logger.info(f"[SUCCESS] [{hotel_name}] occ_data 已儲存至本地備份庫: 共 {len(df_final_occ)} 天 (時間軸: {df_final_occ['date'].min()} ~ {df_final_occ['date'].max()})")
 
         if not df_chan.empty:
+            df_chan.columns = [str(c).strip().lower() for c in df_chan.columns]
             chan_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_channels.csv")
             if os.path.exists(chan_backup_path):
                 df_old_chan = pd.read_csv(chan_backup_path)
+                df_old_chan.columns = [str(c).strip().lower() for c in df_old_chan.columns]
                 new_dates = set(df_chan['date'].astype(str).unique())
                 df_old_clean = df_old_chan[~df_old_chan['date'].astype(str).isin(new_dates)]
                 df_final_chan = pd.concat([df_old_clean, df_chan], ignore_index=True)
             else:
                 df_final_chan = df_chan
+            df_final_chan.columns = [str(c).strip().lower() for c in df_final_chan.columns]
+            df_final_chan = df_final_chan.loc[:, ~df_final_chan.columns.duplicated()]
             df_final_chan.sort_values('date').to_csv(chan_backup_path, index=False, encoding='utf-8-sig')
             logger.info(f"[SUCCESS] [{hotel_name}] marketing_channel_data 解析成功: 共 {len(df_chan)} 筆，已更新至本地備份庫")
         else:
@@ -148,6 +152,7 @@ def push_to_cloud_git():
             "data/pms_backup/", 
             "pms_future_extractor.py", 
             "run_daily_sync.py",
+            "pms_channel_sync.py",
             "fb_purchase_extractor.py",
             "fb_purchase_sync.py",
             "pms_fnb_extractor.py",

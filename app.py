@@ -1421,15 +1421,26 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
             chan_file = os.path.join(base_dir, "data", "pms_backup", f"{h_tag}_channels.csv")
             if os.path.exists(chan_file):
                 df_chan = pd.read_csv(chan_file)
-                if not df_chan.empty and 'date' in df_chan.columns:
-                    df_chan['date'] = df_chan['date'].astype(str).str.strip()
-                    if df is not None and not df.empty and 'date' in df.columns:
-                        df['date'] = df['date'].astype(str).str.strip()
-                        new_dates = set(df_chan['date'].unique())
-                        df_clean = df[~df['date'].isin(new_dates)]
-                        df = pd.concat([df_clean, df_chan], ignore_index=True)
-                    else:
-                        df = df_chan
+                if not df_chan.empty:
+                    df_chan.columns = [str(c).strip().lower() for c in df_chan.columns]
+                    df_chan = df_chan.loc[:, ~df_chan.columns.duplicated()]
+                    if 'date' in df_chan.columns:
+                        df_chan['date'] = df_chan['date'].astype(str).str.strip()
+                        if df is not None and not df.empty:
+                            df.columns = [str(c).strip().lower() for c in df.columns]
+                            df = df.loc[:, ~df.columns.duplicated()]
+                            if 'date' in df.columns:
+                                df['date'] = df['date'].astype(str).str.strip()
+                                new_dates = set(df_chan['date'].unique())
+                                df_clean = df[~df['date'].isin(new_dates)]
+                                df = pd.concat([df_clean, df_chan], ignore_index=True)
+                            else:
+                                df = df_chan
+                        else:
+                            df = df_chan
+            if df is not None and not df.empty:
+                df.columns = [str(c).strip().lower() for c in df.columns]
+                df = df.loc[:, ~df.columns.duplicated()]
 
         elif worksheet == "EIS_data":
             import datetime as _dt
@@ -9757,9 +9768,17 @@ def render_channel_tab():
     with st.spinner("載入渠道資料中..."):
         try:
             df_raw = read_google_sheet("marketing_channel_data")
+            h_tag = "theme" if current_hotel == "主題館" else "station"
+            backup_chan = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_channels.csv")
+
+            if df_raw is None or df_raw.empty:
+                if os.path.exists(backup_chan):
+                    df_raw = pd.read_csv(backup_chan)
+
             if df_raw is not None and not df_raw.empty:
                 # 清理與統一欄位名稱
                 df_raw.columns = [str(c).strip().lower() for c in df_raw.columns]
+                df_raw = df_raw.loc[:, ~df_raw.columns.duplicated()]
 
                 if 'date' in df_raw.columns:
                     # 處理合併儲存格或日期在底部的狀況 (向上填補 date)
@@ -9774,16 +9793,31 @@ def render_channel_tab():
                     
                     if curr_date:
                         curr_ym2 = curr_date.strftime("%Y-%m")
-                        mask = df_raw['date'].astype(str).str.startswith(curr_ym2, na=False)
+                        curr_ym_nodash = curr_date.strftime("%Y%m")
+                        date_series = df_raw['date'].iloc[:, 0] if isinstance(df_raw['date'], pd.DataFrame) else df_raw['date']
+                        mask = date_series.astype(str).str.startswith(curr_ym2, na=False) | date_series.astype(str).str.startswith(curr_ym_nodash, na=False)
                         df_t = df_raw[mask].copy()
                         
+                        # 若雲端表查無該月份 (例如 10 月、11 月)，自動從 PMS 本地備份庫精確補載
+                        if df_t.empty and os.path.exists(backup_chan):
+                            df_local = pd.read_csv(backup_chan)
+                            df_local.columns = [str(c).strip().lower() for c in df_local.columns]
+                            df_local = df_local.loc[:, ~df_local.columns.duplicated()]
+                            if 'date' in df_local.columns:
+                                df_local = standardize_df_dates(df_local)
+                                loc_dates = df_local['date'].iloc[:, 0] if isinstance(df_local['date'], pd.DataFrame) else df_local['date']
+                                loc_mask = loc_dates.astype(str).str.startswith(curr_ym2, na=False) | loc_dates.astype(str).str.startswith(curr_ym_nodash, na=False)
+                                df_t = df_local[loc_mask].copy()
+
                         if not df_t.empty:
-                            df_t['rooms'] = df_t['rooms'].astype(str).str.replace(',', '', regex=False)
-                            df_t['rooms'] = pd.to_numeric(df_t['rooms'], errors='coerce').fillna(0)
+                            df_t = df_t.loc[:, ~df_t.columns.duplicated()]
+                            rooms_series = df_t['rooms'].iloc[:, 0] if isinstance(df_t['rooms'], pd.DataFrame) else df_t['rooms']
+                            df_t['rooms'] = pd.to_numeric(rooms_series.astype(str).str.replace(',', '', regex=False), errors='coerce').fillna(0)
                             df_t = df_t[df_t['rooms'] > 0]
                             
                             if not df_t.empty:
-                                df_t['channel_clean'] = df_t['company name'].apply(clean_channel_name)
+                                comp_series = df_t['company name'].iloc[:, 0] if isinstance(df_t['company name'], pd.DataFrame) else df_t['company name']
+                                df_t['channel_clean'] = comp_series.apply(clean_channel_name)
                                 df_agg = df_t.groupby('channel_clean', as_index=False).agg({'rooms': 'sum'})
                                 
                                 total_rooms = df_agg['rooms'].sum()
@@ -10504,14 +10538,19 @@ def render_report_tab():
         df_channel = read_google_sheet("marketing_channel_data")
         if df_channel is not None and not df_channel.empty:
             df_channel.columns = [str(c).strip().lower() for c in df_channel.columns]
+            df_channel = df_channel.loc[:, ~df_channel.columns.duplicated()]
             if 'date' in df_channel.columns:
                 df_channel['date'] = df_channel['date'].replace('', pd.NA).ffill()
                 if set(['date', 'company name', 'rooms']).issubset(set(df_channel.columns)):
                     df_channel = standardize_df_dates(df_channel)
-                    df_c = df_channel[df_channel['date'].str.startswith(f"{year}-{month:02d}")]
+                    date_col = df_channel['date'].iloc[:, 0] if isinstance(df_channel['date'], pd.DataFrame) else df_channel['date']
+                    df_c = df_channel[date_col.astype(str).str.startswith(f"{year}-{month:02d}")].copy()
                     if not df_c.empty:
-                        df_c['rooms'] = pd.to_numeric(df_c['rooms'].astype(str).str.strip().str.replace(',', ''), errors='coerce').fillna(0)
-                        top_channels = df_c.groupby('company name')['rooms'].sum().nlargest(3).index.tolist()
+                        df_c = df_c.loc[:, ~df_c.columns.duplicated()]
+                        rooms_col = df_c['rooms'].iloc[:, 0] if isinstance(df_c['rooms'], pd.DataFrame) else df_c['rooms']
+                        df_c['rooms'] = pd.to_numeric(rooms_col.astype(str).str.strip().str.replace(',', '', regex=False), errors='coerce').fillna(0)
+                        comp_col = df_c['company name'].iloc[:, 0] if isinstance(df_c['company name'], pd.DataFrame) else df_c['company name']
+                        top_channels = df_c.groupby(comp_col)['rooms'].sum().nlargest(3).index.tolist()
 
         top_nations = []
         df_nation = _get_cached_sheet_v3("nationality_report", hotel_type=current_hotel)
