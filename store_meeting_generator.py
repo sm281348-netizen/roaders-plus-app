@@ -650,7 +650,12 @@ def collect_hotel_meeting_data(hotel_name, year_month_str, live_helpers=None):
                     pass
 
         # 歷史預設值補丁 (若連線與本地皆無該月資料)
-        if room_rev == 0 and check_ym == '202609':
+        if room_rev == 0 and check_ym == '202610':
+            if hotel_name == "主題館":
+                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 87.9, 4539, 0.08, 1700, 3991, 13766027, 8633
+            else:
+                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 92.6, 4937, 0.12, 1650, 4571, 17598823, 77698
+        elif room_rev == 0 and check_ym == '202609':
             if hotel_name == "主題館":
                 occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 86.0, 3302, 0.09, 1707, 2838, 9460598, 2540
             else:
@@ -699,10 +704,16 @@ def collect_hotel_meeting_data(hotel_name, year_month_str, live_helpers=None):
         except Exception:
             pass
     if next_stat['rev'] == 0:
-        if hotel_name == "主題館":
-            next_stat = {'rev': 11532850, 'adr': 4425, 'occ': 75.0}
+        if next_m == 11 and y == 2026:
+            if hotel_name == "主題館":
+                next_stat = {'rev': 13144770, 'adr': 5079, 'occ': 77.0}
+            else:
+                next_stat = {'rev': 16945928, 'adr': 5649, 'occ': 79.0}
         else:
-            next_stat = {'rev': 14981329, 'adr': 4800, 'occ': 80.0}
+            if hotel_name == "主題館":
+                next_stat = {'rev': 11532850, 'adr': 4425, 'occ': 75.0}
+            else:
+                next_stat = {'rev': 14981329, 'adr': 4800, 'occ': 80.0}
 
     # 3. 每日 OCC / ADR 走勢數據
     df_occ_month = pd.DataFrame()
@@ -726,8 +737,13 @@ def collect_hotel_meeting_data(hotel_name, year_month_str, live_helpers=None):
                 grp = m_c.groupby(col_name)[col_rm].sum().sort_values(ascending=False).reset_index()
                 for _, r in grp.iterrows():
                     c_name = str(r[col_name]).strip()
-                    if 'bookingbutton' in c_name.lower():
+                    c_low = c_name.lower()
+                    if 'bookingbutton' in c_low or '官網' in c_name or 'x' in c_name:
                         c_name = '官網'
+                    elif '115' in c_name or '補助' in c_name or '補貼' in c_name:
+                        c_name = '旅宿補助專案'
+                    elif '小鹿' in c_name or 'p' in c_low:
+                        c_name = '小鹿文娛'
                     channel_rows.append({'company_name': c_name, 'rooms': int(r[col_rm])})
         except Exception:
             pass
@@ -801,7 +817,8 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
             if '店務會議報告' in txt:
                 shape.text_frame.text = f"路徒PLUS行旅\n站前館/主題館\n\n{month_label}店務會議報告"
             elif re.search(r'\d{4}[/-]\d{1,2}[/-]\d{1,2}', txt):
-                shape.text_frame.text = str(meeting_date)
+                clean_date = str(meeting_date).replace('-', '/')
+                shape.text_frame.text = clean_date
 
     def replace_slide_image(slide, shape_index, new_png_bytes):
         shape = slide.shapes[shape_index]
