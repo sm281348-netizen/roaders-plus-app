@@ -11299,8 +11299,10 @@ if selected_page == "📋 營運檢討報告":
 def render_store_meeting_tab():
     import datetime
     import plotly.graph_objects as go
+    import importlib
     try:
         import store_meeting_generator as smg
+        importlib.reload(smg)
     except ImportError as e:
         st.error(f"⚠️ 載入店務會議模組失敗: {e}。請確認 requirements.txt 已安裝 matplotlib, python-pptx。")
         st.info("💡 若您剛更新 requirements.txt，Streamlit Cloud 正在背景重新安裝套件，請稍候 1-2 分鐘後重新整理頁面。")
@@ -11607,9 +11609,52 @@ def render_store_meeting_tab():
         else:
             st.info("🏢 站前館休息狀態：本月確認**無休息業務** (簡報將以 `-` 標記)")
 
+    def _save_rest_record_helper(year_month_str, hotel_name, occ_pct, adr, revenue=0):
+        if hasattr(smg, 'save_rest_record'):
+            try:
+                return smg.save_rest_record(year_month_str, hotel_name, occ_pct, adr, revenue)
+            except Exception:
+                pass
+        ym_clean = str(year_month_str).replace('-', '').replace('/', '').strip()
+        h_tag = "theme" if "主題" in hotel_name else "station"
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_rest_data.csv")
+        try:
+            if os.path.exists(csv_path):
+                df = pd.read_csv(csv_path)
+            else:
+                df = pd.DataFrame(columns=['year_month', 'rooms', 'occ_pct', 'adr', 'revenue', 'source_file'])
+            df['year_month'] = df['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
+            total_avail = 3472 if h_tag == "theme" else 3968
+            rooms = int(round((float(occ_pct) / 100.0) * total_avail)) if float(occ_pct) > 0 else 0
+            if revenue == 0 and float(adr) > 0 and rooms > 0:
+                revenue = int(round(float(adr) * rooms))
+            mask = df['year_month'] == ym_clean
+            if mask.any():
+                df.loc[mask, 'rooms'] = rooms
+                df.loc[mask, 'occ_pct'] = float(occ_pct)
+                df.loc[mask, 'adr'] = int(round(float(adr)))
+                df.loc[mask, 'revenue'] = int(round(float(revenue)))
+                df.loc[mask, 'source_file'] = f'USER_CONFIRMED_{ym_clean}'
+            else:
+                new_row = pd.DataFrame([{
+                    'year_month': ym_clean,
+                    'rooms': rooms,
+                    'occ_pct': float(occ_pct),
+                    'adr': int(round(float(adr))),
+                    'revenue': int(round(float(revenue))),
+                    'source_file': f'USER_CONFIRMED_{ym_clean}'
+                }])
+                df = pd.concat([df, new_row], ignore_index=True)
+            df = df.sort_values(by='year_month').reset_index(drop=True)
+            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+            df.to_csv(csv_path, index=False, encoding='utf-8')
+            return df
+        except Exception:
+            return None
+
     if st.button("💾 儲存雙館休息數據至資料庫", use_container_width=True):
-        smg.save_rest_record(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
-        smg.save_rest_record(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
+        _save_rest_record_helper(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
+        _save_rest_record_helper(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
         st.success(f"✅ 已成功儲存 {selected_report_month} 雙館休息數據至資料庫！")
 
     st.divider()
@@ -11646,8 +11691,8 @@ def render_store_meeting_tab():
             try:
                 smg.save_rpg_record(report_ym_clean, "主題館", th_dom, th_forg)
                 smg.save_rpg_record(report_ym_clean, "站前館", st_dom, st_forg)
-                smg.save_rest_record(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
-                smg.save_rest_record(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
+                _save_rest_record_helper(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
+                _save_rest_record_helper(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
 
                 def custom_get_rest(ym, hotel_type):
                     if ym == report_ym_clean:
