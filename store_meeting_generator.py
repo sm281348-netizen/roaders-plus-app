@@ -168,6 +168,48 @@ def get_rpg_recent_months(hotel, target_year_month, n=3):
     return res
 
 
+def save_rest_record(year_month_str, hotel_name, occ_pct, adr, revenue=0):
+    """儲存休息 (DUS) 數據至 data/pms_backup/{h_tag}_rest_data.csv"""
+    ym_clean = str(year_month_str).replace('-', '').replace('/', '').strip()
+    h_tag = "theme" if "主題" in hotel_name else "station"
+    csv_path = os.path.join(BASE_DIR, "data", "pms_backup", f"{h_tag}_rest_data.csv")
+    if os.path.exists(csv_path):
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception:
+            df = pd.DataFrame(columns=['year_month', 'rooms', 'occ_pct', 'adr', 'revenue', 'source_file'])
+    else:
+        df = pd.DataFrame(columns=['year_month', 'rooms', 'occ_pct', 'adr', 'revenue', 'source_file'])
+    
+    df['year_month'] = df['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
+    total_avail = 3472 if h_tag == "theme" else 3968
+    rooms = int(round((float(occ_pct) / 100.0) * total_avail)) if float(occ_pct) > 0 else 0
+    if revenue == 0 and float(adr) > 0 and rooms > 0:
+        revenue = int(round(float(adr) * rooms))
+        
+    mask = df['year_month'] == ym_clean
+    if mask.any():
+        df.loc[mask, 'rooms'] = rooms
+        df.loc[mask, 'occ_pct'] = float(occ_pct)
+        df.loc[mask, 'adr'] = int(round(float(adr)))
+        df.loc[mask, 'revenue'] = int(round(float(revenue)))
+        df.loc[mask, 'source_file'] = f'USER_CONFIRMED_{ym_clean}'
+    else:
+        new_row = pd.DataFrame([{
+            'year_month': ym_clean,
+            'rooms': rooms,
+            'occ_pct': float(occ_pct),
+            'adr': int(round(float(adr))),
+            'revenue': int(round(float(revenue))),
+            'source_file': f'USER_CONFIRMED_{ym_clean}'
+        }])
+        df = pd.concat([df, new_row], ignore_index=True)
+    df = df.sort_values(by='year_month').reset_index(drop=True)
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    df.to_csv(csv_path, index=False, encoding='utf-8')
+    return df
+
+
 # ==============================================================================
 # 2. 表格影像繪製器 (Pillow, 精確還原小鹿橘色系視覺風格)
 # ==============================================================================
@@ -246,12 +288,17 @@ def render_revenue_table_png(stats_list, hotel_name):
         text_color = (204, 0, 0) if is_highlight else (20, 20, 20)
         fnt = f_cell_bold if is_highlight else f_cell
 
+        r_occ = float(stat.get('rest_occ', 0.0))
+        r_adr = float(stat.get('rest_adr', 0.0))
+        rest_occ_str = f"{r_occ:.2f}%" if r_occ > 0 else "-"
+        rest_adr_str = f"${int(round(r_adr)):,}" if r_adr > 0 else "-"
+
         row_vals = [
             str(stat.get('month_label', '')),
             f"{float(stat.get('occ_rate', 0.0)):.1f}%",
             f"${int(round(float(stat.get('adr', 0.0)))):,}",
-            f"{float(stat.get('rest_occ', 0.0)):.2f}%",
-            f"${int(round(float(stat.get('rest_adr', 0.0)))):,}",
+            rest_occ_str,
+            rest_adr_str,
             f"${int(round(float(stat.get('revpar', 0.0)))):,}",
             f"${int(round(float(stat.get('room_rev', 0.0)))):,}",
             f"${int(round(float(stat.get('other_rev', 0.0)))):,}",
@@ -652,27 +699,46 @@ def collect_hotel_meeting_data(hotel_name, year_month_str, live_helpers=None):
         # 歷史預設值補丁 (若連線與本地皆無該月資料)
         if room_rev == 0 and check_ym == '202610':
             if hotel_name == "主題館":
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 87.9, 4539, 0.08, 1700, 3991, 13766027, 8633
+                occ_rate, adr, revpar, room_rev, other_rev = 88.0, 4546, 4001, 13800285, 8633
             else:
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 92.6, 4937, 0.12, 1650, 4571, 17598823, 77698
+                occ_rate, adr, revpar, room_rev, other_rev = 92.6, 4935, 4570, 17599936, 77698
         elif room_rev == 0 and check_ym == '202609':
             if hotel_name == "主題館":
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 86.0, 3302, 0.09, 1707, 2838, 9460598, 2540
+                occ_rate, adr, revpar, room_rev, other_rev = 86.0, 3302, 2838, 9460598, 2540
             else:
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 88.9, 3561, 0.14, 1520, 3167, 11668393, 65850
+                occ_rate, adr, revpar, room_rev, other_rev = 88.9, 3562, 3167, 11668393, 65850
         elif room_rev == 0 and check_ym == '202608':
             if hotel_name == "主題館":
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 88.1, 3331, 0.03, 1680, 2934, 10092400, 11434
+                occ_rate, adr, revpar, room_rev, other_rev = 88.1, 3331, 2934, 10092400, 11434
             else:
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 91.4, 3582, 0.05, 1930, 3273, 12585710, 93025
+                occ_rate, adr, revpar, room_rev, other_rev = 91.4, 3583, 3273, 12585710, 93025
         elif room_rev == 0 and check_ym == '202607':
             if hotel_name == "主題館":
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 84.7, 3330, 0.03, 1680, 2822, 9719465, 23181
+                occ_rate, adr, revpar, room_rev, other_rev = 84.7, 3330, 2822, 9719465, 23181
             else:
-                occ_rate, adr, rest_occ, rest_adr, revpar, room_rev, other_rev = 86.4, 3528, 0.47, 1519, 3049, 11629332, 74132
-        else:
-            rest_occ = rest_info.get('occ', 0.0)
-            rest_adr = rest_info.get('adr', 0)
+                occ_rate, adr, revpar, room_rev, other_rev = 86.4, 3528, 3049, 11629332, 74132
+
+        # 休息數據提取與備援對齊 (包含本機 EIS03 與歷史簡報對應數據)
+        rest_occ = float(rest_info.get('occ', 0.0))
+        rest_adr = int(round(float(rest_info.get('adr', 0))))
+        if rest_occ == 0.0 and rest_adr == 0:
+            if hotel_name == "主題館":
+                theme_rest_defaults = {
+                    '202610': (0.12, 4571),
+                    '202609': (0.09, 1707),
+                    '202608': (0.03, 1680),
+                    '202607': (0.03, 1680)
+                }
+                if check_ym in theme_rest_defaults:
+                    rest_occ, rest_adr = theme_rest_defaults[check_ym]
+            else:
+                station_rest_defaults = {
+                    '202609': (0.14, 1520),
+                    '202608': (0.05, 1930),
+                    '202607': (0.47, 1519)
+                }
+                if check_ym in station_rest_defaults:
+                    rest_occ, rest_adr = station_rest_defaults[check_ym]
 
         total_rev = room_rev + other_rev
         stats_list.append({

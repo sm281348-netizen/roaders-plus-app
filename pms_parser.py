@@ -82,15 +82,22 @@ def resolve_file_paths(hotel_name: str, d_obj: datetime.date):
 
     # 1. EIS03 路徑
     if hotel_name == "站前館":
-        # 站前館目錄分層: {YYYY}\{YYYYMM}\EIS03{YYYYMMDD}.XLS
-        eis_path = os.path.join(cfg["eis_base"], y_str, ym_str, f"EIS03{ymd_str}.XLS")
-        if not os.path.exists(eis_path):
-            eis_path_alt = os.path.join(cfg["eis_base"], f"EIS03{ymd_str}.XLS")
-            if os.path.exists(eis_path_alt):
-                eis_path = eis_path_alt
+        station_candidates = [
+            os.path.join(r"Y:\櫃台\夜審\每日EIS", y_str, ym_str, f"EIS03{ymd_str}.XLS"),
+            os.path.join(r"Y:\櫃台\夜審\每日EIS", f"EIS03{ymd_str}.XLS"),
+            os.path.join(cfg["eis_base"], y_str, ym_str, f"EIS03{ymd_str}.XLS"),
+            os.path.join(cfg["eis_base"], f"EIS03{ymd_str}.XLS"),
+        ]
+        eis_path = station_candidates[0]
+        for cand in station_candidates:
+            if os.path.exists(cand):
+                eis_path = cand
+                break
     else:
-        # 主題館為多層備援目錄 (夜櫃結帳與金旭帳務)
+        # 主題館為多層備援目錄 (金旭帳務與夜櫃結帳)
         theme_candidates = [
+            os.path.join(r"W:\主題-櫃台\金旭(帳務)\EIS報表", f"EIS03{ymd_str}.XLS"),
+            os.path.join(r"W:\主題-櫃台\金旭(帳務)\EIS報表", ym_str, f"EIS03{ymd_str}.XLS"),
             os.path.join(r"W:\主題-櫃台\夜櫃結帳\EIS表", f"{y_str}年", ym_str, f"EIS03{ymd_str}.XLS"),
             os.path.join(r"W:\主題-櫃台\夜櫃結帳\EIS表", ym_str, f"EIS03{ymd_str}.XLS"),
             os.path.join(cfg["eis_base"], f"EIS03{ymd_str}.XLS"),

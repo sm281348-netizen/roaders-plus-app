@@ -2925,12 +2925,17 @@ def get_rest_metrics(year_month_str, hotel_type=None):
             m = int(target_ym_clean[4:])
             _, last_day = calendar.monthrange(y, m)
             for d in range(last_day, 0, -1):
-                f_date = datetime(y, m, d)
                 p = resolve_file_paths(h, f_date)
-                if p.get('eis03') and os.path.exists(p['eis03']):
-                    dus_info = parse_eis03_dus(p['eis03'])
-                    if dus_info:
-                        return dus_info
+                eis_p = p[0] if isinstance(p, (tuple, list)) else (p.get('eis03') if isinstance(p, dict) else str(p))
+                if eis_p and os.path.exists(eis_p):
+                    dus_info = parse_eis03_dus(eis_p)
+                    if dus_info and dus_info.get('rooms', 0) > 0:
+                        return {
+                            'occ': float(dus_info.get('occ_pct', 0.0)),
+                            'adr': int(round(float(dus_info.get('adr', 0)))),
+                            'rooms': int(round(float(dus_info.get('rooms', 0)))),
+                            'revenue': int(round(float(dus_info.get('revenue', 0))))
+                        }
     except Exception:
         pass
 
@@ -11534,8 +11539,83 @@ def render_store_meeting_tab():
 
     st.divider()
 
-    # 3. Slide 12 營運事項與維修照片
-    st.markdown("### 🛠️ 3. 營運事項與現場維修照片 (Slide 12)")
+    # 3. 雙館當月休息 (日宿) 數據確認與填報 (Slide 2 & Slide 7)
+    st.markdown("### 🛏️ 3. 雙館當月休息 (日宿) 數據確認與填報 (Slide 2 & Slide 7)")
+    st.info(
+        "📌 **休息 (日宿) 數據說明**：\n"
+        "• 系統預設會自動讀取 EIS03 營業總日報表之累計日宿 (DUS) 間數、使用率與 ADR。\n"
+        "• 主題館 10 月 EIS03 實銷 4 間，使用率 0.12%，ADR NT$ 4,571；站前館 10 月 EIS03 經查驗全月無休息 (0 間)。\n"
+        "• **重要呈現規則**：若該館該月份確認**無休息業務**，簡報表格將以 **斜線/橫槓 (`-`)** 標記確認，絕不會顯示錯誤之 `$0` 或 `0.00%`！\n"
+        "• 您亦可於下方檢視或手動調整當月雙館的休息使用率與 ADR，系統將即時套入投影片中。"
+    )
+
+    theme_rest_auto = get_rest_metrics(report_ym_clean, hotel_type="主題館")
+    station_rest_auto = get_rest_metrics(report_ym_clean, hotel_type="站前館")
+
+    col_rest_th, col_rest_st = st.columns(2)
+    with col_rest_th:
+        st.markdown("#### 🎪 主題館 當月休息數據")
+        c_th_r1, c_th_r2 = st.columns(2)
+        with c_th_r1:
+            th_rest_occ = st.number_input(
+                "主題館 - 休息使用率 (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(theme_rest_auto.get('occ', 0.12 if report_ym_clean == '202610' else 0.0)),
+                step=0.01,
+                format="%.2f",
+                key=f"rest_th_occ_{report_ym_clean}"
+            )
+        with c_th_r2:
+            th_rest_adr = st.number_input(
+                "主題館 - 休息 ADR (元)",
+                min_value=0,
+                value=int(theme_rest_auto.get('adr', 4571 if report_ym_clean == '202610' else 0)),
+                step=10,
+                key=f"rest_th_adr_{report_ym_clean}"
+            )
+        th_rest_rev = int(round(theme_rest_auto.get('revenue', 18282 if report_ym_clean == '202610' else 0)))
+        if th_rest_occ > 0 and th_rest_adr > 0:
+            st.success(f"🎪 主題館休息狀態：使用率 **{th_rest_occ:.2f}%** | ADR **NT$ {th_rest_adr:,}** (累計營收約 NT$ {th_rest_rev:,})")
+        else:
+            st.info("🎪 主題館休息狀態：本月確認**無休息業務** (簡報將以 `-` 標記)")
+
+    with col_rest_st:
+        st.markdown("#### 🏢 站前館 當月休息數據")
+        c_st_r1, c_st_r2 = st.columns(2)
+        with c_st_r1:
+            st_rest_occ = st.number_input(
+                "站前館 - 休息使用率 (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(station_rest_auto.get('occ', 0.0)),
+                step=0.01,
+                format="%.2f",
+                key=f"rest_st_occ_{report_ym_clean}"
+            )
+        with c_st_r2:
+            st_rest_adr = st.number_input(
+                "站前館 - 休息 ADR (元)",
+                min_value=0,
+                value=int(station_rest_auto.get('adr', 0)),
+                step=10,
+                key=f"rest_st_adr_{report_ym_clean}"
+            )
+        st_rest_rev = int(round(station_rest_auto.get('revenue', 0)))
+        if st_rest_occ > 0 and st_rest_adr > 0:
+            st.success(f"🏢 站前館休息狀態：使用率 **{st_rest_occ:.2f}%** | ADR **NT$ {st_rest_adr:,}** (累計營收約 NT$ {st_rest_rev:,})")
+        else:
+            st.info("🏢 站前館休息狀態：本月確認**無休息業務** (簡報將以 `-` 標記)")
+
+    if st.button("💾 儲存雙館休息數據至資料庫", use_container_width=True):
+        smg.save_rest_record(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
+        smg.save_rest_record(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
+        st.success(f"✅ 已成功儲存 {selected_report_month} 雙館休息數據至資料庫！")
+
+    st.divider()
+
+    # 4. Slide 12 營運事項與維修照片
+    st.markdown("### 🛠️ 4. 營運事項與現場維修照片 (Slide 12)")
     notes_val = st.text_area(
         "營運修繕重點事項 (每行一項，將自動填入投影片文字方塊)",
         value="1. 星空區投影機修繕完成 (原流明異常不足)\n2. 33F室外機溫感器故障已更換更新完成\n3. 37F用餐區走道安全防撞防滑巡檢完成",
@@ -11559,18 +11639,28 @@ def render_store_meeting_tab():
 
     st.divider()
 
-    # 4. 🚀 一鍵全自動產生 13 頁 PPTX 簡報
-    st.markdown("### 🚀 4. 一鍵全自動組裝 13 頁店務會議簡報")
+    # 5. 🚀 一鍵全自動產生 13 頁 PPTX 簡報
+    st.markdown("### 🚀 5. 一鍵全自動組裝 13 頁店務會議簡報")
     if st.button("🚀 一鍵生成完整 13 頁店務會議 PowerPoint 簡報 (.pptx)", type="primary", use_container_width=True):
         with st.spinner("正在整合雙館歷史與當月數據、繪製高品質報表圖檔並組裝 PPTX 簡報中..."):
             try:
                 smg.save_rpg_record(report_ym_clean, "主題館", th_dom, th_forg)
                 smg.save_rpg_record(report_ym_clean, "站前館", st_dom, st_forg)
+                smg.save_rest_record(report_ym_clean, "主題館", th_rest_occ, th_rest_adr, th_rest_rev)
+                smg.save_rest_record(report_ym_clean, "站前館", st_rest_occ, st_rest_adr, st_rest_rev)
+
+                def custom_get_rest(ym, hotel_type):
+                    if ym == report_ym_clean:
+                        if hotel_type == "主題館":
+                            return {'occ': th_rest_occ, 'adr': th_rest_adr, 'revenue': th_rest_rev}
+                        else:
+                            return {'occ': st_rest_occ, 'adr': st_rest_adr, 'revenue': st_rest_rev}
+                    return get_rest_metrics(ym, hotel_type=hotel_type)
 
                 live_helpers = {
                     'fetch_month_summary': lambda y, m, h: fetch_month_summary_by_hotel(y, m, h),
                     'get_other_revenue': lambda ym, hotel_type: get_other_revenue(ym, hotel_type=hotel_type),
-                    'get_rest_metrics': lambda ym, hotel_type: get_rest_metrics(ym, hotel_type=hotel_type),
+                    'get_rest_metrics': custom_get_rest,
                     'get_daily_occ_df': lambda y, m, h: fetch_month_summary_by_hotel(y, m, h).get('df', pd.DataFrame())
                 }
 
