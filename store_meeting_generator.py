@@ -800,17 +800,39 @@ def collect_hotel_meeting_data(hotel_name, year_month_str, live_helpers=None):
             if not m_c.empty:
                 col_name = next((c for c in m_c.columns if 'company' in c.lower() or 'channel' in c.lower()), 'company name')
                 col_rm = next((c for c in m_c.columns if 'room' in c.lower() or '房' in c), 'rooms')
-                grp = m_c.groupby(col_name)[col_rm].sum().sort_values(ascending=False).reset_index()
+                def normalize_channel(raw_name):
+                    n = str(raw_name).strip().upper()
+                    if 'AGODA' in n:
+                        return 'AGODA'
+                    elif 'CTRIP' in n or 'TRIP.COM' in n or '攜程' in n:
+                        return 'CTRIP'
+                    elif 'BOOKING' in n and 'BUTTON' not in n:
+                        return 'BOOKING'
+                    elif 'EXPEDIA' in n:
+                        return 'EXPEDIA'
+                    elif 'BOOKINGBUTTON' in n or '官網' in n:
+                        return '官網'
+                    elif 'RAKUTEN' in n:
+                        return 'RAKUTEN'
+                    elif '小鹿' in n:
+                        return '小鹿文娛'
+                    elif '補助' in n or '115' in n:
+                        return '旅宿補助專案'
+                    elif 'FUNNOW' in n:
+                        return 'FUNNOW'
+                    elif '易遊' in n:
+                        return '易遊網'
+                    elif '雄獅' in n:
+                        return '雄獅'
+                    elif 'ASIAYO' in n:
+                        return 'ASIAYO'
+                    return str(raw_name).strip()
+
+                m_c_copy = m_c.copy()
+                m_c_copy['norm_channel'] = m_c_copy[col_name].apply(normalize_channel)
+                grp = m_c_copy.groupby('norm_channel')[col_rm].sum().sort_values(ascending=False).reset_index()
                 for _, r in grp.iterrows():
-                    c_name = str(r[col_name]).strip()
-                    c_low = c_name.lower()
-                    if 'bookingbutton' in c_low or '官網' in c_name or 'x' in c_name:
-                        c_name = '官網'
-                    elif '115' in c_name or '補助' in c_name or '補貼' in c_name:
-                        c_name = '旅宿補助專案'
-                    elif '小鹿' in c_name or 'p' in c_low:
-                        c_name = '小鹿文娛'
-                    channel_rows.append({'company_name': c_name, 'rooms': int(r[col_rm])})
+                    channel_rows.append({'company_name': str(r['norm_channel']), 'rooms': int(r[col_rm])})
         except Exception:
             pass
 
