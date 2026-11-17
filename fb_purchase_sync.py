@@ -106,7 +106,46 @@ def sync_department_purchases(sh, ws_name: str, df_excel: pd.DataFrame, dept_nam
                 if row['quantity'] > 0 and row['total_amount'] > 0:
                     missing_rows.append(row)
 
+        cols = ['請購日期', '品項名稱', '當期單價', '單位', '請購數量', '總價', '建檔時間']
+
+        def _sort_fb_df(df_in: pd.DataFrame) -> pd.DataFrame:
+            df_s = df_in.copy()
+            for c in cols:
+                if c not in df_s.columns:
+                    df_s[c] = ""
+            df_s = df_s[cols].fillna("")
+            df_s['請購日期'] = df_s['請購日期'].apply(_norm_date_str)
+            df_s['_item_key'] = df_s['品項名稱'].astype(str).str.strip()
+            df_s = df_s.sort_values(
+                by=['請購日期', '_item_key'],
+                ascending=[True, True],
+                kind='mergesort'
+            ).drop(columns=['_item_key']).reset_index(drop=True)
+            return df_s
+
+        def _write_sorted_sheet_and_csv(df_sorted: pd.DataFrame):
+            df_clean = df_sorted[cols].fillna("")
+            rows_payload = [cols] + [
+                ["" if str(v) in ("nan", "None", "NaT") else str(v) for v in row_vals]
+                for row_vals in df_clean.values.tolist()
+            ]
+            target_rows = max(len(rows_payload), 2)
+            if target_rows > ws.row_count:
+                ws.resize(rows=target_rows, cols=max(ws.col_count, len(cols)))
+            ws.update(values=rows_payload, range_name="A1", value_input_option='USER_ENTERED')
+            if ws.row_count > target_rows:
+                ws.resize(rows=target_rows, cols=max(ws.col_count, len(cols)))
+            backup_csv = os.path.join(BACKUP_DIR, f"{ws_name}_latest.csv")
+            df_clean.to_csv(backup_csv, index=False, encoding='utf-8-sig')
+
         if not missing_rows:
+            # 若已有資料日期順序錯亂，仍主動整理排序一次
+            if not df_existing.empty and '請購日期' in df_existing.columns:
+                orig_dates = df_existing['請購日期'].apply(_norm_date_str).tolist()
+                if orig_dates != sorted(orig_dates):
+                    df_sorted_existing = _sort_fb_df(df_existing)
+                    _write_sorted_sheet_and_csv(df_sorted_existing)
+                    logger.info(f"[FB_SYNC] 🔄 [{dept_name}] 偵測到線上資料日期順序錯亂，已重新依日期排序並更新本地備份。")
             logger.info(f"[FB_SYNC] ✅ [{dept_name}] 線上資料庫已 100% 同步 (共 {len(df_excel)} 項明細均已存在)，無漏更項目。")
             return 0
 
@@ -117,7 +156,7 @@ def sync_department_purchases(sh, ws_name: str, df_excel: pd.DataFrame, dept_nam
 
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         df_to_append = pd.DataFrame({
-            "請購日期": df_missing['date'],
+            "請購日期": df_missing['date'].apply(_norm_date_str),
             "品項名稱": df_missing['item_name'],
             "當期單價": df_missing['price'],
             "單位": df_missing['unit'],
@@ -126,18 +165,12 @@ def sync_department_purchases(sh, ws_name: str, df_excel: pd.DataFrame, dept_nam
             "建檔時間": now_str
         })
 
-        cols = ['請購日期', '品項名稱', '當期單價', '單位', '請購數量', '總價', '建檔時間']
-        values = df_to_append[cols].astype(str).values.tolist()
-
-        ws.append_rows(values, value_input_option='USER_ENTERED')
-        logger.info(f"[FB_SYNC] 🎉 [{dept_name}] 成功自動追加寫入 {len(values)} 列至 Google Sheets！")
-
-        # 同步儲存至本地備份庫
-        backup_csv = os.path.join(BACKUP_DIR, f"{ws_name}_latest.csv")
         df_all_updated = pd.concat([df_existing, df_to_append], ignore_index=True) if not df_existing.empty else df_to_append
-        df_all_updated.to_csv(backup_csv, index=False, encoding='utf-8-sig')
+        df_all_sorted = _sort_fb_df(df_all_updated)
+        _write_sorted_sheet_and_csv(df_all_sorted)
+        logger.info(f"[FB_SYNC] 🎉 [{dept_name}] 成功自動補入 {len(df_to_append)} 列並依請購日期重新排序寫回 Google Sheets！")
 
-        return len(values)
+        return len(df_to_append)
 
     except Exception as e:
         logger.error(f"[FB_SYNC] [{dept_name}] 同步過程發生異常: {e}", exc_info=True)
@@ -156,12 +189,14 @@ def run_fb_purchase_sync(target_date: datetime.date = None):
         logger.error("[FB_SYNC] 無法連接 Google Sheets，終止餐飲採購同步。")
         return False
 
-    periods_to_scan = [(target_date.year, target_date.month)]
+    cur_period = (target_date.year, target_date.month)
+    periods_to_scan = [cur_period]
     if target_date.day <= 7:
         prev_dt = target_date.replace(day=1) - datetime.timedelta(days=1)
         prev_period = (prev_dt.year, prev_dt.month)
-        if prev_period not in periods_to_scan:
-            periods_to_scan.append(prev_period)
+        if prev_period != cur_period:
+            # 跨月補掃時：先掃上月、再掃當月，確保時間由舊到新
+            periods_to_scan = [prev_period, cur_period]
 
     all_4f = []
     all_peak = []
