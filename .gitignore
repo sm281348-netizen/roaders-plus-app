@@ -3,5 +3,10 @@ __pycache__/
 .DS_Store
 
 *.db
+*.log
 .streamlit/
 rodersplusapp-28df1ecc17c7.json
+secrets_dump.json
+creds_out.txt
+scratch/
+

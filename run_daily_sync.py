@@ -131,35 +131,60 @@ def run_sync_for_hotel(hotel_name: str, target_date: datetime.date, days: int = 
             logger.warning(f"[WARN] [{hotel_name}] 未能解析到渠道明細 (檢查 RVR12 是否存在)")
 
         if not df_eis.empty:
-            eis_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_eis_{target_date.strftime('%Y%m')}.csv")
-            df_eis.to_csv(eis_backup_path, index=False, encoding='utf-8-sig')
-            logger.info(f"[SUCCESS] [{hotel_name}] EIS_data 會計科目解析成功: 共 {len(df_eis)} 項，已儲存至備份庫")
+            if '年/月' in df_eis.columns:
+                df_eis_copy = df_eis.copy()
+                df_eis_copy['_ym_clean'] = (
+                    df_eis_copy['年/月'].astype(str)
+                    .str.replace('-', '', regex=False)
+                    .str.replace('/', '', regex=False)
+                    .str.strip()
+                    .str[:6]
+                )
+                for ym_val, grp_eis in df_eis_copy.groupby('_ym_clean'):
+                    ym_out = ym_val if (len(ym_val) == 6 and ym_val.isdigit()) else target_date.strftime('%Y%m')
+                    eis_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_eis_{ym_out}.csv")
+                    grp_eis.drop(columns=['_ym_clean']).to_csv(eis_backup_path, index=False, encoding='utf-8-sig')
+                    logger.info(f"[SUCCESS] [{hotel_name}] EIS_data 會計科目 ({ym_out}) 解析成功: 共 {len(grp_eis)} 項，已儲存至備份庫")
+            else:
+                eis_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_eis_{target_date.strftime('%Y%m')}.csv")
+                df_eis.to_csv(eis_backup_path, index=False, encoding='utf-8-sig')
+                logger.info(f"[SUCCESS] [{hotel_name}] EIS_data 會計科目解析成功: 共 {len(df_eis)} 項，已儲存至備份庫")
 
-        # 3. 日宿 (DUS/休息) 數據更新
-        dus_data = res.get("dus", {})
-        if dus_data:
-            ym_key = target_date.strftime("%Y%m")
+        # 3. 日宿 (DUS/休息) 數據更新 (支援跨月區間逐月更新)
+        dus_by_ym = res.get("dus_by_ym") or {}
+        if not dus_by_ym and res.get("dus"):
+            dus_by_ym = {target_date.strftime("%Y%m"): res.get("dus")}
+        if dus_by_ym:
             rest_backup_path = os.path.join(BACKUP_DIR, f"{h_tag}_rest_data.csv")
-            new_row = pd.DataFrame([{
-                'year_month': ym_key,
-                'rooms': dus_data.get('rooms', 0),
-                'occ_pct': dus_data.get('occ_pct', 0.0),
-                'adr': dus_data.get('adr', 0),
-                'revenue': dus_data.get('revenue', 0),
-                'source_file': f"EIS03{target_date.strftime('%Y%m%d')}.XLS"
-            }])
             if os.path.exists(rest_backup_path):
                 try:
-                    df_old_rest = pd.read_csv(rest_backup_path)
-                    df_old_rest['year_month'] = df_old_rest['year_month'].astype(str).str.strip()
-                    df_clean_rest = df_old_rest[df_old_rest['year_month'] != ym_key]
-                    df_final_rest = pd.concat([df_clean_rest, new_row], ignore_index=True)
+                    df_final_rest = pd.read_csv(rest_backup_path)
+                    df_final_rest['year_month'] = df_final_rest['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
                 except Exception:
-                    df_final_rest = new_row
+                    df_final_rest = pd.DataFrame()
             else:
-                df_final_rest = new_row
-            df_final_rest.sort_values('year_month').to_csv(rest_backup_path, index=False, encoding='utf-8-sig')
-            logger.info(f"[SUCCESS] [{hotel_name}] 日宿 (DUS) 解析成功: {dus_data}")
+                df_final_rest = pd.DataFrame()
+
+            for ym_key, dus_data in sorted(dus_by_ym.items()):
+                if not dus_data:
+                    continue
+                new_row = pd.DataFrame([{
+                    'year_month': ym_key,
+                    'rooms': dus_data.get('rooms', 0),
+                    'occ_pct': dus_data.get('occ_pct', 0.0),
+                    'adr': dus_data.get('adr', 0),
+                    'revenue': dus_data.get('revenue', 0),
+                    'source_file': f"EIS03_{ym_key}"
+                }])
+                if not df_final_rest.empty and 'year_month' in df_final_rest.columns:
+                    df_final_rest = df_final_rest[df_final_rest['year_month'] != ym_key]
+                    df_final_rest = pd.concat([df_final_rest, new_row], ignore_index=True)
+                else:
+                    df_final_rest = new_row
+                logger.info(f"[SUCCESS] [{hotel_name}] 日宿 (DUS) ({ym_key}) 解析成功: {dus_data}")
+
+            if not df_final_rest.empty:
+                df_final_rest.sort_values('year_month').to_csv(rest_backup_path, index=False, encoding='utf-8-sig')
 
         return True
     except Exception as e:

@@ -12,12 +12,22 @@ r"""
 
 import os
 import sys
+import re
 import toml
 import logging
 import datetime
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+
+
+def _norm_date_str(val) -> str:
+    """將各類日期格式標準化為 YYYY-MM-DD，無法解析時回傳去空白字串。"""
+    s = str(val).strip()
+    m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+    if m:
+        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return s
 
 try:
     if hasattr(sys.stdout, 'reconfigure'):
@@ -94,7 +104,7 @@ def sync_hk_purchases(dry_run=False):
     online_fingerprints = set()
     if not df_online.empty:
         for _, row in df_online.iterrows():
-            d = str(row.get('請購日期', '')).strip()
+            d = _norm_date_str(row.get('請購日期', ''))
             item = str(row.get('品項名稱', '')).strip()
             if d and item:
                 online_fingerprints.add((d, item))
@@ -102,7 +112,7 @@ def sync_hk_purchases(dry_run=False):
     # 找出缺漏明細
     missing_records = []
     for _, row in df_excel.iterrows():
-        d = str(row.get('請購日期', '')).strip()
+        d = _norm_date_str(row.get('請購日期', ''))
         item = str(row.get('品項名稱', '')).strip()
         if (d, item) not in online_fingerprints:
             missing_records.append(row)

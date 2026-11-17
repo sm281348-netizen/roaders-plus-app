@@ -26,8 +26,7 @@ def sync_occ_data(conn, hotel_name: str, new_occ_rows: list) -> int:
     try:
         df_existing = conn.read(worksheet="occ_data", ttl=0)
     except Exception as e:
-        print(f"讀取現有 occ_data 失敗: {e}")
-        df_existing = pd.DataFrame()
+        raise RuntimeError(f"讀取現有 occ_data 失敗，已中止寫入以保護歷史資料: {e}") from e
 
     if df_existing is not None and not df_existing.empty:
         df_existing.columns = [str(c).strip().lower() for c in df_existing.columns]
@@ -63,8 +62,7 @@ def sync_channel_data(conn, hotel_name: str, df_new_channels: pd.DataFrame) -> i
     try:
         df_existing = conn.read(worksheet="marketing_channel_data", ttl=0)
     except Exception as e:
-        print(f"讀取現有 marketing_channel_data 失敗: {e}")
-        df_existing = pd.DataFrame()
+        raise RuntimeError(f"讀取現有 marketing_channel_data 失敗，已中止寫入以保護歷史資料: {e}") from e
 
     new_dates = set(df_new_channels['date'].astype(str).str.strip().unique())
 
@@ -96,8 +94,7 @@ def sync_eis_data(conn, hotel_name: str, df_new_eis: pd.DataFrame) -> int:
     try:
         df_existing = conn.read(worksheet="EIS_data", ttl=0)
     except Exception as e:
-        print(f"讀取現有 EIS_data 失敗: {e}")
-        df_existing = pd.DataFrame()
+        raise RuntimeError(f"讀取現有 EIS_data 失敗，已中止寫入以保護歷史資料: {e}") from e
 
     if df_existing is not None and not df_existing.empty:
         # 清理既有欄位
@@ -106,16 +103,25 @@ def sync_eis_data(conn, hotel_name: str, df_new_eis: pd.DataFrame) -> int:
         col_actual = next((c for c in df_existing.columns if '本月' in c and '實際' in c), '本月實際')
 
         df_existing = df_existing.copy()
-        df_existing[col_ym] = df_existing[col_ym].astype(str).str.strip()
+        df_existing[col_ym] = df_existing[col_ym].replace('', pd.NA).ffill()
+
+        def _norm_ym(series):
+            return (series.astype(str).str.strip()
+                    .str.replace('/', '', regex=False)
+                    .str.replace('-', '', regex=False)
+                    .str.replace(r'\.0$', '', regex=True))
+
+        df_existing['_norm_ym'] = _norm_ym(df_existing[col_ym])
         df_existing[col_item] = df_existing[col_item].astype(str).str.strip()
 
-        # 針對當月更新或附加
-        target_ym = df_new_eis['年/月'].iloc[0]
-        # 移除當月的舊科目紀錄，全量換成當月最新審定值
-        df_clean = df_existing[df_existing[col_ym] != target_ym]
-        
+        # 移除當月（或多月份區間內所有月份）的舊科目紀錄，避免 2026/10 與 202610 並存導致重複計算
+        target_yms = set(_norm_ym(df_new_eis['年/月']).unique())
+        df_clean = df_existing[~df_existing['_norm_ym'].isin(target_yms)].drop(columns=['_norm_ym'])
+
         # 確保新資料欄位名稱對齊
         df_to_add = df_new_eis[['年/月', '項目', '本月實際']].copy()
+        if col_ym != '年/月' or col_item != '項目' or col_actual != '本月實際':
+            df_to_add = df_to_add.rename(columns={'年/月': col_ym, '項目': col_item, '本月實際': col_actual})
         df_merged = pd.concat([df_clean, df_to_add], ignore_index=True)
     else:
         df_merged = df_new_eis[['年/月', '項目', '本月實際']]

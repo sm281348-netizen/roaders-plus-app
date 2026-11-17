@@ -389,6 +389,7 @@ def extract_pms_range(hotel_name: str, start_date, end_date):
     occ_rows = []
     chan_rows = []
     eis_dfs = []
+    dus_by_ym = {}
 
     while current <= e_obj:
         day_res = extract_pms_day(hotel_name, current)
@@ -398,11 +399,21 @@ def extract_pms_range(hotel_name: str, start_date, end_date):
             chan_rows.append(day_res["channels"])
         if not day_res["eis"].empty:
             eis_dfs.append(day_res["eis"])
+        if os.path.exists(day_res.get("eis_path", "")) and day_res.get("dus"):
+            dus_by_ym[current.strftime("%Y%m")] = day_res["dus"]
         current += datetime.timedelta(days=1)
 
     df_occ = pd.DataFrame(occ_rows) if occ_rows else pd.DataFrame()
     df_chan = pd.concat(chan_rows, ignore_index=True) if chan_rows else pd.DataFrame()
-    df_eis = eis_dfs[-1] if eis_dfs else pd.DataFrame()  # 財務取區間最後一天累計
+    if eis_dfs:
+        eis_by_ym = {}
+        for df_e in eis_dfs:
+            if not df_e.empty and '年/月' in df_e.columns:
+                ym_key = str(df_e['年/月'].iloc[0]).strip()
+                eis_by_ym[ym_key] = df_e  # 每個月份各自保留區間內最後一天的累計數據
+        df_eis = pd.concat(list(eis_by_ym.values()), ignore_index=True) if eis_by_ym else pd.DataFrame()
+    else:
+        df_eis = pd.DataFrame()
     latest_eis_path, _ = resolve_file_paths(hotel_name, e_obj)
     dus_data = parse_eis03_dus(latest_eis_path)
 
@@ -411,7 +422,8 @@ def extract_pms_range(hotel_name: str, start_date, end_date):
         "df_occ": df_occ,
         "df_chan": df_chan,
         "df_eis": df_eis,
-        "dus": dus_data
+        "dus": dus_data,
+        "dus_by_ym": dus_by_ym
     }
 
 if __name__ == "__main__":

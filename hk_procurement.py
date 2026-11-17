@@ -161,15 +161,38 @@ def render_hk_procurement_dashboard(forecast_df):
             if not inv_df.empty:
                 st.subheader("🔮 AI 預測叫貨建議")
                 
-                # 計算涵蓋期間的預測住房數
-                # 假設 forecast_df 有 '營業日期' 和 '房間預估_銷售房間數' 欄位
-                # 這裡為了展示，簡化處理日期過濾，實務上需要 datetime 過濾
+                # 計算涵蓋期間 (lead_time + order_cycle 天) 的預測住房數
+                window_days = lead_time + order_cycle
+                total_forecast_rooms = 0.0
                 try:
-                    total_forecast_rooms = forecast_df['房間預估_銷售房間數'].sum() # 應縮小到 lead_time + order_cycle
-                except:
-                    total_forecast_rooms = 1000 # 備用假資料
+                    if forecast_df is not None and not forecast_df.empty:
+                        import datetime as _dt
+                        f_df = forecast_df.copy()
+                        d_col = 'date' if 'date' in f_df.columns else ('營業日期' if '營業日期' in f_df.columns else None)
+                        r_col = 'sold_rooms' if 'sold_rooms' in f_df.columns else ('房間預估_銷售房間數' if '房間預估_銷售房間數' in f_df.columns else None)
+                        if d_col and r_col:
+                            f_df['_dt'] = pd.to_datetime(f_df[d_col], errors='coerce').dt.date
+                            f_df['_rooms'] = pd.to_numeric(f_df[r_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0.0)
+                            today_hk = _dt.date.today()
+                            end_hk = today_hk + _dt.timedelta(days=int(window_days))
+                            fut_rows = f_df[(f_df['_dt'] >= today_hk) & (f_df['_dt'] < end_hk) & (f_df['_rooms'] > 0)]
+                            n_fut_days = int(fut_rows['_dt'].nunique()) if not fut_rows.empty else 0
+                            if n_fut_days >= window_days:
+                                total_forecast_rooms = float(fut_rows['_rooms'].sum())
+                            elif n_fut_days > 0:
+                                total_forecast_rooms = float(fut_rows['_rooms'].sum() / n_fut_days) * window_days
+                            else:
+                                past_rows = f_df[(f_df['_dt'] < today_hk) & (f_df['_rooms'] > 0)].sort_values('_dt')
+                                recent14 = past_rows.tail(14)
+                                if not recent14.empty:
+                                    total_forecast_rooms = float(recent14['_rooms'].mean()) * window_days
+                except Exception:
+                    total_forecast_rooms = 0.0
+                if total_forecast_rooms <= 0:
+                    total_forecast_rooms = 85.0 * window_days
+                daily_avg_rooms = total_forecast_rooms / max(1, window_days)
                 
-                st.info(f"📅 未來預測區間 ({lead_time + order_cycle} 天) 的總預測賣出房間數： **{total_forecast_rooms:,.0f}** 間")
+                st.info(f"📅 未來預測區間 ({window_days} 天) 的總預測賣出房間數： **{total_forecast_rooms:,.0f}** 間")
                 
                 # 進行運算
                 results = []
@@ -197,8 +220,10 @@ def render_hk_procurement_dashboard(forecast_df):
                     # 總需要件數 = 預測需求 + 安全庫存
                     total_needed_units = projected_demand + safety_stock
                     
-                    # 應補件數 = 總需要 - 現有盤點 (假設暫無 lag_days 修正)
-                    replenish_units = max(0, total_needed_units - curr_inv)
+                    # 應補件數 = 總需要 - (現有盤點 - 盤點至今消耗量)
+                    lag_consumption = lag_days * daily_avg_rooms * target_cpor
+                    effective_curr_inv = max(0.0, curr_inv - lag_consumption)
+                    replenish_units = max(0, total_needed_units - effective_curr_inv)
                     
                     # AI 建議叫貨量 (箱) = 應補件數 / 換算單位，並無條件進位
                     if uom_multiplier > 0:

@@ -182,7 +182,13 @@ def save_rest_record(year_month_str, hotel_name, occ_pct, adr, revenue=0):
         df = pd.DataFrame(columns=['year_month', 'rooms', 'occ_pct', 'adr', 'revenue', 'source_file'])
     
     df['year_month'] = df['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
-    total_avail = 3472 if h_tag == "theme" else 3968
+    try:
+        y_r, m_r = int(ym_clean[:4]), int(ym_clean[4:6])
+        days_in_m = calendar.monthrange(y_r, m_r)[1]
+    except Exception:
+        days_in_m = 30
+    rooms_cap = 112 if h_tag == "theme" else 128
+    total_avail = rooms_cap * days_in_m
     rooms = int(round((float(occ_pct) / 100.0) * total_avail)) if float(occ_pct) > 0 else 0
     if revenue == 0 and float(adr) > 0 and rooms > 0:
         revenue = int(round(float(adr) * rooms))
@@ -237,8 +243,17 @@ def render_revenue_table_png(stats_list, hotel_name):
     bg_orange = (241, 158, 56)
     bg_sub = (253, 236, 210)
 
+    header_year = f"{datetime.datetime.now().year}年"
+    if stats_list and isinstance(stats_list[0], dict):
+        if stats_list[0].get('year'):
+            header_year = f"{stats_list[0]['year']}年"
+        elif stats_list[0].get('year_month'):
+            ym_h = str(stats_list[0]['year_month']).replace('-', '').replace('/', '').strip()
+            if len(ym_h) >= 4 and ym_h[:4].isdigit():
+                header_year = f"{ym_h[:4]}年"
+
     top_headers = [
-        (0, 1, '2026年', True),
+        (0, 1, header_year, True),
         (1, 2, '住宿', False),
         (3, 2, '休息', False),
         (5, 1, 'RevPAR\n(元)', True),
@@ -882,6 +897,10 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     y_int = int(ym_clean[:4])
     m_int = int(ym_clean[4:])
     month_label = f"{m_int}月"
+    m_prev1 = (m_int - 2) % 12 + 1
+    m_prev2 = (m_int - 3) % 12 + 1
+    prev1_y = y_int if m_int > 1 else y_int - 1
+    prev2_y = y_int if m_int > 2 else y_int - 1
     next_m_int = (m_int % 12) + 1
     next_month_label = f"{next_m_int}月"
 
@@ -923,9 +942,9 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     theme_stats_list = theme_data.get('revenue_stats_list', [])
     if not theme_stats_list:
         theme_stats_list = [
-            {'month_label': f'{m_int}月', 'occ_rate': 86.0, 'adr': 3302, 'rest_occ': 0.09, 'rest_adr': 1707, 'revpar': 2838, 'room_rev': 9460598, 'other_rev': 2540, 'total_rev': 9463138},
-            {'month_label': f'{m_int-1}月', 'occ_rate': 88.1, 'adr': 3331, 'rest_occ': 0.03, 'rest_adr': 1680, 'revpar': 2934, 'room_rev': 10092400, 'other_rev': 11434, 'total_rev': 10103834},
-            {'month_label': f'{m_int-2}月', 'occ_rate': 84.7, 'adr': 3330, 'rest_occ': 0.03, 'rest_adr': 1680, 'revpar': 2822, 'room_rev': 9719465, 'other_rev': 23181, 'total_rev': 9742646}
+            {'month_label': f'{m_int}月', 'year_month': f'{y_int}{m_int:02d}', 'occ_rate': 86.0, 'adr': 3302, 'rest_occ': 0.09, 'rest_adr': 1707, 'revpar': 2838, 'room_rev': 9460598, 'other_rev': 2540, 'total_rev': 9463138},
+            {'month_label': f'{m_prev1}月', 'year_month': f'{prev1_y}{m_prev1:02d}', 'occ_rate': 88.1, 'adr': 3331, 'rest_occ': 0.03, 'rest_adr': 1680, 'revpar': 2934, 'room_rev': 10092400, 'other_rev': 11434, 'total_rev': 10103834},
+            {'month_label': f'{m_prev2}月', 'year_month': f'{prev2_y}{m_prev2:02d}', 'occ_rate': 84.7, 'adr': 3330, 'rest_occ': 0.03, 'rest_adr': 1680, 'revpar': 2822, 'room_rev': 9719465, 'other_rev': 23181, 'total_rev': 9742646}
         ]
     rev_table_png_theme = render_revenue_table_png(theme_stats_list, "主題館")
     replace_slide_image(slide2, 1, rev_table_png_theme)
@@ -982,29 +1001,13 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     # Slide 5: 主題館 國籍統計
     # ==========================================
     slide5 = prs.slides[4]
-    cur_nation_theme = theme_data.get('cur_nationality_rows', [])
-    prev_nation_theme = theme_data.get('prev_nationality_rows', [])
-    if not cur_nation_theme:
-        cur_nation_theme = [
-            ['HKG香港', 367, '18%'],
-            ['TWN台灣', 341, '17%'],
-            ['KOR韓國', 326, '16%'],
-            ['JPN日本', 271, '14%'],
-            ['SGL新加坡', 179, '9%']
-        ]
-    if not prev_nation_theme:
-        prev_nation_theme = [
-            ['HKG香港', 817, '37%'],
-            ['TWN台灣', 484, '22%'],
-            ['JPN日本', 166, '7%'],
-            ['KOR韓國', 157, '7%'],
-            ['MAC澳門', 143, '6%']
-        ]
+    cur_nation_theme = theme_data.get('cur_nationality_rows', []) or [["尚無該月數據", 0, "0%"]]
+    prev_nation_theme = theme_data.get('prev_nationality_rows', []) or [["尚無該月數據", 0, "0%"]]
     nation_png_theme = render_nationality_table_png(
         cur_nation_theme, prev_nation_theme,
-        month_label, f"{m_int-1}月",
-        theme_data.get('cur_nation_total', 1985) or 1985,
-        theme_data.get('prev_nation_total', 2227) or 2227
+        month_label, f"{m_prev1}月",
+        theme_data.get('cur_nation_total', 0) or 0,
+        theme_data.get('prev_nation_total', 0) or 0
     )
     replace_slide_image(slide5, 1, nation_png_theme)
 
@@ -1041,9 +1044,9 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     station_stats_list = station_data.get('revenue_stats_list', [])
     if not station_stats_list:
         station_stats_list = [
-            {'month_label': f'{m_int}月', 'occ_rate': 88.9, 'adr': 3561, 'rest_occ': 0.14, 'rest_adr': 1520, 'revpar': 3167, 'room_rev': 11668393, 'other_rev': 65850, 'total_rev': 11734243},
-            {'month_label': f'{m_int-1}月', 'occ_rate': 91.4, 'adr': 3582, 'rest_occ': 0.05, 'rest_adr': 1930, 'revpar': 3273, 'room_rev': 12585710, 'other_rev': 93025, 'total_rev': 12678735},
-            {'month_label': f'{m_int-2}月', 'occ_rate': 86.4, 'adr': 3528, 'rest_occ': 0.47, 'rest_adr': 1519, 'revpar': 3049, 'room_rev': 11629332, 'other_rev': 74132, 'total_rev': 11703464}
+            {'month_label': f'{m_int}月', 'year_month': f'{y_int}{m_int:02d}', 'occ_rate': 88.9, 'adr': 3561, 'rest_occ': 0.14, 'rest_adr': 1520, 'revpar': 3167, 'room_rev': 11668393, 'other_rev': 65850, 'total_rev': 11734243},
+            {'month_label': f'{m_prev1}月', 'year_month': f'{prev1_y}{m_prev1:02d}', 'occ_rate': 91.4, 'adr': 3582, 'rest_occ': 0.05, 'rest_adr': 1930, 'revpar': 3273, 'room_rev': 12585710, 'other_rev': 93025, 'total_rev': 12678735},
+            {'month_label': f'{m_prev2}月', 'year_month': f'{prev2_y}{m_prev2:02d}', 'occ_rate': 86.4, 'adr': 3528, 'rest_occ': 0.47, 'rest_adr': 1519, 'revpar': 3049, 'room_rev': 11629332, 'other_rev': 74132, 'total_rev': 11703464}
         ]
     rev_table_png_station = render_revenue_table_png(station_stats_list, "站前館")
     replace_slide_image(slide7, 1, rev_table_png_station)
@@ -1099,29 +1102,13 @@ def build_store_meeting_pptx(year_month, meeting_date, notes_text="", uploaded_p
     # Slide 10: 站前館 國籍統計
     # ==========================================
     slide10 = prs.slides[9]
-    cur_nation_station = station_data.get('cur_nationality_rows', [])
-    prev_nation_station = station_data.get('prev_nationality_rows', [])
-    if not cur_nation_station:
-        cur_nation_station = [
-            ['HKG香港', 420, '20%'],
-            ['TWN台灣', 380, '18%'],
-            ['KOR韓國', 350, '16%'],
-            ['JPN日本', 310, '15%'],
-            ['SGL新加坡', 195, '9%']
-        ]
-    if not prev_nation_station:
-        prev_nation_station = [
-            ['HKG香港', 890, '36%'],
-            ['TWN台灣', 510, '21%'],
-            ['JPN日本', 190, '8%'],
-            ['KOR韓國', 180, '7%'],
-            ['MAC澳門', 150, '6%']
-        ]
+    cur_nation_station = station_data.get('cur_nationality_rows', []) or [["尚無該月數據", 0, "0%"]]
+    prev_nation_station = station_data.get('prev_nationality_rows', []) or [["尚無該月數據", 0, "0%"]]
     nation_png_station = render_nationality_table_png(
         cur_nation_station, prev_nation_station,
-        month_label, f"{m_int-1}月",
-        station_data.get('cur_nation_total', 2145) or 2145,
-        station_data.get('prev_nation_total', 2480) or 2480
+        month_label, f"{m_prev1}月",
+        station_data.get('cur_nation_total', 0) or 0,
+        station_data.get('prev_nation_total', 0) or 0
     )
     replace_slide_image(slide10, 1, nation_png_station)
 

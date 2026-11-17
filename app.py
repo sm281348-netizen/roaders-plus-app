@@ -208,11 +208,6 @@ def _get_all_purchase_clean():
     df['_vendor'] = df[_vend_col].astype(str).str.strip() if _vend_col else ''
     return df
 
-
-
-
-    st.divider()
-
 def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
     """計算特定部門的 CPR (每房成本) 相關指標 - IMP V4.1"""
     import datetime as _dt
@@ -253,17 +248,20 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
         }
         
         occ_copy['Capacity_Pax'] = 0.0
-        # 尋找 V 欄到 AH 欄的房型數量 (包含括號的欄位，如 DF(8))
+        # 尋找 V 欄到 AH 欄的房型數量 (包含括號的欄位，如 DF(8) / df(8))
         for col in occ_copy.columns:
-            match = re.match(r'^([A-Z]+)\(\d+\)$', str(col).strip())
+            match = re.match(r'^([a-zA-Z]+)\(\d+\)$', str(col).strip())
             if match:
-                room_type = match.group(1)
+                room_type = match.group(1).upper()
                 if room_type in pax_limits:
                     multiplier = pax_limits[room_type]
                     occ_copy['Capacity_Pax'] += pd.to_numeric(occ_copy[col], errors='coerce').fillna(0) * multiplier
         
         # 確保有 sold_rooms
-        occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'] if 'sold_rooms' in occ_copy.columns else 0, errors='coerce').fillna(0)
+        if 'sold_rooms' in occ_copy.columns:
+            occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+        else:
+            occ_copy['sold_rooms'] = 0.0
     else:
         occ_copy = pd.DataFrame()
 
@@ -285,11 +283,13 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
             mask_mtd = (occ_copy['_date_p'] >= start_date) & (occ_copy['_date_p'] <= end_date)
             res['mtd_rooms'] = float(occ_copy.loc[mask_mtd, denom_col].sum())
             
-            rev_sum = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'rev'], errors='coerce').sum()) if 'rev' in occ_copy.columns else 0
-            if res['mtd_rooms'] > 0 and rev_sum > 0:
-                res['mtd_adr'] = rev_sum / res['mtd_rooms']
+            rev_col_name = 'revenue' if 'revenue' in occ_copy.columns else ('rev' if 'rev' in occ_copy.columns else None)
+            rev_sum = float(pd.to_numeric(occ_copy.loc[mask_mtd, rev_col_name].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum()) if rev_col_name else 0.0
+            sold_sum = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'sold_rooms'], errors='coerce').fillna(0).sum()) if 'sold_rooms' in occ_copy.columns else 0.0
+            if sold_sum > 0 and rev_sum > 0:
+                res['mtd_adr'] = rev_sum / sold_sum
             elif 'adr' in occ_copy.columns and res['mtd_rooms'] > 0:
-                res['mtd_adr'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'adr'], errors='coerce').mean())
+                res['mtd_adr'] = float(pd.to_numeric(occ_copy.loc[mask_mtd, 'adr'].astype(str).str.replace(',', ''), errors='coerce').mean())
                 
         if not df_dept.empty:
             df_copy = df_dept.copy()
@@ -305,11 +305,12 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
     if not df_dept.empty and not occ_copy.empty:
         df_all = df_dept.copy()
         df_all['_date_p'] = pd.to_datetime(df_all['_date_str'], errors='coerce').dt.date
-        df_all = df_all.dropna(subset=['_date_p']).sort_values('_date_p')
+        past_180_start = today - _dt.timedelta(days=180)
+        df_all = df_all.dropna(subset=['_date_p'])
+        df_all = df_all[(df_all['_date_p'] >= past_180_start) & (df_all['_date_p'] <= today)].sort_values('_date_p')
         
         # 只抓取過去 180 天內有採購的品項 (活躍品項)
-        past_180_start = today - _dt.timedelta(days=180)
-        active_items = df_all[df_all['_date_p'] >= past_180_start]['_item'].unique()
+        active_items = df_all['_item'].unique()
         
         # 建立 occ_copy 的累積 sum 字典，加速查詢區間
         occ_sorted = occ_copy.sort_values('_date_p').reset_index(drop=True)
@@ -329,26 +330,24 @@ def compute_dept_cpr_metrics(df_dept, occ_df, selected_date, dept_label=""):
             n = len(grouped)
             
             if n >= 2:
-                intervals = []
+                cycle_cprs = []
                 for i in range(n - 1):
                     d1 = grouped.iloc[i]['_date_p']
                     d2 = grouped.iloc[i+1]['_date_p']
                     denom_sum = get_interval_denom(d1, d2)
                     if denom_sum > 0:
-                        intervals.append(denom_sum)
+                        cycle_cprs.append(float(grouped.iloc[i]['_price']) / float(denom_sum))
                         
-                if len(intervals) > 0:
-                    rt = pd.Series(intervals).median()
-                    median_value = grouped['_price'].median()
-                    if rt > 0:
-                        dept_target_cpr += (median_value / rt)
+                if len(cycle_cprs) > 0:
+                    dept_target_cpr += float(pd.Series(cycle_cprs).median())
             elif n == 1:
-                # 只有一次採購，算從那次到今天的總消耗
+                # 只有一次採購，至少經過 14 天才納入推算，避免昨日採購除以 1 天房數造成極端誇大
                 d1 = grouped.iloc[0]['_date_p']
-                denom_sum = get_interval_denom(d1, today)
-                if denom_sum > 0:
-                    value = grouped.iloc[0]['_price']
-                    dept_target_cpr += (value / denom_sum)
+                if (today - d1).days >= 14:
+                    denom_sum = get_interval_denom(d1, today)
+                    if denom_sum > 0:
+                        value = grouped.iloc[0]['_price']
+                        dept_target_cpr += (value / denom_sum)
                     
     res['dept_target_cpr'] = dept_target_cpr
     res['velocity_30d_cpr'] = dept_target_cpr  # 覆蓋原本的 30 天平均以相容舊系統
@@ -403,9 +402,9 @@ def _render_dept_procurement_modules(
             }
             occ_copy['Capacity_Pax'] = 0.0
             for col in occ_copy.columns:
-                match = re.match(r'^([A-Z]+)\(\d+\)$', str(col).strip())
+                match = re.match(r'^([a-zA-Z]+)\(\d+\)$', str(col).strip())
                 if match:
-                    room_type = match.group(1)
+                    room_type = match.group(1).upper()
                     if room_type in pax_limits:
                         multiplier = pax_limits[room_type]
                         occ_copy['Capacity_Pax'] += pd.to_numeric(occ_copy[col], errors='coerce').fillna(0) * multiplier
@@ -544,10 +543,6 @@ def _render_dept_procurement_modules(
                     signal = "🔴 採購過晚（斷貨風險）"
                 elif ratio > 1.2:
                     signal = "🟡 略慢，請留意"
-                elif ratio < 0.5:
-                    signal = "🔴 採購過早（可能囤積）"
-                elif ratio < 0.7:
-                    signal = "🟡 略早，輕度囤積"
                 else:
                     signal = "✅ 節奏正常"
             else:
@@ -582,8 +577,9 @@ def _render_dept_procurement_modules(
             occ_copy = occ_df.copy()
             occ_copy['_date_p'] = pd.to_datetime(occ_copy['date'] if 'date' in occ_copy.columns else occ_copy.iloc[:, 0], errors='coerce')
             occ_copy = occ_copy.dropna(subset=['_date_p'])
+            occ_copy = occ_copy[(occ_copy['_date_p'] >= pd.Timestamp(w90_start)) & (occ_copy['_date_p'] <= pd.Timestamp(today_dept))]
             occ_copy['week_start'] = occ_copy['_date_p'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
-            occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'], errors='coerce').fillna(0)
+            occ_copy['sold_rooms'] = pd.to_numeric(occ_copy['sold_rooms'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             weekly_rooms = occ_copy.groupby('week_start')['sold_rooms'].sum().reset_index()
             weekly_rooms.columns = ['week_start', 'room_count']
         except Exception:
@@ -746,7 +742,18 @@ def _render_dept_procurement_modules(
                     future_rooms = 0
 
             # 近 90 天入住總房數
-            total_rooms_90d = sum(v for k, v in monthly_rooms.items()) if monthly_rooms else 0
+            total_rooms_90d = 0.0
+            if occ_df is not None and not occ_df.empty and 'sold_rooms' in occ_df.columns:
+                try:
+                    _occ90 = occ_df.copy()
+                    _occ90['_date_p'] = pd.to_datetime(_occ90['date'] if 'date' in _occ90.columns else _occ90.iloc[:, 0], errors='coerce')
+                    _occ90 = _occ90.dropna(subset=['_date_p'])
+                    _occ90 = _occ90[(_occ90['_date_p'] >= pd.Timestamp(w90_start)) & (_occ90['_date_p'] <= pd.Timestamp(today_dept))]
+                    total_rooms_90d = float(pd.to_numeric(_occ90['sold_rooms'].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum())
+                except Exception:
+                    total_rooms_90d = 0.0
+            if total_rooms_90d == 0 and monthly_rooms:
+                total_rooms_90d = sum(v for k, v in monthly_rooms.items())
             upr_sel = total_qty_90d / total_rooms_90d if total_rooms_90d > 0 else 0
 
             fc1, fc2, fc3, fc4 = st.columns(4)
@@ -868,7 +875,7 @@ def append_thepeak_daily_purchase_report(new_rows_df):
             df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         except Exception as e:
             if target_ws in str(e) or "WorksheetNotFound" in str(type(e)):
-                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。\n目前該試算表有的分頁為: {', '.join(ws_titles)}")
+                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。請確認試算表分頁名稱。")
                 return False
             raise e
         
@@ -879,6 +886,7 @@ def append_thepeak_daily_purchase_report(new_rows_df):
             df_new = pd.concat([df_old, new_rows_df], ignore_index=True)
             
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        fetch_thepeak_daily_purchase_report.clear()
         return True
     except Exception as e:
         st.error(f"寫入失敗: {e}")
@@ -913,7 +921,7 @@ def append_4fhh_daily_purchase_report(new_rows_df):
             df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         except Exception as e:
             if target_ws in str(e) or "WorksheetNotFound" in str(type(e)):
-                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。\n目前該試算表有的分頁為: {', '.join(ws_titles)}")
+                st.error(f"無法在 RTS_backup 中找到 '{target_ws}' 分頁。請確認試算表分頁名稱。")
                 return False
             raise e
         
@@ -924,6 +932,7 @@ def append_4fhh_daily_purchase_report(new_rows_df):
             df_new = pd.concat([df_old, new_rows_df], ignore_index=True)
             
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        fetch_4fhh_daily_purchase_report.clear()
         return True
     except Exception as e:
         st.error(f"寫入失敗: {e}")
@@ -952,12 +961,10 @@ def append_fd_daily_purchase_report(new_rows_df):
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         target_ws = "fd_daily_purchase_report"
-        try:
-            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
-        except Exception:
-            df_old = pd.DataFrame()
+        df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        fetch_fd_daily_purchase_report.clear()
         return True
     except Exception as e:
         st.error(f"寫入失敗: {e}")
@@ -983,12 +990,10 @@ def append_hk_daily_purchase_report(new_rows_df):
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         target_ws = "hk_daily_purchase_report"
-        try:
-            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
-        except Exception:
-            df_old = pd.DataFrame()
+        df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        fetch_hk_daily_purchase_report.clear()
         return True
     except Exception as e:
         st.error(f"寫入失敗: {e}")
@@ -1014,12 +1019,10 @@ def append_cs_daily_purchase_report(new_rows_df):
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
         target_ws = "cs_daily_purchase_report"
-        try:
-            df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
-        except Exception:
-            df_old = pd.DataFrame()
+        df_old = raw_st.read(worksheet=target_ws, spreadsheet=url_st, ttl=0)
         df_new = new_rows_df if df_old is None or df_old.empty else pd.concat([df_old, new_rows_df], ignore_index=True)
         raw_st.update(worksheet=target_ws, data=df_new, spreadsheet=url_st)
+        fetch_cs_daily_purchase_report.clear()
         return True
     except Exception as e:
         st.error(f"寫入失敗: {e}")
@@ -1345,6 +1348,7 @@ def get_hotel_conn(h_type):
 
 @st.cache_data(ttl=3600)
 def _get_occ_data_cached_v2(hotel_type=""):
+    hotel_type = hotel_type or current_hotel
     try:
         active_c = get_hotel_conn(hotel_type) if hotel_type in ["主題館", "站前館"] else conn
         df = active_c.read(worksheet="occ_data", ttl=0)
@@ -1402,6 +1406,9 @@ def _get_occ_data_cached_v2(hotel_type=""):
         backup_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "pms_backup", f"{h_tag}_occ_data.csv")
         if os.path.exists(backup_path):
             df_pms = pd.read_csv(backup_path)
+            if not df_pms.empty:
+                df_pms.columns = [str(c).strip().lower() for c in df_pms.columns]
+                df_pms = df_pms.loc[:, ~df_pms.columns.duplicated()]
             if not df_pms.empty and 'date' in df_pms.columns:
                 df_pms['date'] = df_pms['date'].astype(str).str.strip()
                 if df is not None and not df.empty and 'date' in df.columns:
@@ -1420,6 +1427,7 @@ def _get_cached_sheet_v3(worksheet, hotel_type=""):
     """集中快取層：所有唯讀 Sheet 請求走這裡，60s TTL，避免 API 429
     hotel_type 參數用於區分不同館的快取，避免跨館資料污染。
     注意：F&B 資料解析不在此函數內，請使用 compute_fb_mtd() 獨立讀取。"""
+    hotel_type = hotel_type or current_hotel
     if worksheet == "occ_data":
         return _get_occ_data_cached_v2(hotel_type)
     
@@ -1674,7 +1682,7 @@ def fetch_fb_daily_df(year, month, _dummy_hotel=""):
 
     rows = []
     try:
-        conn_name = "gsheets_theme" if _dummy_hotel == "主題館" else "gsheets_station"
+        conn_name = "gsheets_station"
         raw_st = st.connection(conn_name, type=GSheetsConnection)
         url_st = st.secrets["connections"][conn_name]["spreadsheet"]
         c_st = _ConnWrapper(raw_st, url_st)
@@ -1803,8 +1811,10 @@ def fetch_fb_report_raw_dict():
         result_map = {}
         for r in all_rows[3:]:  # 跳過前三列表頭
             if r and len(r) > 0:
-                d_val = r[0].strip().replace('/', '-')
-                if len(d_val) == 10 and d_val[4] == '-' and d_val[7] == '-':
+                raw_d = str(r[0]).strip()
+                m_d = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', raw_d)
+                if m_d:
+                    d_val = f"{m_d.group(1)}-{int(m_d.group(2)):02d}-{int(m_d.group(3)):02d}"
                     vals = [x.strip() for x in r[1:10]] + [''] * max(0, 9 - len(r[1:10]))
                     result_map[d_val] = vals
         return result_map, None
@@ -1832,11 +1842,17 @@ def update_fb_report_daily_row(date_str, th_bf_est, th_bf_act, zq_bf_est, zq_bf_
         ws = sh.worksheet('f&b_report')
         all_rows = ws.get_all_values()
         
+        target_date_m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', str(date_str).strip())
+        norm_target_date = f"{target_date_m.group(1)}-{int(target_date_m.group(2)):02d}-{int(target_date_m.group(3)):02d}" if target_date_m else str(date_str).strip().replace('/', '-')
+
         target_row_idx = None
         for i, r in enumerate(all_rows):
-            if r and len(r) > 0 and r[0].strip().replace('/', '-') == str(date_str).strip():
-                target_row_idx = i + 1  # 1-indexed
-                break
+            if r and len(r) > 0:
+                m_r = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', str(r[0]).strip())
+                r_norm = f"{m_r.group(1)}-{int(m_r.group(2)):02d}-{int(m_r.group(3)):02d}" if m_r else str(r[0]).strip().replace('/', '-')
+                if r_norm == norm_target_date:
+                    target_row_idx = i + 1  # 1-indexed
+                    break
                 
         new_row_values = [
             str(date_str).strip(),
@@ -2127,12 +2143,14 @@ def save_prediction_snapshot(new_row_dict):
     import pandas as pd
     import streamlit as st
     from streamlit_gsheets import GSheetsConnection
-    df = get_prediction_snapshots()
-    new_df = pd.DataFrame([new_row_dict])
-    df = pd.concat([df, new_df], ignore_index=True)
     try:
         raw_st = st.connection("gsheets_station", type=GSheetsConnection)
         url_st = st.secrets["connections"]["gsheets_station"]["spreadsheet"]
+        df = raw_st.read(worksheet="prediction_snapshots", spreadsheet=url_st, ttl="0")
+        if df is None or df.empty or 'snapshot_date' not in df.columns:
+            df = pd.DataFrame(columns=['snapshot_date', 'target_date_start', 'target_date_end', 'bf_conv_rate', 'af_conv_rate', 'future_bf', 'future_af', 'future_total'])
+        new_df = pd.DataFrame([new_row_dict])
+        df = pd.concat([df, new_df], ignore_index=True)
         raw_st.update(worksheet="prediction_snapshots", data=df.fillna(""), spreadsheet=url_st)
         return True
     except Exception as e:
@@ -2257,16 +2275,24 @@ def save_daily_data(d_str, data_dict):
         df = standardize_df_dates(df)
 
         data_dict['date'] = d_str
-        new_row = pd.DataFrame([data_dict])
+        if not df.empty and 'date' in df.columns and d_str in df['date'].values:
+            for k, v in data_dict.items():
+                if k not in df.columns:
+                    df[k] = ""
+                try:
+                    df.loc[df['date'] == d_str, k] = v
+                except Exception:
+                    df[k] = df[k].astype(object)
+                    df.loc[df['date'] == d_str, k] = v
+        else:
+            new_row = pd.DataFrame([data_dict])
+            df = pd.concat([df, new_row], ignore_index=True)
 
-        if 'date' in df.columns and d_str in df['date'].values:
-            df = df[df['date'] != d_str]
-
-        df = pd.concat([df, new_row], ignore_index=True)
         if 'date' in df.columns:
             df = df.sort_values('date').reset_index(drop=True)
         conn.update(worksheet="occ_data", data=df.fillna(""))
         _get_occ_data_cached_v2.clear()
+        _get_cached_sheet_v3.clear()
         fetch_yearly_metrics.clear()
         return True
     except Exception as e:
@@ -2719,8 +2745,16 @@ def fetch_month_summary(year, month):
             rm = float(r.get('total_rooms', 0.0))
             sold = float(r.get('sold_rooms', 0.0))
             occ = float(r.get('occ_rate', 0.0))
+            adr_r = float(r.get('adr', 0.0))
 
-            if rm > 0 or rev > 0 or sold > 0:
+            if rev > 0 or sold > 0 or occ > 0:
+                if sold <= 0 and rev > 0:
+                    if adr_r > 0:
+                        sold = round(rev / adr_r)
+                    elif rm > 0 and occ > 0:
+                        sold = round(rm * occ / 100.0)
+                    else:
+                        sold = rm
                 res['rev'] += rev
                 res['rooms'] += rm
                 res['sold_rooms'] += sold
@@ -2772,8 +2806,16 @@ def fetch_month_summary_by_hotel(year, month, hotel_name):
             rm = float(r.get('total_rooms', 0.0))
             sold = float(r.get('sold_rooms', 0.0))
             occ = float(r.get('occ_rate', 0.0))
+            adr_r = float(r.get('adr', 0.0))
 
-            if rm > 0 or rev > 0 or sold > 0:
+            if rev > 0 or sold > 0 or occ > 0:
+                if sold <= 0 and rev > 0:
+                    if adr_r > 0:
+                        sold = round(rev / adr_r)
+                    elif rm > 0 and occ > 0:
+                        sold = round(rm * occ / 100.0)
+                    else:
+                        sold = rm
                 res['rev'] += rev
                 res['rooms'] += rm
                 res['sold_rooms'] += sold
@@ -2799,14 +2841,14 @@ def fetch_month_summary_by_hotel(year, month, hotel_name):
                 res.update({'rev': 16945928.0, 'avg_occ': 79.4, 'avg_adr': 5649.0, 'revpar': 4485.0, 'rooms': 3780.0, 'sold_rooms': 3001.0})
         elif ym_str == '202609':
             if hotel_name == "主題館":
-                res.update({'rev': 9460598.0, 'avg_occ': 86.0, 'avg_adr': 3302.0, 'revpar': 2838.0})
+                res.update({'rev': 9460598.0, 'avg_occ': 86.0, 'avg_adr': 3302.0, 'revpar': 2838.0, 'rooms': 3360.0, 'sold_rooms': 2865.0})
             else:
-                res.update({'rev': 11668393.0, 'avg_occ': 88.9, 'avg_adr': 3561.0, 'revpar': 3167.0})
+                res.update({'rev': 11668393.0, 'avg_occ': 88.9, 'avg_adr': 3561.0, 'revpar': 3167.0, 'rooms': 3840.0, 'sold_rooms': 3277.0})
         elif ym_str == '202608':
             if hotel_name == "主題館":
-                res.update({'rev': 10092400.0, 'avg_occ': 88.1, 'avg_adr': 3331.0, 'revpar': 2934.0})
+                res.update({'rev': 10092400.0, 'avg_occ': 88.1, 'avg_adr': 3331.0, 'revpar': 2934.0, 'rooms': 3472.0, 'sold_rooms': 3030.0})
             else:
-                res.update({'rev': 12585710.0, 'avg_occ': 91.4, 'avg_adr': 3582.0, 'revpar': 3273.0})
+                res.update({'rev': 12585710.0, 'avg_occ': 91.4, 'avg_adr': 3582.0, 'revpar': 3273.0, 'rooms': 3968.0, 'sold_rooms': 3514.0})
 
     return res
 
@@ -2925,6 +2967,7 @@ def get_rest_metrics(year_month_str, hotel_type=None):
             m = int(target_ym_clean[4:])
             _, last_day = calendar.monthrange(y, m)
             for d in range(last_day, 0, -1):
+                f_date = datetime(y, m, d).date()
                 p = resolve_file_paths(h, f_date)
                 eis_p = p[0] if isinstance(p, (tuple, list)) else (p.get('eis03') if isinstance(p, dict) else str(p))
                 if eis_p and os.path.exists(eis_p):
@@ -2943,9 +2986,10 @@ def get_rest_metrics(year_month_str, hotel_type=None):
 
 
 @st.cache_data(ttl=3600)
-def fetch_yearly_metrics(year):
+def fetch_yearly_metrics(year, hotel_type=None):
     try:
-        df_all = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel)
+        h = hotel_type or current_hotel
+        df_all = _get_cached_sheet_v3("occ_data", hotel_type=h)
         if df_all is None or df_all.empty:
             return 0.0, 0.0
         df_all = standardize_df_dates(df_all)
@@ -2958,16 +3002,37 @@ def fetch_yearly_metrics(year):
         if df.empty:
             return 0.0, 0.0
 
-        num_cols = ['revenue', 'total_rooms']
+        num_cols = ['revenue', 'total_rooms', 'sold_rooms', 'adr']
         for c in num_cols:
             if c in df.columns:
                 df[c] = df[c].astype(str).str.replace(
                     ',', '').str.replace('%', '')
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
 
+        df = df[df['revenue'] > 0].copy()
+        if df.empty:
+            return 0.0, 0.0
+
+        def _calc_sold(sub_df):
+            if sub_df.empty:
+                return 0.0
+            if 'sold_rooms' in sub_df.columns and sub_df['sold_rooms'].sum() > 0:
+                s = sub_df['sold_rooms'].copy()
+                missing = (s <= 0) & (sub_df['revenue'] > 0)
+                if missing.any() and 'adr' in sub_df.columns:
+                    idx_adr = missing & (sub_df['adr'] > 0)
+                    s.loc[idx_adr] = (sub_df.loc[idx_adr, 'revenue'] / sub_df.loc[idx_adr, 'adr']).round()
+                return float(s.sum())
+            return 0.0
+
         tot_rev = df['revenue'].sum()
-        tot_rms = df['total_rooms'].sum()
-        yearly_adr = (tot_rev / tot_rms) if tot_rms > 0 else 0.0
+        tot_sold = _calc_sold(df)
+        if tot_sold > 0:
+            yearly_adr = tot_rev / tot_sold
+        elif 'adr' in df.columns and (df['adr'] > 0).any():
+            yearly_adr = float(df.loc[df['adr'] > 0, 'adr'].mean())
+        else:
+            yearly_adr = 0.0
 
         taipei_events_df = fetch_taipei_events()
         e_dates = set(taipei_events_df['date'].unique(
@@ -2982,11 +3047,17 @@ def fetch_yearly_metrics(year):
 
         df['is_e'] = df['date'].isin(e_dates)
         df['is_h'] = df['date'].isin(h_dates)
-        df_pure = df[~df['is_e'] & ~df['is_h']]
+        is_wknd = pd.to_datetime(df['date'], errors='coerce').dt.dayofweek.isin([4, 5])
+        df_pure = df[~df['is_e'] & ~df['is_h'] & ~is_wknd]
 
         p_rev = df_pure['revenue'].sum()
-        p_rms = df_pure['total_rooms'].sum()
-        yearly_pure_adr = (p_rev / p_rms) if p_rms > 0 else 0.0
+        p_sold = _calc_sold(df_pure)
+        if p_sold > 0:
+            yearly_pure_adr = p_rev / p_sold
+        elif 'adr' in df_pure.columns and (df_pure['adr'] > 0).any():
+            yearly_pure_adr = float(df_pure.loc[df_pure['adr'] > 0, 'adr'].mean())
+        else:
+            yearly_pure_adr = 0.0
 
         return yearly_adr, yearly_pure_adr
     except Exception:
@@ -3396,6 +3467,8 @@ def parse_and_save_jinxu(file):
         if not rooms_col:
             rooms_col = next((c for c in df.columns if (
                 '房間數' in c or '客房數' in c) and '可售' not in c), None)
+        avail_col = next((c for c in df.columns if '可售' in c), None)
+        avail_col = next((c for c in df.columns if '可售' in c), None)
 
         if not date_col:
             st.error("⚠️ 解析失敗：找不到『日期』欄位，請檢查報表格式。")
@@ -3447,9 +3520,15 @@ def parse_and_save_jinxu(file):
                       ) if rev_col and pd.notna(row.get(rev_col)) else 0
             rooms = int(float(str(row.get(rooms_col, '0')).replace(
                 ',', ''))) if rooms_col and pd.notna(row.get(rooms_col)) else 0
+            avail_rooms = 112 if current_hotel == "主題館" else 128
+            if avail_col and pd.notna(row.get(avail_col)) and str(row.get(avail_col)).strip() != "":
+                try:
+                    avail_rooms = int(float(str(row.get(avail_col)).replace(',', '')))
+                except Exception:
+                    pass
 
             updates.append({'date': d_str, 'occ_rate': occ,
-                           'adr': adr, 'revenue': rev, 'total_rooms': rooms})
+                           'adr': adr, 'revenue': rev, 'sold_rooms': rooms, 'total_rooms': avail_rooms})
 
         if updates:
             df_existing = _get_cached_sheet_v3("occ_data", hotel_type=current_hotel).copy()
@@ -3471,6 +3550,7 @@ def parse_and_save_jinxu(file):
 
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
             _get_occ_data_cached_v2.clear()
+            _get_cached_sheet_v3.clear()
             fetch_yearly_metrics.clear()
             return len(updates)
 
@@ -3613,6 +3693,7 @@ def parse_and_save_restaurant(file, current_year):
             # 寫回資料庫
             conn.update(worksheet="occ_data", data=df_final.fillna(""))
             _get_occ_data_cached_v2.clear()
+            _get_cached_sheet_v3.clear()
             fetch_yearly_metrics.clear()
 
         # 清除快取以確保重整後能看到新數據
@@ -3726,6 +3807,31 @@ def make_card(title, value, color_class="card-theme-blue", bg_class="", icon="")
     </div>
     '''
 
+
+def _render_theme_unavailable_notice(module_title, strategic_summary, strategic_points):
+    """主題館目前未接入之站前館專屬內部數據模組，呈現統一說明與戰略價值簡介。"""
+    pts_html = "".join(
+        f"<li style='margin: 6px 0; color: #334155;'>{pt}</li>"
+        for pt in strategic_points
+    )
+    html_block = f"""
+<div style="background: linear-gradient(135deg, #fffaf0 0%, #fef3c7 100%); border-left: 6px solid #f59e0b; border-radius: 12px; padding: 22px 26px; margin: 14px 0 20px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
+<div style="font-size: 20px; font-weight: 800; color: #92400e; margin-bottom: 8px;">⚠️ 暫無數據可提供此服務（{module_title}）</div>
+<div style="font-size: 14px; color: #78350f; line-height: 1.65; margin-bottom: 14px;">
+目前「主題館」尚未接入此模組所需之內部數據（如：各部門請購與官方會計採購明細、員工薪資與人事資料、SQL 即時未來在手預訂等），因此暫不顯示空白或誤差統計。
+</div>
+<div style="background: #ffffff; border: 1px solid #fde68a; border-radius: 10px; padding: 16px 20px;">
+<div style="font-size: 15px; font-weight: 700; color: #1e293b; margin-bottom: 6px;">📊 此頁面可呈現之戰略資訊</div>
+<div style="font-size: 14px; color: #475569; line-height: 1.6; margin-bottom: 8px;">{strategic_summary}</div>
+<ul style="margin: 0 0 12px 18px; padding: 0; font-size: 14px; line-height: 1.6;">
+{pts_html}
+</ul>
+<div style="font-size: 13px; color: #0369a1; font-weight: 600;">💡 若主題館主管對此頁面之戰略分析有興趣，後續可再討論數據格式與資料串接導入方式。</div>
+</div>
+</div>
+"""
+    st.markdown(html_block, unsafe_allow_html=True)
+
 if current_hotel != "採購":
     if selected_page == "📊 營運總覽":
         st.header("📊 營運總覽")
@@ -3765,8 +3871,13 @@ if current_hotel != "採購":
         col1, col2, col3 = st.columns(3)
         with col1:
             st.success("🧹 **房務狀況**")
-            total_occ = st.session_state.get('input_rooms', 0)
-            cleaned = st.session_state.get('input_cleaned', 0)
+            _raw_sold = day_data.get('sold_rooms') if isinstance(day_data, dict) else None
+            try:
+                _sold_cnt = int(float(str(_raw_sold).replace(',', ''))) if _raw_sold is not None and str(_raw_sold).strip() != '' and not pd.isna(_raw_sold) else 0
+            except Exception:
+                _sold_cnt = 0
+            total_occ = _sold_cnt if _sold_cnt > 0 else safe_format_int(st.session_state.get('input_rooms', 0))
+            cleaned = safe_format_int(st.session_state.get('input_cleaned', 0))
             st.metric("目標清消總數 (來自金旭)", f"{total_occ} 間")
             st.caption(f"手動紀錄清消: {cleaned} 間 (差額: {cleaned - total_occ})")
         with col2:
@@ -3776,110 +3887,131 @@ if current_hotel != "採購":
                       0 else "🟢 正常", delta_color="off")
         with col3:
             st.error("🍽️ **餐廳狀況**")
-            bf_total_act = st.session_state.get('input_bf_total_act', 0)
-            st.metric("今日雙館早餐總來客", f"{safe_format_int(bf_total_act)} 人")
+            bf_total_act = safe_format_int(st.session_state.get('input_bf_total_act', 0))
+            if bf_total_act == 0:
+                _fb_today = compute_fb_mtd(date_str, date_str, _dummy_hotel=current_hotel)
+                bf_total_act = safe_format_int(_fb_today.get('total_act_bf', 0)) if _fb_today else 0
+            st.metric("今日雙館早餐總來客", f"{bf_total_act} 人")
 
         st.divider()
 
         # --- 全館即時動態成本 (Rolling CPOR) 計算 ---
-        st.subheader("💎 即時利潤戰情看板 (Rolling CPOR)")
-        st.caption("💡 系統自動撈取全館各部門 (含餐飲)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。\\n⚠️ **提醒：房務耗品受「客數(Pax)」驅動，若今日 CPOR 偏高，通常是因為四人房等多客數房型賣得較多。**")
+        if current_hotel == "主題館":
+            _render_theme_unavailable_notice(
+                '💎 即時利潤戰情看板 (Rolling CPOR)',
+                '整合全館各部門（房務、櫃台、餐飲等）當月預估總採購花費與在手入住房數，即時衡量單房變動成本與真實淨利貢獻。',
+                ['動態追蹤單房變動成本 (Rolling CPOR)，即時掌握備品與耗材開銷節奏', '結合平均房價 (ADR) 與餐飲分攤營收 (TRevPOR)，計算單房即時淨利 (Net TRevPOR)', '每日監控各部門即時請購總額 (Live Spend)，提早發現異常採購波動'],
+            )
+        else:
+            st.subheader("💎 即時利潤戰情看板 (Rolling CPOR)")
+            st.caption("💡 系統自動撈取全館各部門 (含餐飲)「預估全月總採購花費」，除以「預估全月總入住房數」，算出最真實的單房成本。\\n⚠️ **提醒：房務耗品受「客數(Pax)」驅動，若今日 CPOR 偏高，通常是因為四人房等多客數房型賣得較多。**")
         
-        _df_all_purch = _get_all_purchase_clean()
-        _occ = _get_occ_data_cached_v2()
+            _df_all_purch = _get_all_purchase_clean()
+            _occ = _get_occ_data_cached_v2(hotel_type=current_hotel)
         
-        # --- 將各部門即時日報表 (Live Carts) 併入母體數據，確保 CPOR 是最即時的 ---
-        all_live = []
-        try:
-            carts = [
-                (fetch_hk_daily_purchase_report(), '房務'),
-                (fetch_fd_daily_purchase_report(), '櫃台'),
-                (fetch_cs_daily_purchase_report(), '工務'),
-                (fetch_thepeak_daily_purchase_report(), 'The Peak'),
-                (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
-            ]
-            for df_daily, default_dept in carts:
-                if df_daily is not None and not df_daily.empty:
-                    d_col = next((c for c in df_daily.columns if '日期' in c), None)
-                    i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
-                    p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
-                    if d_col and i_col and p_col:
-                        df_conv = pd.DataFrame()
-                        df_conv['_date_parsed'] = pd.to_datetime(df_daily[d_col], errors='coerce')
-                        df_conv = df_conv[df_conv['_date_parsed'].notna()].copy()
-                        df_conv['_date_str'] = df_conv['_date_parsed'].dt.strftime('%Y-%m-%d')
-                        df_conv['_item'] = df_daily[i_col].astype(str).str.strip()
-                        df_conv['_price'] = pd.to_numeric(df_daily[p_col], errors='coerce').fillna(0.0)
-                        df_conv['_dept'] = default_dept
-                        all_live.append(df_conv)
-            if all_live:
-                df_live_combined = pd.concat(all_live, ignore_index=True)
-                if not _df_all_purch.empty:
-                    official_records = set(zip(_df_all_purch['_date_str'], _df_all_purch['_item']))
-                    mask = df_live_combined.apply(lambda row: (row['_date_str'], row['_item']) not in official_records, axis=1)
-                    df_live_combined = df_live_combined[mask]
-                    _df_all_purch = pd.concat([_df_all_purch, df_live_combined], ignore_index=True)
-                else:
-                    _df_all_purch = df_live_combined
-        except Exception:
-            pass
+            # --- 將各部門即時日報表 (Live Carts) 併入母體數據，確保 CPOR 是最即時的 ---
+            all_live = []
+            try:
+                carts = [
+                    (fetch_hk_daily_purchase_report(), '房務'),
+                    (fetch_fd_daily_purchase_report(), '櫃台'),
+                    (fetch_cs_daily_purchase_report(), '工務'),
+                    (fetch_thepeak_daily_purchase_report(), 'The Peak'),
+                    (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
+                ]
+                for df_daily, default_dept in carts:
+                    if df_daily is not None and not df_daily.empty:
+                        d_col = next((c for c in df_daily.columns if '日期' in c), None)
+                        i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
+                        p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                        if d_col and i_col and p_col:
+                            df_conv = pd.DataFrame()
+                            df_conv['_date_parsed'] = pd.to_datetime(df_daily[d_col], errors='coerce')
+                            df_conv = df_conv[df_conv['_date_parsed'].notna()].copy()
+                            df_conv['_date_str'] = df_conv['_date_parsed'].dt.strftime('%Y-%m-%d')
+                            df_conv['_item'] = df_daily[i_col].astype(str).str.strip()
+                            df_conv['_price'] = pd.to_numeric(df_daily[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0.0)
+                            df_conv['_dept'] = default_dept
+                            all_live.append(df_conv)
+                if all_live:
+                    df_live_combined = pd.concat(all_live, ignore_index=True)
+                    if not _df_all_purch.empty:
+                        official_records = set(zip(_df_all_purch['_date_str'], _df_all_purch['_item']))
+                        mask = df_live_combined.apply(lambda row: (row['_date_str'], row['_item']) not in official_records, axis=1)
+                        df_live_combined = df_live_combined[mask]
+                        _df_all_purch = pd.concat([_df_all_purch, df_live_combined], ignore_index=True)
+                    else:
+                        _df_all_purch = df_live_combined
+            except Exception:
+                pass
         
-        total_forecast_cost = 0.0
-        eom_rooms_base = 0
-        mtd_rooms_base = 0
+            total_forecast_cost = 0.0
+            eom_rooms_base = 0
+            mtd_rooms_base = 0
         
-        all_purch_depts = _df_all_purch['_dept'].dropna().astype(str).unique().tolist() if not _df_all_purch.empty else []
-        target_depts = ['房務', '櫃台'] # 漏洞二修補：工務部不列入常態均攤成本
-        for d in all_purch_depts:
-            d_up = d.upper()
-            if any(k in d_up for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲', 'HH', 'HAPPY HOUR', '4FHH', 'HAPPYHOUR', '歡樂時光']):
-                if d not in target_depts:
-                    target_depts.append(d)
+            all_purch_depts = _df_all_purch['_dept'].dropna().astype(str).unique().tolist() if not _df_all_purch.empty else []
+            target_depts = ['房務', '櫃台'] # 漏洞二修補：工務部不列入常態均攤成本
+            for d in all_purch_depts:
+                d_up = d.upper()
+                if any(k in d_up for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲', 'HH', 'HAPPY HOUR', '4FHH', 'HAPPYHOUR', '歡樂時光']):
+                    if d not in target_depts:
+                        target_depts.append(d)
         
-        for dept in target_depts:
-            df_d = _df_all_purch[_df_all_purch['_dept'].str.strip() == dept] if not _df_all_purch.empty else pd.DataFrame()
-            metrics = compute_dept_cpr_metrics(df_d, _occ, selected_date, dept_label=dept)
-            total_forecast_cost += metrics.get('eom_forecast_cost', 0.0)
-            if dept == '櫃台': # 櫃台是用純房間數計算的，適合當作全館除數
-                eom_rooms_base = metrics.get('eom_rooms', 0)
-                mtd_rooms_base = metrics.get('mtd_rooms', 0)
+            start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
+            fb_data = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
+            zq_guests = (fb_data.get('bf_zq_act', 0) + fb_data.get('af_zq_act', 0)) if fb_data else 0
+            th_guests = (fb_data.get('bf_theme_act', 0) + fb_data.get('af_theme_act', 0)) if fb_data else 0
+            tot_fb_guests = zq_guests + th_guests
+            if tot_fb_guests > 0:
+                hotel_fb_share = (th_guests / tot_fb_guests) if current_hotel == "主題館" else (zq_guests / tot_fb_guests)
+            else:
+                hotel_fb_share = 0.45 if current_hotel == "主題館" else 0.55
+
+            for dept in target_depts:
+                df_d = _df_all_purch[_df_all_purch['_dept'].str.strip() == dept] if not _df_all_purch.empty else pd.DataFrame()
+                metrics = compute_dept_cpr_metrics(df_d, _occ, selected_date, dept_label=dept)
+                dept_eom_cost = metrics.get('eom_forecast_cost', 0.0)
+                if dept not in ['房務', '櫃台', '工務']:
+                    dept_eom_cost *= hotel_fb_share
+                total_forecast_cost += dept_eom_cost
+                if dept == '櫃台': # 櫃台是用純房間數計算的，適合當作全館除數
+                    eom_rooms_base = metrics.get('eom_rooms', 0)
+                    mtd_rooms_base = metrics.get('mtd_rooms', 0)
                 
-        cpor_val = (total_forecast_cost / eom_rooms_base) if eom_rooms_base > 0 else 0
+            cpor_val = (total_forecast_cost / eom_rooms_base) if eom_rooms_base > 0 else 0
         
-        # 漏洞一修補：計算 TRevPOR (總營收 = 客房 ADR + 餐廳均攤營收)
-        start_of_month = selected_date.replace(day=1).strftime('%Y-%m-%d')
-        fb_data = compute_fb_mtd(start_of_month, date_str, _dummy_hotel=current_hotel)
-        rest_mrev = fb_data.get('revenue', 0) if fb_data else 0
-        fb_revpor = (rest_mrev / mtd_rooms_base) if mtd_rooms_base > 0 else 0
+            # 漏洞一修補：計算 TRevPOR (總營收 = 客房 ADR + 餐廳均攤營收)
+            rest_mrev = (fb_data.get('revenue', 0) if fb_data else 0) * hotel_fb_share
+            fb_revpor = (rest_mrev / mtd_rooms_base) if mtd_rooms_base > 0 else 0
         
-        trevpor_val = adr_val + fb_revpor
-        net_profit = trevpor_val - cpor_val if trevpor_val > 0 else 0
+            trevpor_val = adr_val + fb_revpor
+            net_profit = trevpor_val - cpor_val if trevpor_val > 0 else 0
         
-        live_spend = 0
-        today_str = date_str
+            live_spend = 0
+            today_str = date_str
         
-        def get_live_spend(df_report):
-            if df_report is None or df_report.empty: return 0
-            date_col = next((c for c in df_report.columns if '日期' in c), None)
-            price_col = next((c for c in df_report.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
-            if not date_col or not price_col: return 0
-            df_rep = df_report.copy()
-            df_rep['_dt'] = pd.to_datetime(df_rep[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
-            return pd.to_numeric(df_rep[df_rep['_dt'] == today_str][price_col], errors='coerce').fillna(0).sum()
+            def get_live_spend(df_report):
+                if df_report is None or df_report.empty: return 0
+                date_col = next((c for c in df_report.columns if '日期' in c), None)
+                price_col = next((c for c in df_report.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                if not date_col or not price_col: return 0
+                df_rep = df_report.copy()
+                df_rep['_dt'] = pd.to_datetime(df_rep[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+                return pd.to_numeric(df_rep[df_rep['_dt'] == today_str][price_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
 
-        try:
-            live_spend += get_live_spend(fetch_hk_daily_purchase_report())
-            live_spend += get_live_spend(fetch_fd_daily_purchase_report())
-            live_spend += get_live_spend(fetch_cs_daily_purchase_report())
-            live_spend += get_live_spend(fetch_thepeak_daily_purchase_report())
-            live_spend += get_live_spend(fetch_4fhh_daily_purchase_report())
-        except:
-            pass
+            try:
+                live_spend += get_live_spend(fetch_hk_daily_purchase_report())
+                live_spend += get_live_spend(fetch_fd_daily_purchase_report())
+                live_spend += get_live_spend(fetch_cs_daily_purchase_report())
+                live_spend += get_live_spend(fetch_thepeak_daily_purchase_report())
+                live_spend += get_live_spend(fetch_4fhh_daily_purchase_report())
+            except:
+                pass
 
-        r1, r2, r3 = st.columns(3)
-        r1.markdown(make_card("動態單房成本 (Rolling CPOR)", f"NT$ {int(cpor_val):,}", "card-theme-red", "card-bg-dark", "📉"), unsafe_allow_html=True)
-        r2.markdown(make_card("單房即時淨利 (Net TRevPOR)", f"NT$ {int(net_profit):,}", "card-theme-green", "card-bg-dark", "💎"), unsafe_allow_html=True)
-        r3.markdown(make_card("今日各部採購 (Live Spend)", f"NT$ {int(live_spend):,}", "card-theme-orange", "card-bg-dark", "💸"), unsafe_allow_html=True)
+            r1, r2, r3 = st.columns(3)
+            r1.markdown(make_card("動態單房成本 (Rolling CPOR)", f"NT$ {int(cpor_val):,}", "card-theme-red", "card-bg-dark", "📉"), unsafe_allow_html=True)
+            r2.markdown(make_card("單房即時淨利 (Net TRevPOR)", f"NT$ {int(net_profit):,}", "card-theme-green", "card-bg-dark", "💎"), unsafe_allow_html=True)
+            r3.markdown(make_card("今日各部採購 (Live Spend)", f"NT$ {int(live_spend):,}", "card-theme-orange", "card-bg-dark", "💸"), unsafe_allow_html=True)
 
 if current_hotel != "採購":
     if selected_page == "📈 月分析專區":
@@ -3952,7 +4084,7 @@ if current_hotel != "採購":
             df['adr_baseline_text'] = ''
 
             y_adr, y_pure_adr = fetch_yearly_metrics(
-                int(month_data['month_label'].split('-')[0]))
+                int(month_data['month_label'].split('-')[0]), hotel_type=current_hotel)
             df['y_adr_baseline'] = y_adr
             df['y_adr_text'] = ''
             df['y_pure_adr_baseline'] = y_pure_adr
@@ -4190,7 +4322,7 @@ if current_hotel != "採購":
 
             # 基準線取得
             c_yr = sel_date.year
-            y_adr, y_pure_adr = fetch_yearly_metrics(c_yr)
+            y_adr, y_pure_adr = fetch_yearly_metrics(c_yr, hotel_type=current_hotel)
             m_avg_adr = month_data.get('avg_adr', df_m['adr_val'].mean() if not df_m.empty else 0.0)
             
             m_lbl = month_data.get('month_label', f"{sel_date.year}-{sel_date.month:02d}")
@@ -4572,7 +4704,7 @@ if current_hotel != "採購":
             scatter_df['day'] = pd.to_datetime(scatter_df['date']).dt.day
 
             # 以「年純平 ADR」作為 Y 軸分界（最客觀的裸實力底線，不受淡日拉低）
-            y_adr_s, y_pure_adr_s = fetch_yearly_metrics(selected_date.year)
+            y_adr_s, y_pure_adr_s = fetch_yearly_metrics(selected_date.year, hotel_type=current_hotel)
             adr_anchor = y_pure_adr_s if y_pure_adr_s > 0 else m_curr.get(
                 'avg_adr', scatter_df['adr_val'].mean())
             anchor_label = f'年純平 ADR ${int(adr_anchor):,}'
@@ -5188,23 +5320,31 @@ if current_hotel != "採購":
 
 if current_hotel != "採購":
     if selected_page == "🧹 房務數據":
-        import hk_dashboard
-        _occ_hk = _get_occ_data_cached_v2()
-        hk_dashboard.render_hk_dashboard(hotel_name=current_hotel, occ_df=_occ_hk, date_str=date_str)
-
-        st.markdown("---")
-        with st.expander("📦 房務官方會計採購與跨部門攤提分析 (點擊展開)"):
-            st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
-            _df_all_purch_hk = _get_all_purchase_clean()
-            _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
-            _df_hk_daily = fetch_hk_daily_purchase_report()
-            _render_dept_procurement_modules(
-                df_dept=_df_hk_dept,
-                dept_label="房務",
-                occ_df=_occ_hk,
-                enable_prediction=False,
-                df_daily_report=_df_hk_daily,
+        st.header("🧹 房務數據")
+        if current_hotel == "主題館":
+            _render_theme_unavailable_notice(
+                '🧹 房務數據',
+                '追蹤房務清潔產能、布巾洗滌費用與備品消耗紀律，協助控管飯店最大宗的變動營運成本。',
+                ['房務人員清潔間數、加班工時與單房清潔人效趨勢追蹤', '布巾洗滌件數與單房洗滌成本控管，降低額外損耗', '房務耗品採購紀律分析、單房耗用 (CPOR) 與庫存基準預警'],
             )
+        else:
+            import hk_dashboard
+            _occ_hk = _get_occ_data_cached_v2(hotel_type=current_hotel)
+            hk_dashboard.render_hk_dashboard(hotel_name=current_hotel, occ_df=_occ_hk, date_str=date_str)
+
+            st.markdown("---")
+            with st.expander("📦 房務官方會計採購與跨部門攤提分析 (點擊展開)"):
+                st.caption("資料來源：purchase_data（官方會計大表）＋ hk_daily_purchase_report（即時請購）無縫縫合。")
+                _df_all_purch_hk = _get_all_purchase_clean()
+                _df_hk_dept = _df_all_purch_hk[_df_all_purch_hk['_dept'].str.strip() == '房務'] if not _df_all_purch_hk.empty else pd.DataFrame()
+                _df_hk_daily = fetch_hk_daily_purchase_report()
+                _render_dept_procurement_modules(
+                    df_dept=_df_hk_dept,
+                    dept_label="房務",
+                    occ_df=_occ_hk,
+                    enable_prediction=False,
+                    df_daily_report=_df_hk_daily,
+                )
 
 if selected_page == "🍽️ 餐廳數據":
     st.header("🍽️ 餐廳數據")
@@ -5289,42 +5429,56 @@ if selected_page == "🍽️ 現場餐期每日登記":
 if current_hotel != "採購":
     if selected_page == "🔧 工務數據":
         st.header("🔧 工務數據")
+        if current_hotel == "主題館":
+            _render_theme_unavailable_notice(
+                '🔧 工務數據',
+                '透過修繕請購單與官方會計採購紀錄交叉稽核，區分例行保養與突發設備維修支出，預防維修預算失控。',
+                ['監控工務零件與外包修繕採購金額趨勢，避免單月維修費用突增', '追蹤高頻故障品項（空調、五金、水電材料）的年度累計花費與單價波動', '建立例行預防性保養 (PM) 與突發故障維修的成本佔比比較'],
+            )
+        else:
 
-        st.markdown("---")
-        st.subheader("📦 工務採購紀律分析")
-        st.caption("資料來源：purchase_data（官方會計大表）＋ cs_daily_purchase_report（即時請購）無縫縫合。工務採購屬維修事件驅動型，停用雙引擎預測模組。")
-        _df_all_purch_eng = _get_all_purchase_clean()
-        _df_eng_dept = _df_all_purch_eng[_df_all_purch_eng['_dept'].str.strip() == '工務'] if not _df_all_purch_eng.empty else pd.DataFrame()
-        _occ_eng = _get_occ_data_cached_v2()
+            st.markdown("---")
+            st.subheader("📦 工務採購紀律分析")
+            st.caption("資料來源：purchase_data（官方會計大表）＋ cs_daily_purchase_report（即時請購）無縫縫合。工務採購屬維修事件驅動型，停用雙引擎預測模組。")
+            _df_all_purch_eng = _get_all_purchase_clean()
+            _df_eng_dept = _df_all_purch_eng[_df_all_purch_eng['_dept'].str.strip() == '工務'] if not _df_all_purch_eng.empty else pd.DataFrame()
+            _occ_eng = _get_occ_data_cached_v2(hotel_type=current_hotel)
 
-        _df_cs_daily = fetch_cs_daily_purchase_report()
-        _render_dept_procurement_modules(
-            df_dept=_df_eng_dept,
-            dept_label="工務",
-            occ_df=_occ_eng,
-            enable_prediction=False,
-            df_daily_report=_df_cs_daily,
-        )
+            _df_cs_daily = fetch_cs_daily_purchase_report()
+            _render_dept_procurement_modules(
+                df_dept=_df_eng_dept,
+                dept_label="工務",
+                occ_df=_occ_eng,
+                enable_prediction=False,
+                df_daily_report=_df_cs_daily,
+            )
 
 
 if current_hotel != "採購":
     if selected_page == "🏢 櫃台數據":
         st.header("🏢 櫃台數據")
-        st.markdown("---")
-        st.subheader("📦 櫃台採購紀律分析")
-        st.caption("資料來源：purchase_data（官方會計大表）＋ fd_daily_purchase_report（即時請購）無縫縫合。")
-        _df_all_purch_ct = _get_all_purchase_clean()
-        _df_ct_dept = _df_all_purch_ct[_df_all_purch_ct['_dept'].str.strip() == '櫃台'] if not _df_all_purch_ct.empty else pd.DataFrame()
-        _occ_ct = _get_occ_data_cached_v2()
-        _df_fd_daily = fetch_fd_daily_purchase_report()
-        st.info(f"🛠️ [系統除錯] 櫃台即時請購單共抓取到 {len(_df_fd_daily) if _df_fd_daily is not None else 0} 筆資料。如果為 0，代表讀取失敗或試算表內無資料。")
-        _render_dept_procurement_modules(
-            df_dept=_df_ct_dept,
-            dept_label="櫃台",
-            occ_df=_occ_ct,
-            enable_prediction=True,
-            df_daily_report=_df_fd_daily,
-        )
+        if current_hotel == "主題館":
+            _render_theme_unavailable_notice(
+                '🏢 櫃台數據',
+                '聚焦櫃台客用迎賓禮、備品贈品與日常行政消耗之單房成本 (CPOR)，並提供雙引擎安全庫存與叫貨預測。',
+                ['櫃台免費客用備品與贈品之單房成本 (CPOR) 動態追蹤與年度趨勢', '結合未來在手預訂房數與歷史消耗慣性，提供雙引擎叫貨量建議', '即時稽核櫃台即時請購單與會計入帳單價差異，杜絕買貴或重複叫貨'],
+            )
+        else:
+            st.markdown("---")
+            st.subheader("📦 櫃台採購紀律分析")
+            st.caption("資料來源：purchase_data（官方會計大表）＋ fd_daily_purchase_report（即時請購）無縫縫合。")
+            _df_all_purch_ct = _get_all_purchase_clean()
+            _df_ct_dept = _df_all_purch_ct[_df_all_purch_ct['_dept'].str.strip() == '櫃台'] if not _df_all_purch_ct.empty else pd.DataFrame()
+            _occ_ct = _get_occ_data_cached_v2(hotel_type=current_hotel)
+            _df_fd_daily = fetch_fd_daily_purchase_report()
+            st.info(f"🛠️ [系統除錯] 櫃台即時請購單共抓取到 {len(_df_fd_daily) if _df_fd_daily is not None else 0} 筆資料。如果為 0，代表讀取失敗或試算表內無資料。")
+            _render_dept_procurement_modules(
+                df_dept=_df_ct_dept,
+                dept_label="櫃台",
+                occ_df=_occ_ct,
+                enable_prediction=True,
+                df_daily_report=_df_fd_daily,
+            )
 
 if current_hotel != "採購":
     if selected_page == "📝 每日營運紀錄":
@@ -5378,444 +5532,436 @@ if current_hotel != "採購":
 
 if selected_page == "💰 採購分析":
     st.header("💰 採購花費分析統計")
+    if current_hotel == "主題館":
+        _render_theme_unavailable_notice(
+            '💰 採購分析',
+            '跨部門整合官方會計採購大表與即時請購日報，協助管理層控管全館採購預算執行率、單房/單客耗用成本及庫存安全水位。',
+            ['全館各部門月度採購總額追蹤與剩餘可用預算 (Budget vs. Actual) 預警', '品項級單價異常偵測與供應商報價漲跌幅分析，守住採購底價', '雙引擎智慧叫貨預測與未來各週採購現金流配額規劃（註：兩館共用之餐飲成本攤提與 The Peak 總評仍可在對應專屬分頁查看）'],
+        )
+    else:
 
-    current_month_str = selected_date.strftime('%Y-%m')
+        current_month_str = selected_date.strftime('%Y-%m')
 
-    try:
-        # 讀取採購數據 (降低 TTL 以確保更新及時)
-        df_purchase = get_purchase_data_cached()
+        try:
+            # 讀取採購數據 (降低 TTL 以確保更新及時)
+            df_purchase = get_purchase_data_cached()
 
-        if df_purchase is not None and not df_purchase.empty:
-            # 清理欄位名稱 (移除空格)
-            df_purchase.columns = df_purchase.columns.astype(str).str.strip()
+            if df_purchase is not None and not df_purchase.empty:
+                # 清理欄位名稱 (移除空格)
+                df_purchase.columns = df_purchase.columns.astype(str).str.strip()
 
-            # 尋找關鍵欄位 (自動識別可能的名稱變體)
-            date_col = next(
-                (c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
-            dept_col = next(
-                (c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
-            total_col = next(
-                (c for c in df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
+                # 尋找關鍵欄位 (自動識別可能的名稱變體)
+                date_col = next(
+                    (c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
+                dept_col = next(
+                    (c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '工地' in c), None)
+                total_col = next(
+                    (c for c in df_purchase.columns if '小計' in c or '金額' in c or 'Total' in c), None)
 
-            if not date_col or not dept_col or not total_col:
-                missing = [c for c, found in [
-                    ('日期', date_col), ('部門', dept_col), ('小計', total_col)] if not found]
-                st.error(f"❌ 採購分頁缺少必要欄位：{', '.join(missing)}")
-                st.write("目前偵測到的欄位有：", list(df_purchase.columns))
-                st.stop()
+                if not date_col or not dept_col or not total_col:
+                    missing = [c for c, found in [
+                        ('日期', date_col), ('部門', dept_col), ('小計', total_col)] if not found]
+                    st.error(f"❌ 採購分頁缺少必要欄位：{', '.join(missing)}")
+                    st.write("目前偵測到的欄位有：", list(df_purchase.columns))
+                    st.stop()
 
-            # 展開可查看偵測結果的小將器（方便尋找問題）
-            if False: # with st.expander("🔍 資料偵測資訊（診斷中，確認後可收起）", expanded=True):
-                st.write(f"日期欄：`{date_col}` ｜ 部門欄：`{dept_col}` ｜ 金額欄：`{total_col}`")
-                st.write("所有欄位：", list(df_purchase.columns))
-                sample_dates = df_purchase[date_col].dropna().head(5).tolist()
-                st.write("前 5 筆日期**原始內容**（解析前）：", sample_dates)
-                sample_depts = df_purchase[dept_col].dropna().unique()[:10].tolist()
-                st.write("部門欄樣本內容：", sample_depts)
-                st.write(f"purchase_data 總筆數：{len(df_purchase)} 筆")
+                # 展開可查看偵測結果的小將器（方便尋找問題）
+                if False: # with st.expander("🔍 資料偵測資訊（診斷中，確認後可收起）", expanded=True):
+                    st.write(f"日期欄：`{date_col}` ｜ 部門欄：`{dept_col}` ｜ 金額欄：`{total_col}`")
+                    st.write("所有欄位：", list(df_purchase.columns))
+                    sample_dates = df_purchase[date_col].dropna().head(5).tolist()
+                    st.write("前 5 筆日期**原始內容**（解析前）：", sample_dates)
+                    sample_depts = df_purchase[dept_col].dropna().unique()[:10].tolist()
+                    st.write("部門欄樣本內容：", sample_depts)
+                    st.write(f"purchase_data 總筆數：{len(df_purchase)} 筆")
                 
-                # --- Debug dump ---
+                    # --- Debug dump ---
+                    try:
+                        df_purchase[[date_col, dept_col, total_col]].dropna().head(50).to_csv("scratch/debug_purchase_dates.csv", index=False, encoding='utf-8-sig')
+                    except Exception:
+                        pass
+
+
+                # 確保日期欄位為日期型態 (支援民國年與一般西元年)
+                def robust_date_parse(val):
+                    if pd.isna(val):
+                        return None
+                    import re as _re_dp
+                    s = _re_dp.sub(r'\.0$', '', str(val).strip())  # 處理 202505.0 浮點格式
+                    if not s or s in ('nan', 'None', 'NaT'):
+                        return None
+                    # 民國年格式 (含 /)
+                    if '/' in s:
+                        res = minguo_to_western(s)
+                        if res:
+                            return res
+                    # YYYYMM 6位數字 (如 202505) → 當月1日
+                    if _re_dp.match(r'^\d{6}$', s):
+                        try:
+                            return pd.to_datetime(s, format='%Y%m').date()
+                        except:
+                            pass
+                    # YYYYMMDD 8位數字 (如 20250525)
+                    if _re_dp.match(r'^\d{8}$', s):
+                        try:
+                            return pd.to_datetime(s, format='%Y%m%d').date()
+                        except:
+                            pass
+                    # 其他標準格式
+                    try:
+                        return pd.to_datetime(val).date()
+                    except:
+                        return None
+
+                df_purchase['日期'] = df_purchase[date_col].apply(robust_date_parse)
+
+                # 處理部門欄位空值 (歸類到「未分類」)
+                df_purchase[dept_col] = df_purchase[dept_col].fillna(
+                    "未分類").astype(str).str.strip()
+                df_purchase.loc[df_purchase[dept_col] == "", dept_col] = "未分類"
+
+                # 過濾 NaT/None
+                df_purchase = df_purchase[df_purchase['日期'].notna()]
+            
+                # --- 找出官方 purchase_data 中已經有紀錄的「部門+年月」組合（以部門為單位防重複）---
+                # 注意：這裡將官方部門名稱標準化為 Live Cart 預設名稱，以正確比對並防止重複計算
+                _ym_series = pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
+            
+                def get_cart_bucket_name(d):
+                    d_upper = str(d).upper()
+                    if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']):
+                        return 'Happy Hour'
+                    elif any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']):
+                        return 'The Peak'
+                    elif '房務' in d_upper:
+                        return '房務'
+                    elif any(k in d_upper for k in ['櫃台', '櫃檯']):
+                        return '櫃台'
+                    elif '工務' in d_upper:
+                        return '工務'
+                    return str(d).strip()
+                
+                normalized_depts = df_purchase[dept_col].apply(get_cart_bucket_name)
+                official_dept_ym = set(
+                    zip(normalized_depts, _ym_series.fillna(''))
+                )
+
+                # --- 新增：將所有部門的即時日報表 (Live Carts) 無縫匯入 df_purchase 以供全域呈現 ---
                 try:
-                    df_purchase[[date_col, dept_col, total_col]].dropna().head(50).to_csv("scratch/debug_purchase_dates.csv", index=False, encoding='utf-8-sig')
+                    carts = [
+                        (fetch_hk_daily_purchase_report(), '房務'),
+                        (fetch_fd_daily_purchase_report(), '櫃台'),
+                        (fetch_cs_daily_purchase_report(), '工務'),
+                        (fetch_thepeak_daily_purchase_report(), 'The Peak'),
+                        (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
+                    ]
+                
+                    for df_daily, default_dept in carts:
+                        if df_daily is not None and not df_daily.empty:
+                            d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '叫貨日' in c), None)
+                            i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
+                            p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                            if d_col and p_col:
+                                append_df = pd.DataFrame()
+                                append_df['日期'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.date
+                                append_df[dept_col] = default_dept
+                                append_df[total_col] = pd.to_numeric(df_daily[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                            
+                                append_df['ym'] = pd.to_datetime(append_df['日期'], errors='coerce').dt.strftime('%Y-%m')
+                                append_df['_dept_ym'] = list(zip(append_df[dept_col].astype(str), append_df['ym'].fillna('')))
+                                append_df = append_df[~append_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
+                            
+                                if not append_df.empty:
+                                    item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
+                                    if i_col and i_col in df_daily.columns:
+                                        item_str = df_daily[i_col].astype(str)
+                                        q_col = next((c for c in df_daily.columns if '數量' in c), None)
+                                        u_col = next((c for c in df_daily.columns if '單位' in c), None)
+                                        if q_col and u_col:
+                                            item_str += " (" + df_daily[q_col].astype(str) + " " + df_daily[u_col].astype(str) + ")"
+                                        if item_desc_col:
+                                            append_df[item_desc_col] = item_str
+                                        else:
+                                            append_df['備註(系統生成)'] = item_str
+                                
+                                    df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
+                                    df_purchase = df_purchase[df_purchase['日期'].notna()]
                 except Exception:
                     pass
 
+                # 過濾當月數據 (包含自動備援：若選定月份尚無資料，自動切換至最新資料月份)
+                m_start = selected_date.replace(day=1)
+                import calendar
+                _, last_day = calendar.monthrange(
+                    selected_date.year, selected_date.month)
+                m_end = selected_date.replace(day=last_day)
 
-            # 確保日期欄位為日期型態 (支援民國年與一般西元年)
-            def robust_date_parse(val):
-                if pd.isna(val):
-                    return None
-                s = str(val).strip().replace('.0', '')  # 處理 202505.0 浮點格式
-                if not s or s in ('nan', 'None', 'NaT'):
-                    return None
-                # 民國年格式 (含 /)
-                if '/' in s:
-                    res = minguo_to_western(s)
-                    if res:
-                        return res
-                # YYYYMM 6位數字 (如 202505) → 當月1日
-                import re as _re_dp
-                if _re_dp.match(r'^\d{6}$', s):
+                df_month = df_purchase[(df_purchase['日期'] >= m_start) & (
+                    df_purchase['日期'] <= m_end)].copy()
+
+                if df_month.empty and not df_purchase.empty:
+                    # 移除自動回溯邏輯，避免跨月數據污染 (例如 9月拉到 8月的採購)
+                    pass
+
+                # 診斷：日期解析後的狀況
+                if False: # with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
+                    parsed_sample = df_purchase['日期'].dropna().head(5).tolist()
+                    st.write(f"解析後前 5 筆日期：{parsed_sample}")
+                    st.write(f"篩選區間：{m_start} ～ {m_end}")
+                    st.write(f"purchase_data 解析後剩餘總筆數：{len(df_purchase)} 筆（NaT 已移除）")
+                    st.write(f"符合 {selected_date.strftime('%Y-%m')} 的筆數：**{len(df_month)} 筆**")
+                    if df_month.empty:
+                        st.error("⚠️ 當月筆數為 0！日期可能為其他年份或格式仍無法解析。")
+                        all_dates = df_purchase['日期'].dropna().sort_values().unique()
+                        if len(all_dates) > 0:
+                            st.write(f"實際資料最早日期：{all_dates[0]}，最晚日期：{all_dates[-1]}")
+
+                # --- 新增：取得上個月數據用於 MoM 分析 ---
+                prev_m_date = get_month_delta(selected_date, -1)
+                pm_start = prev_m_date.replace(day=1)
+                _, pm_last_day = calendar.monthrange(
+                    prev_m_date.year, prev_m_date.month)
+                pm_end = prev_m_date.replace(day=pm_last_day)
+                df_prev_month = df_purchase[(df_purchase['日期'] >= pm_start) & (
+                    df_purchase['日期'] <= pm_end)].copy()
+                # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
+                st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
+            
+                # --- 新增：Projected CPG 佔位符 ---
+                projected_cpg_container = st.empty()
+                st.markdown("<br>", unsafe_allow_html=True)
+            
+                # 1. 計算 The Peak 本月已花費
+                peak_spent = 0
+                hh_spent = 0
+                if not df_month.empty:
+                    _df_m_tmp = df_month.copy()
+                    _df_m_tmp['小計'] = pd.to_numeric(_df_m_tmp[total_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                    curr_depts_tmp = _df_m_tmp.groupby(dept_col)['小計'].sum().reset_index()
+                    all_d_list = curr_depts_tmp[dept_col].astype(str).tolist()
+                    hh_m = [d for d in all_d_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳']) or '4' in str(d)]
+                    if 'Happy Hour' not in hh_m and 'Happy Hour' in all_d_list:
+                        hh_m.append('Happy Hour')
+                    peak_m = [d for d in all_d_list if (any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and d not in hh_m]
+                    if 'The Peak' not in peak_m and 'The Peak' in all_d_list:
+                        peak_m.append('The Peak')
+                    peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
+                    hh_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(hh_m)]['小計'].sum()
+                
+                # === 新增：官方 vs 日報 差異對帳小幫手 ===
+                with st.expander("🔍 官方採購 vs 現場日報 差異對帳小幫手 (Data Reconciliation)"):
+                    st.markdown("由於採購部正式帳單與現場日報常有落差（如漏記、稅金、價格浮動等），本工具協助您快速抓出差異品項。")
                     try:
-                        return pd.to_datetime(s, format='%Y%m').date()
-                    except:
-                        pass
-                # YYYYMMDD 8位數字 (如 20250525)
-                if _re_dp.match(r'^\d{8}$', s):
-                    try:
-                        return pd.to_datetime(s, format='%Y%m%d').date()
-                    except:
-                        pass
-                # 其他標準格式
-                try:
-                    return pd.to_datetime(val).date()
-                except:
-                    return None
-
-            df_purchase['日期'] = df_purchase[date_col].apply(robust_date_parse)
-
-            # 處理部門欄位空值 (歸類到「未分類」)
-            df_purchase[dept_col] = df_purchase[dept_col].fillna(
-                "未分類").astype(str).str.strip()
-            df_purchase.loc[df_purchase[dept_col] == "", dept_col] = "未分類"
-
-            # 過濾 NaT/None
-            df_purchase = df_purchase[df_purchase['日期'].notna()]
-            
-            # --- 找出官方 purchase_data 中已經有紀錄的「部門+年月」組合（以部門為單位防重複）---
-            # 注意：這裡將官方部門名稱標準化為 Live Cart 預設名稱，以正確比對並防止重複計算
-            _ym_series = pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m')
-            
-            def get_cart_bucket_name(d):
-                d_upper = str(d).upper()
-                if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']):
-                    return 'Happy Hour'
-                elif any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']):
-                    return 'The Peak'
-                elif '房務' in d_upper:
-                    return '房務'
-                elif any(k in d_upper for k in ['櫃台', '櫃檯']):
-                    return '櫃台'
-                elif '工務' in d_upper:
-                    return '工務'
-                return str(d).strip()
-                
-            normalized_depts = df_purchase[dept_col].apply(get_cart_bucket_name)
-            official_dept_ym = set(
-                zip(normalized_depts, _ym_series.fillna(''))
-            )
-
-            # --- 新增：將所有部門的即時日報表 (Live Carts) 無縫匯入 df_purchase 以供全域呈現 ---
-            try:
-                carts = [
-                    (fetch_hk_daily_purchase_report(), '房務'),
-                    (fetch_fd_daily_purchase_report(), '櫃台'),
-                    (fetch_cs_daily_purchase_report(), '工務'),
-                    (fetch_thepeak_daily_purchase_report(), 'The Peak'),
-                    (fetch_4fhh_daily_purchase_report(), 'Happy Hour')
-                ]
-                
-                for df_daily, default_dept in carts:
-                    if df_daily is not None and not df_daily.empty:
-                        d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '叫貨日' in c), None)
-                        i_col = next((c for c in df_daily.columns if '品項' in c or '品名' in c), None)
-                        p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
-                        if d_col and p_col:
-                            append_df = pd.DataFrame()
-                            append_df['日期'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.date
-                            append_df[dept_col] = default_dept
-                            append_df[total_col] = pd.to_numeric(df_daily[p_col], errors='coerce').fillna(0)
-                            
-                            append_df['ym'] = pd.to_datetime(append_df['日期'], errors='coerce').dt.strftime('%Y-%m')
-                            append_df['_dept_ym'] = list(zip(append_df[dept_col].astype(str), append_df['ym'].fillna('')))
-                            append_df = append_df[~append_df['_dept_ym'].isin(official_dept_ym)].drop(columns=['ym', '_dept_ym'])
-                            
-                            if not append_df.empty:
-                                item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
-                                if i_col and i_col in df_daily.columns:
-                                    item_str = df_daily[i_col].astype(str)
-                                    q_col = next((c for c in df_daily.columns if '數量' in c), None)
-                                    u_col = next((c for c in df_daily.columns if '單位' in c), None)
-                                    if q_col and u_col:
-                                        item_str += " (" + df_daily[q_col].astype(str) + " " + df_daily[u_col].astype(str) + ")"
-                                    if item_desc_col:
-                                        append_df[item_desc_col] = item_str
-                                    else:
-                                        append_df['備註(系統生成)'] = item_str
-                                
-                                df_purchase = pd.concat([df_purchase, append_df], ignore_index=True)
-                                df_purchase = df_purchase[df_purchase['日期'].notna()]
-            except Exception:
-                pass
-
-            # 過濾當月數據 (包含自動備援：若選定月份尚無資料，自動切換至最新資料月份)
-            m_start = selected_date.replace(day=1)
-            import calendar
-            _, last_day = calendar.monthrange(
-                selected_date.year, selected_date.month)
-            m_end = selected_date.replace(day=last_day)
-
-            df_month = df_purchase[(df_purchase['日期'] >= m_start) & (
-                df_purchase['日期'] <= m_end)].copy()
-
-            if df_month.empty and not df_purchase.empty:
-                # 移除自動回溯邏輯，避免跨月數據污染 (例如 9月拉到 8月的採購)
-                pass
-
-            # ===== TEMP DEBUG: 強制顯示 4FHH 資料追蹤 =====
-            _hh_raw = fetch_4fhh_daily_purchase_report()
-            _hh_in_df = df_purchase[df_purchase[dept_col] == 'Happy Hour'] if dept_col in df_purchase.columns else pd.DataFrame()
-            _hh_in_month = df_month[df_month[dept_col] == 'Happy Hour'] if dept_col in df_month.columns else pd.DataFrame()
-            with st.expander("DEBUG 4FHH 資料追蹤 — 確認後可刪除"):
-                st.write(f"1 fetch_4fhh 筆數: {len(_hh_raw)}, 欄位: {list(_hh_raw.columns) if not _hh_raw.empty else '空'}")
-                st.write(f"2 總價 in cols: {'總價' in _hh_raw.columns if not _hh_raw.empty else 'N/A'}")
-                st.write(f"3 df_purchase Happy Hour 筆數: {len(_hh_in_df)}")
-                st.write(f"4 df_month Happy Hour 筆數: {len(_hh_in_month)}, 區間: {m_start} ~ {m_end}")
-                st.write(f"5 total_col={total_col}, dept_col={dept_col}")
-                st.write(f"6 official_dept_ym 筆數: {len(official_dept_ym)}")
-                if not _hh_raw.empty:
-                    st.dataframe(_hh_raw.head(5))
-            # ===== END TEMP DEBUG =====
-
-            # 診斷：日期解析後的狀況
-            if False: # with st.expander("🔍 日期解析診斷（診斷中，確認後可收起）", expanded=True):
-                parsed_sample = df_purchase['日期'].dropna().head(5).tolist()
-                st.write(f"解析後前 5 筆日期：{parsed_sample}")
-                st.write(f"篩選區間：{m_start} ～ {m_end}")
-                st.write(f"purchase_data 解析後剩餘總筆數：{len(df_purchase)} 筆（NaT 已移除）")
-                st.write(f"符合 {selected_date.strftime('%Y-%m')} 的筆數：**{len(df_month)} 筆**")
-                if df_month.empty:
-                    st.error("⚠️ 當月筆數為 0！日期可能為其他年份或格式仍無法解析。")
-                    all_dates = df_purchase['日期'].dropna().sort_values().unique()
-                    if len(all_dates) > 0:
-                        st.write(f"實際資料最早日期：{all_dates[0]}，最晚日期：{all_dates[-1]}")
-
-            # --- 新增：取得上個月數據用於 MoM 分析 ---
-            prev_m_date = get_month_delta(selected_date, -1)
-            pm_start = prev_m_date.replace(day=1)
-            _, pm_last_day = calendar.monthrange(
-                prev_m_date.year, prev_m_date.month)
-            pm_end = prev_m_date.replace(day=pm_last_day)
-            df_prev_month = df_purchase[(df_purchase['日期'] >= pm_start) & (
-                df_purchase['日期'] <= pm_end)].copy()
-            # --- 新增：💰 本月剩餘預算戰情室 (The Peak) ---
-            st.subheader("🎯 The Peak 本月剩餘預算戰情室 (Dynamic Budget)")
-            
-            # --- 新增：Projected CPG 佔位符 ---
-            projected_cpg_container = st.empty()
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            # 1. 計算 The Peak 本月已花費
-            peak_spent = 0
-            hh_spent = 0
-            if not df_month.empty:
-                _df_m_tmp = df_month.copy()
-                _df_m_tmp['小計'] = pd.to_numeric(_df_m_tmp[total_col], errors='coerce').fillna(0)
-                curr_depts_tmp = _df_m_tmp.groupby(dept_col)['小計'].sum().reset_index()
-                all_d_list = curr_depts_tmp[dept_col].astype(str).tolist()
-                hh_m = [d for d in all_d_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳']) or '4' in str(d)]
-                if 'Happy Hour' not in hh_m and 'Happy Hour' in all_d_list:
-                    hh_m.append('Happy Hour')
-                peak_m = [d for d in all_d_list if (any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and d not in hh_m]
-                if 'The Peak' not in peak_m and 'The Peak' in all_d_list:
-                    peak_m.append('The Peak')
-                peak_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(peak_m)]['小計'].sum()
-                hh_spent = curr_depts_tmp[curr_depts_tmp[dept_col].isin(hh_m)]['小計'].sum()
-                
-            # === 新增：官方 vs 日報 差異對帳小幫手 ===
-            with st.expander("🔍 官方採購 vs 現場日報 差異對帳小幫手 (Data Reconciliation)"):
-                st.markdown("由於採購部正式帳單與現場日報常有落差（如漏記、稅金、價格浮動等），本工具協助您快速抓出差異品項。")
-                try:
-                    # 1. 整理官方資料
-                    off_df = pd.DataFrame()
-                    if not df_month.empty:
-                        def _get_cart_bucket_name_for_recon(d):
-                            d_upper = str(d).upper()
-                            if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
-                            if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
-                            return str(d).strip()
-                        _df_m_tmp_recon = df_month.copy()
-                        _df_m_tmp_recon['Bucket'] = _df_m_tmp_recon[dept_col].apply(_get_cart_bucket_name_for_recon)
-                        off_df = _df_m_tmp_recon[_df_m_tmp_recon['Bucket'] == 'The Peak'].copy()
+                        # 1. 整理官方資料
+                        off_df = pd.DataFrame()
+                        if not df_month.empty:
+                            def _get_cart_bucket_name_for_recon(d):
+                                d_upper = str(d).upper()
+                                if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
+                                if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
+                                return str(d).strip()
+                            _df_m_tmp_recon = df_month.copy()
+                            _df_m_tmp_recon['Bucket'] = _df_m_tmp_recon[dept_col].apply(_get_cart_bucket_name_for_recon)
+                            off_df = _df_m_tmp_recon[_df_m_tmp_recon['Bucket'] == 'The Peak'].copy()
                     
-                    if not off_df.empty:
-                        def _clean_item(s):
-                            import re
-                            s = str(s).replace(' ', '').replace('　', '').lower().strip()
-                            s = re.sub(r'[\(\)\[\]\-\_\.]', '', s)
-                            return s
-                            
-                        off_item_col = next((c for c in off_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                        off_df['Item_Norm'] = off_df[off_item_col].apply(_clean_item) if off_item_col else '未知品項'
-                        off_df['Price'] = pd.to_numeric(off_df[total_col], errors='coerce').fillna(0)
-                        off_grp = off_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '官方總額'})
-                    else:
-                        off_grp = pd.DataFrame(columns=['Item_Norm', '官方總額'])
-
-                    # 2. 整理現場日報 (The Peak)
-                    dr_df = fetch_thepeak_daily_purchase_report()
-                    dr_grp = pd.DataFrame(columns=['Item_Norm', '日報總額'])
-                    if dr_df is not None and not dr_df.empty:
-                        dr_item_col = next((c for c in dr_df.columns if '品名' in c or '品項' in c), None)
-                        dr_price_col = next((c for c in dr_df.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
-                        dr_date_col = next((c for c in dr_df.columns if '日期' in c or '叫貨' in c), None)
-                        
-                        dr_df['Date'] = pd.to_datetime(dr_df[dr_date_col], errors='coerce')
-                        dr_month = dr_df[(dr_df['Date'] >= pd.Timestamp(m_start)) & (dr_df['Date'] <= pd.Timestamp(m_end))].copy()
-                        
-                        if not dr_month.empty:
-                            dr_month['Item_Norm'] = dr_month[dr_item_col].apply(_clean_item) if dr_item_col else '未知品項'
-                            dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col], errors='coerce').fillna(0)
-                            dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
-
-                    # === 新增：模糊比對/部分字串對齊邏輯 (升級版) ===
-                    if not off_grp.empty and not dr_grp.empty:
-                        off_items_list = off_grp['Item_Norm'].tolist()
-                        def find_fuzzy_match_v2(dr_item, off_list):
-                            if dr_item in off_list: return dr_item
-                            if len(dr_item) < 3:
-                                for off_item in off_list:
-                                    if dr_item == off_item: return off_item
-                                return dr_item
-                            import difflib
-                            best_match = dr_item
-                            max_score = 0
-                            for off_item in off_list:
-                                if len(off_item) < 3: continue
-                                if dr_item in off_item or off_item in dr_item:
-                                    score = 0.8 + difflib.SequenceMatcher(None, dr_item, off_item).ratio() * 0.2
-                                else:
-                                    score = difflib.SequenceMatcher(None, dr_item, off_item).ratio()
-                                if score > 0.6 and score > max_score:
-                                    max_score = score
-                                    best_match = off_item
-                            return best_match
-                        
-                        dr_grp['Item_Norm_Mapped'] = dr_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_v2(x, off_items_list))
-                        dr_grp = dr_grp.groupby('Item_Norm_Mapped')['日報總額'].sum().reset_index()
-                        dr_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
-                    # ==============================
-
-                    # 3. 雙向比對
-                    diff_df = pd.merge(off_grp, dr_grp, on='Item_Norm', how='outer').fillna(0)
-                    diff_df['差異 (官方 - 日報)'] = diff_df['官方總額'] - diff_df['日報總額']
-                    
-                    # 顯示總和差異
-                    off_sum = diff_df['官方總額'].sum()
-                    dr_sum = diff_df['日報總額'].sum()
-                    st.write(f"**本月 The Peak 總額對比**：官方 `NT$ {off_sum:,.0f}` vs 日報 `NT$ {dr_sum:,.0f}` (總落差：**`NT$ {off_sum - dr_sum:,.0f}`**)")
-                    
-                    diff_df_sig = diff_df[abs(diff_df['差異 (官方 - 日報)']) > 50].sort_values(by='差異 (官方 - 日報)', ascending=False)
-                    if not diff_df_sig.empty:
-                        st.warning(f"⚠️ 發現 {len(diff_df_sig)} 項有顯著落差的品項！(正數代表官方金額較高或日報漏記，負數代表日報金額較高)")
-                        st.dataframe(diff_df_sig.style.format({'官方總額': '{:,.0f}', '日報總額': '{:,.0f}', '差異 (官方 - 日報)': '{:,.0f}'}), use_container_width=True)
-                    else:
-                        st.success("✅ 官方資料與現場日報金額無顯著落差！")
-                        
-                except Exception as e:
-                    st.error(f"對帳工具發生錯誤: {e}")
-            # === 結束對帳小幫手 ===
-
-            # === 新增：本月 vs 上月 採購差異分析 (MoM) ===
-            with st.expander("📈 本月 vs 上月 採購品項差異分析 (MoM Comparison)"):
-                st.markdown("比對「本月」與「上月」的官方採購明細，協助您快速找出成本增加的主因、新進品項，或已經停止叫貨的品項。")
-                try:
-                    if not df_month.empty and not df_prev_month.empty:
-                        def _get_cart_bucket_for_mom(d):
-                            d_upper = str(d).upper()
-                            if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
-                            if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
-                            return str(d).strip()
-                            
-                        # 處理本月 (The Peak)
-                        _df_m = df_month.copy()
-                        _df_m['Bucket'] = _df_m[dept_col].apply(_get_cart_bucket_for_mom)
-                        m_df = _df_m[_df_m['Bucket'] == 'The Peak'].copy()
-                        
-                        # 處理上月 (The Peak)
-                        _df_pm = df_prev_month.copy()
-                        _df_pm['Bucket'] = _df_pm[dept_col].apply(_get_cart_bucket_for_mom)
-                        pm_df = _df_pm[_df_pm['Bucket'] == 'The Peak'].copy()
-                        
-                        if not m_df.empty and not pm_df.empty:
-                            m_item_col = next((c for c in m_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                            m_qty_col = next((c for c in m_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
-                            m_unit_col = next((c for c in m_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
-                            
-                            pm_item_col = next((c for c in pm_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
-                            pm_qty_col = next((c for c in pm_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
-                            pm_unit_col = next((c for c in pm_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
-                            
+                        if not off_df.empty:
                             def _clean_item(s):
                                 import re
                                 s = str(s).replace(' ', '').replace('　', '').lower().strip()
                                 s = re.sub(r'[\(\)\[\]\-\_\.]', '', s)
                                 return s
+                            
+                            off_item_col = next((c for c in off_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                            off_df['Item_Norm'] = off_df[off_item_col].apply(_clean_item) if off_item_col else '未知品項'
+                            off_df['Price'] = pd.to_numeric(off_df[total_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                            off_grp = off_df.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '官方總額'})
+                        else:
+                            off_grp = pd.DataFrame(columns=['Item_Norm', '官方總額'])
 
-                            m_df['Item_Norm'] = m_df[m_item_col].apply(_clean_item) if m_item_col else '未知品項'
-                            m_df['Unit_Norm'] = m_df[m_unit_col].astype(str).str.strip() if m_unit_col else ''
-                            m_df['Price'] = pd.to_numeric(m_df[total_col], errors='coerce').fillna(0)
-                            m_df['Qty'] = pd.to_numeric(m_df[m_qty_col], errors='coerce').fillna(0) if m_qty_col else 0
-                            m_grp = m_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
-                                本月總額=('Price', 'sum'),
-                                本月總量=('Qty', 'sum'),
-                                本月頻率=('Price', 'count')
-                            ).reset_index()
-                            
-                            pm_df['Item_Norm'] = pm_df[pm_item_col].apply(_clean_item) if pm_item_col else '未知品項'
-                            pm_df['Unit_Norm'] = pm_df[pm_unit_col].astype(str).str.strip() if pm_unit_col else ''
-                            pm_df['Price'] = pd.to_numeric(pm_df[total_col], errors='coerce').fillna(0)
-                            pm_df['Qty'] = pd.to_numeric(pm_df[pm_qty_col], errors='coerce').fillna(0) if pm_qty_col else 0
-                            pm_grp = pm_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
-                                上月總額=('Price', 'sum'),
-                                上月總量=('Qty', 'sum'),
-                                上月頻率=('Price', 'count')
-                            ).reset_index()
-                            
-                            # 模糊對齊邏輯 (升級防呆版)
-                            m_items_list = m_grp['Item_Norm'].tolist()
-                            def find_fuzzy_match_mom_v2(pm_item, m_list):
-                                if pm_item in m_list: return pm_item
-                                if len(pm_item) < 3:
-                                    for m_item in m_list:
-                                        if pm_item == m_item: return m_item
-                                    return pm_item
+                        # 2. 整理現場日報 (The Peak)
+                        dr_df = fetch_thepeak_daily_purchase_report()
+                        dr_grp = pd.DataFrame(columns=['Item_Norm', '日報總額'])
+                        if dr_df is not None and not dr_df.empty:
+                            dr_item_col = next((c for c in dr_df.columns if '品名' in c or '品項' in c), None)
+                            dr_price_col = next((c for c in dr_df.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
+                            dr_date_col = next((c for c in dr_df.columns if '日期' in c or '叫貨' in c), None)
+                        
+                            dr_df['Date'] = pd.to_datetime(dr_df[dr_date_col], errors='coerce')
+                            dr_month = dr_df[(dr_df['Date'] >= pd.Timestamp(m_start)) & (dr_df['Date'] <= pd.Timestamp(m_end))].copy()
+                        
+                            if not dr_month.empty:
+                                dr_month['Item_Norm'] = dr_month[dr_item_col].apply(_clean_item) if dr_item_col else '未知品項'
+                                dr_month['Price'] = pd.to_numeric(dr_month[dr_price_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                                dr_grp = dr_month.groupby('Item_Norm')['Price'].sum().reset_index().rename(columns={'Price': '日報總額'})
+
+                        # === 新增：模糊比對/部分字串對齊邏輯 (升級版) ===
+                        if not off_grp.empty and not dr_grp.empty:
+                            off_items_list = off_grp['Item_Norm'].tolist()
+                            def find_fuzzy_match_v2(dr_item, off_list):
+                                if dr_item in off_list: return dr_item
+                                if len(dr_item) < 3:
+                                    for off_item in off_list:
+                                        if dr_item == off_item: return off_item
+                                    return dr_item
                                 import difflib
-                                best_match = pm_item
+                                best_match = dr_item
                                 max_score = 0
-                                for m_item in m_list:
-                                    if len(m_item) < 3: continue
-                                    if pm_item in m_item or m_item in pm_item:
-                                        score = 0.8 + difflib.SequenceMatcher(None, pm_item, m_item).ratio() * 0.2
+                                for off_item in off_list:
+                                    if len(off_item) < 3: continue
+                                    if dr_item in off_item or off_item in dr_item:
+                                        score = 0.8 + difflib.SequenceMatcher(None, dr_item, off_item).ratio() * 0.2
                                     else:
-                                        score = difflib.SequenceMatcher(None, pm_item, m_item).ratio()
+                                        score = difflib.SequenceMatcher(None, dr_item, off_item).ratio()
                                     if score > 0.6 and score > max_score:
                                         max_score = score
-                                        best_match = m_item
+                                        best_match = off_item
                                 return best_match
+                        
+                            dr_grp['Item_Norm_Mapped'] = dr_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_v2(x, off_items_list))
+                            dr_grp = dr_grp.groupby('Item_Norm_Mapped')['日報總額'].sum().reset_index()
+                            dr_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
+                        # ==============================
+
+                        # 3. 雙向比對
+                        diff_df = pd.merge(off_grp, dr_grp, on='Item_Norm', how='outer').fillna(0)
+                        diff_df['差異 (官方 - 日報)'] = diff_df['官方總額'] - diff_df['日報總額']
+                    
+                        # 顯示總和差異
+                        off_sum = diff_df['官方總額'].sum()
+                        dr_sum = diff_df['日報總額'].sum()
+                        st.write(f"**本月 The Peak 總額對比**：官方 `NT$ {off_sum:,.0f}` vs 日報 `NT$ {dr_sum:,.0f}` (總落差：**`NT$ {off_sum - dr_sum:,.0f}`**)")
+                    
+                        diff_df_sig = diff_df[abs(diff_df['差異 (官方 - 日報)']) > 50].sort_values(by='差異 (官方 - 日報)', ascending=False)
+                        if not diff_df_sig.empty:
+                            st.warning(f"⚠️ 發現 {len(diff_df_sig)} 項有顯著落差的品項！(正數代表官方金額較高或日報漏記，負數代表日報金額較高)")
+                            st.dataframe(diff_df_sig.style.format({'官方總額': '{:,.0f}', '日報總額': '{:,.0f}', '差異 (官方 - 日報)': '{:,.0f}'}), use_container_width=True)
+                        else:
+                            st.success("✅ 官方資料與現場日報金額無顯著落差！")
+                        
+                    except Exception as e:
+                        st.error(f"對帳工具發生錯誤: {e}")
+                # === 結束對帳小幫手 ===
+
+                # === 新增：本月 vs 上月 採購差異分析 (MoM) ===
+                with st.expander("📈 本月 vs 上月 採購品項差異分析 (MoM Comparison)"):
+                    st.markdown("比對「本月」與「上月」的官方採購明細，協助您快速找出成本增加的主因、新進品項，或已經停止叫貨的品項。")
+                    try:
+                        if not df_month.empty and not df_prev_month.empty:
+                            def _get_cart_bucket_for_mom(d):
+                                d_upper = str(d).upper()
+                                if '4' in d_upper or any(k in d_upper for k in ['HH', 'HAPPY', '歡樂時光']): return 'Happy Hour'
+                                if any(k in d_upper for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']): return 'The Peak'
+                                return str(d).strip()
                             
-                            pm_grp['Item_Norm_Mapped'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom_v2(x, m_items_list))
-                            pm_grp = pm_grp.groupby(['Item_Norm_Mapped', 'Unit_Norm']).agg(
-                                上月總額=('上月總額', 'sum'),
-                                上月總量=('上月總量', 'sum'),
-                                上月頻率=('上月頻率', 'sum')
-                            ).reset_index()
-                            pm_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
+                            # 處理本月 (The Peak)
+                            _df_m = df_month.copy()
+                            _df_m['Bucket'] = _df_m[dept_col].apply(_get_cart_bucket_for_mom)
+                            m_df = _df_m[_df_m['Bucket'] == 'The Peak'].copy()
+                        
+                            # 處理上月 (The Peak)
+                            _df_pm = df_prev_month.copy()
+                            _df_pm['Bucket'] = _df_pm[dept_col].apply(_get_cart_bucket_for_mom)
+                            pm_df = _df_pm[_df_pm['Bucket'] == 'The Peak'].copy()
+                        
+                            if not m_df.empty and not pm_df.empty:
+                                m_item_col = next((c for c in m_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                                m_qty_col = next((c for c in m_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+                                m_unit_col = next((c for c in m_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
                             
-                            # 雙向比對
-                            mom_df = pd.merge(m_grp, pm_grp, on=['Item_Norm', 'Unit_Norm'], how='outer').fillna(0)
-                            mom_df['MoM 差異 (本月 - 上月)'] = mom_df['本月總額'] - mom_df['上月總額']
-                            mom_df['頻率差異'] = mom_df['本月頻率'] - mom_df['上月頻率']
+                                pm_item_col = next((c for c in pm_df.columns if '品名' in c or '項次' in c or '項目' in c or 'Item' in c), None)
+                                pm_qty_col = next((c for c in pm_df.columns if any(k in c for k in ['數量', 'Qty', 'Quantity'])), None)
+                                pm_unit_col = next((c for c in pm_df.columns if any(k in c for k in ['單位', 'Unit'])), None)
                             
-                            # 計算單價與價量拆解
-                            mom_df['本月均價'] = mom_df.apply(lambda r: r['本月總額'] / r['本月總量'] if r['本月總量'] > 0 else 0, axis=1)
-                            mom_df['上月均價'] = mom_df.apply(lambda r: r['上月總額'] / r['上月總量'] if r['上月總量'] > 0 else 0, axis=1)
+                                def _clean_item(s):
+                                    import re
+                                    s = str(s).replace(' ', '').replace('　', '').lower().strip()
+                                    s = re.sub(r'[\(\)\[\]\-\_\.]', '', s)
+                                    return s
+
+                                m_df['Item_Norm'] = m_df[m_item_col].apply(_clean_item) if m_item_col else '未知品項'
+                                m_df['Unit_Norm'] = m_df[m_unit_col].astype(str).str.strip() if m_unit_col else ''
+                                m_df['Price'] = pd.to_numeric(m_df[total_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                                m_df['Qty'] = pd.to_numeric(m_df[m_qty_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0) if m_qty_col else 0
+                                m_grp = m_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
+                                    本月總額=('Price', 'sum'),
+                                    本月總量=('Qty', 'sum'),
+                                    本月頻率=('Price', 'count')
+                                ).reset_index()
                             
-                            def calc_price_var(r):
-                                if r['上月總量'] == 0 or r['本月總量'] == 0: return 0 
-                                return (r['本月均價'] - r['上月均價']) * r['本月總量']
+                                pm_df['Item_Norm'] = pm_df[pm_item_col].apply(_clean_item) if pm_item_col else '未知品項'
+                                pm_df['Unit_Norm'] = pm_df[pm_unit_col].astype(str).str.strip() if pm_unit_col else ''
+                                pm_df['Price'] = pd.to_numeric(pm_df[total_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+                                pm_df['Qty'] = pd.to_numeric(pm_df[pm_qty_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0) if pm_qty_col else 0
+                                pm_grp = pm_df.groupby(['Item_Norm', 'Unit_Norm']).agg(
+                                    上月總額=('Price', 'sum'),
+                                    上月總量=('Qty', 'sum'),
+                                    上月頻率=('Price', 'count')
+                                ).reset_index()
+                            
+                                # 模糊對齊邏輯 (升級防呆版)
+                                m_items_list = m_grp['Item_Norm'].tolist()
+                                def find_fuzzy_match_mom_v2(pm_item, m_list):
+                                    if pm_item in m_list: return pm_item
+                                    if len(pm_item) < 3:
+                                        for m_item in m_list:
+                                            if pm_item == m_item: return m_item
+                                        return pm_item
+                                    import difflib
+                                    best_match = pm_item
+                                    max_score = 0
+                                    for m_item in m_list:
+                                        if len(m_item) < 3: continue
+                                        if pm_item in m_item or m_item in pm_item:
+                                            score = 0.8 + difflib.SequenceMatcher(None, pm_item, m_item).ratio() * 0.2
+                                        else:
+                                            score = difflib.SequenceMatcher(None, pm_item, m_item).ratio()
+                                        if score > 0.6 and score > max_score:
+                                            max_score = score
+                                            best_match = m_item
+                                    return best_match
+                            
+                                pm_grp['Item_Norm_Mapped'] = pm_grp['Item_Norm'].apply(lambda x: find_fuzzy_match_mom_v2(x, m_items_list))
+                                pm_grp = pm_grp.groupby(['Item_Norm_Mapped', 'Unit_Norm']).agg(
+                                    上月總額=('上月總額', 'sum'),
+                                    上月總量=('上月總量', 'sum'),
+                                    上月頻率=('上月頻率', 'sum')
+                                ).reset_index()
+                                pm_grp.rename(columns={'Item_Norm_Mapped': 'Item_Norm'}, inplace=True)
+                            
+                                # 雙向比對
+                                mom_df = pd.merge(m_grp, pm_grp, on=['Item_Norm', 'Unit_Norm'], how='outer').fillna(0)
+                                mom_df['MoM 差異 (本月 - 上月)'] = mom_df['本月總額'] - mom_df['上月總額']
+                                mom_df['頻率差異'] = mom_df['本月頻率'] - mom_df['上月頻率']
+                            
+                                # 計算單價與價量拆解
+                                mom_df['本月均價'] = mom_df.apply(lambda r: r['本月總額'] / r['本月總量'] if r['本月總量'] > 0 else 0, axis=1)
+                                mom_df['上月均價'] = mom_df.apply(lambda r: r['上月總額'] / r['上月總量'] if r['上月總量'] > 0 else 0, axis=1)
+                            
+                                def calc_price_var(r):
+                                    if r['上月總量'] == 0 or r['本月總量'] == 0: return 0 
+                                    return (r['本月均價'] - r['上月均價']) * r['本月總量']
                                 
-                            def calc_vol_var(r):
-                                if r['上月總量'] == 0: return r['本月總額'] 
-                                if r['本月總量'] == 0: return -r['上月總額'] 
-                                return (r['本月總量'] - r['上月總量']) * r['上月均價']
+                                def calc_vol_var(r):
+                                    if r['上月總量'] == 0: return r['本月總額'] 
+                                    if r['本月總量'] == 0: return -r['上月總額'] 
+                                    return (r['本月總量'] - r['上月總量']) * r['上月均價']
                                 
-                            mom_df['價差影響'] = mom_df.apply(calc_price_var, axis=1)
-                            mom_df['量差影響'] = mom_df.apply(calc_vol_var, axis=1)
+                                mom_df['價差影響'] = mom_df.apply(calc_price_var, axis=1)
+                                mom_df['量差影響'] = mom_df.apply(calc_vol_var, axis=1)
                             
-                            # 大盤菜價智能稽核
-                            sp_df = fetch_supplier_prices()
-                            mom_df['大盤漲幅'] = "無資料"
-                            mom_df['異常標記'] = ""
-                            if not sp_df.empty and 'period_dt' in sp_df.columns:
-                                sp_m_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == selected_date.year) & 
-                                                (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == selected_date.month)].copy()
-                                sp_pm_date = get_month_delta(selected_date, -1)
-                                sp_pm_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == sp_pm_date.year) & 
-                                                 (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == sp_pm_date.month)].copy()
-                            else:
-                                sp_m_df = pd.DataFrame()
-                                sp_pm_df = pd.DataFrame()
+                                # 大盤菜價智能稽核
+                                sp_df = fetch_supplier_prices()
+                                mom_df['大盤漲幅'] = "無資料"
+                                mom_df['異常標記'] = ""
+                                if not sp_df.empty and 'period_dt' in sp_df.columns:
+                                    sp_m_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == selected_date.year) & 
+                                                    (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == selected_date.month)].copy()
+                                    sp_pm_date = get_month_delta(selected_date, -1)
+                                    sp_pm_df = sp_df[(sp_df['period_dt'].apply(lambda x: x.year if pd.notnull(x) else 0) == sp_pm_date.year) & 
+                                                     (sp_df['period_dt'].apply(lambda x: x.month if pd.notnull(x) else 0) == sp_pm_date.month)].copy()
+                                else:
+                                    sp_m_df = pd.DataFrame()
+                                    sp_pm_df = pd.DataFrame()
                                 
                                 if not sp_m_df.empty:
                                     sp_m_df['item_name_norm'] = sp_m_df['item_name'].apply(_clean_item)
@@ -5831,16 +5977,16 @@ if selected_page == "💰 採購分析":
                                         if len(item) < 3 or len(sp_item) < 3:
                                             if item == sp_item: return sp_df_sub[sp_df_sub['item_name_norm'] == sp_item]
                                             continue
-                                        
+                                    
                                         if sp_item in item or item in sp_item:
                                             score = 0.8 + difflib.SequenceMatcher(None, item, sp_item).ratio() * 0.2
                                         else:
                                             score = difflib.SequenceMatcher(None, item, sp_item).ratio()
-                                        
+                                    
                                         if score > 0.6 and score > max_score:
                                             max_score = score
                                             best_match = sp_item
-                                    
+                                
                                     if best_match:
                                         return sp_df_sub[sp_df_sub['item_name_norm'] == best_match]
                                     return pd.DataFrame()
@@ -5849,11 +5995,11 @@ if selected_page == "💰 採購分析":
                                     def check_market_audit(r):
                                         if r['上月均價'] <= 0 or r['本月均價'] <= 0: return "無資料", ""
                                         actual_infl = (r['本月均價'] - r['上月均價']) / r['上月均價']
-                                        
+                                    
                                         item = r['Item_Norm']
                                         m_match = get_best_sp_match(item, sp_m_df)
                                         pm_match = get_best_sp_match(item, sp_pm_df)
-                                        
+                                    
                                         if not m_match.empty and not pm_match.empty:
                                             m_price = pd.to_numeric(m_match['price'], errors='coerce').mean()
                                             pm_price = pd.to_numeric(pm_match['price'], errors='coerce').mean()
@@ -5862,1455 +6008,1467 @@ if selected_page == "💰 採購分析":
                                                 warn = "🚨 漲幅異常(可能買貴)" if actual_infl > (market_infl + 0.05) else ""
                                                 return f"{market_infl*100:.1f}%", warn
                                         return "無資料", ""
-                                    
+                                
                                     audit_res = mom_df.apply(check_market_audit, axis=1)
                                     mom_df['大盤漲幅'] = [x[0] for x in audit_res]
                                     mom_df['異常標記'] = [x[1] for x in audit_res]
                             
-                            # 新增：客數同步分析
-                            curr_fb = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
-                            sp_pm_date = get_month_delta(selected_date, -1) if 'sp_pm_date' not in locals() else sp_pm_date
-                            prev_fb = get_combined_fb_daily_df(sp_pm_date.year, sp_pm_date.month, current_hotel)
-                            fb_2m = pd.concat([prev_fb, curr_fb], ignore_index=True) if not curr_fb.empty and not prev_fb.empty else pd.DataFrame()
+                                # 新增：客數同步分析
+                                curr_fb = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
+                                sp_pm_date = get_month_delta(selected_date, -1) if 'sp_pm_date' not in locals() else sp_pm_date
+                                prev_fb = get_combined_fb_daily_df(sp_pm_date.year, sp_pm_date.month, current_hotel)
+                                fb_2m = pd.concat([prev_fb, curr_fb], ignore_index=True) if not curr_fb.empty and not prev_fb.empty else pd.DataFrame()
                             
-                            def _get_guest_sum(fb_df):
-                                if fb_df.empty: return 0
-                                if 'bf_act' in fb_df.columns and 'af_act' in fb_df.columns:
-                                    bf = pd.to_numeric(fb_df['bf_act'], errors='coerce').fillna(0)
-                                    af = pd.to_numeric(fb_df['af_act'], errors='coerce').fillna(0)
-                                    g = (bf + (af * 1.5)).sum()
-                                    if g > 0: return g
-                                g_col = 'effective_peak_guests' if 'effective_peak_guests' in fb_df.columns else 'peak_guests'
-                                if g_col in fb_df.columns:
-                                    return pd.to_numeric(fb_df[g_col], errors='coerce').fillna(0).sum()
-                                return 0
+                                def _get_guest_sum(fb_df):
+                                    if fb_df.empty: return 0
+                                    if 'bf_act' in fb_df.columns and 'af_act' in fb_df.columns:
+                                        bf = pd.to_numeric(fb_df['bf_act'], errors='coerce').fillna(0)
+                                        af = pd.to_numeric(fb_df['af_act'], errors='coerce').fillna(0)
+                                        g = (bf + (af * 1.5)).sum()
+                                        if g > 0: return g
+                                    g_col = 'effective_peak_guests' if 'effective_peak_guests' in fb_df.columns else 'peak_guests'
+                                    if g_col in fb_df.columns:
+                                        return pd.to_numeric(fb_df[g_col], errors='coerce').fillna(0).sum()
+                                    return 0
                                 
-                            curr_guests_total = _get_guest_sum(curr_fb)
-                            prev_guests_total = _get_guest_sum(prev_fb)
+                                curr_guests_total = _get_guest_sum(curr_fb)
+                                prev_guests_total = _get_guest_sum(prev_fb)
                             
-                            def check_sync(r):
-                                if curr_guests_total == 0 or prev_guests_total == 0:
-                                    return "無客數資料"
+                                def check_sync(r):
+                                    if curr_guests_total == 0 or prev_guests_total == 0:
+                                        return "無客數資料"
                                 
-                                curr_qty = r['本月總量']
-                                prev_qty = r['上月總量']
+                                    curr_qty = r['本月總量']
+                                    prev_qty = r['上月總量']
                                 
-                                if prev_qty <= 0: return "上月無叫貨"
-                                if curr_qty <= 0: return "本月無叫貨"
+                                    if prev_qty <= 0: return "上月無叫貨"
+                                    if curr_qty <= 0: return "本月無叫貨"
                                 
-                                curr_upg = curr_qty / curr_guests_total
-                                prev_upg = prev_qty / prev_guests_total
+                                    curr_upg = curr_qty / curr_guests_total
+                                    prev_upg = prev_qty / prev_guests_total
                                 
-                                upg_growth = (curr_upg - prev_upg) / prev_upg
+                                    upg_growth = (curr_upg - prev_upg) / prev_upg
                                 
-                                if upg_growth > 0.15:
-                                    return f"🚨 耗用暴增 {upg_growth*100:.0f}%(客少卻多買)" if curr_guests_total < prev_guests_total and curr_qty > prev_qty else f"⚠️ 耗用增加 {upg_growth*100:.0f}%"
-                                elif upg_growth < -0.15:
-                                    return f"📉 耗用減少 {abs(upg_growth)*100:.0f}%"
-                                else:
-                                    return "✅ 完美匹配客數"
+                                    if upg_growth > 0.15:
+                                        return f"🚨 耗用暴增 {upg_growth*100:.0f}%(客少卻多買)" if curr_guests_total < prev_guests_total and curr_qty > prev_qty else f"⚠️ 耗用增加 {upg_growth*100:.0f}%"
+                                    elif upg_growth < -0.15:
+                                        return f"📉 耗用減少 {abs(upg_growth)*100:.0f}%"
+                                    else:
+                                        return "✅ 完美匹配客數"
                                     
-                            mom_df['客數同步狀態'] = mom_df.apply(check_sync, axis=1)
+                                mom_df['客數同步狀態'] = mom_df.apply(check_sync, axis=1)
                             
-                            mom_df_sig = mom_df[abs(mom_df['MoM 差異 (本月 - 上月)']) > 500].sort_values(by='MoM 差異 (本月 - 上月)', ascending=False)
+                                mom_df_sig = mom_df[abs(mom_df['MoM 差異 (本月 - 上月)']) > 500].sort_values(by='MoM 差異 (本月 - 上月)', ascending=False)
                             
-                            m_sum = mom_df['本月總額'].sum()
-                            pm_sum = mom_df['上月總額'].sum()
-                            diff_sum = m_sum - pm_sum
-                            trend_icon = "🔺" if diff_sum > 0 else "🔻"
-                            st.write(f"**The Peak 官方採購成本變化**：本月 `NT$ {m_sum:,.0f}` vs 上月 `NT$ {pm_sum:,.0f}` (變化：**{trend_icon} `NT$ {diff_sum:,.0f}`**)")
+                                m_sum = mom_df['本月總額'].sum()
+                                pm_sum = mom_df['上月總額'].sum()
+                                diff_sum = m_sum - pm_sum
+                                trend_icon = "🔺" if diff_sum > 0 else "🔻"
+                                st.write(f"**The Peak 官方採購成本變化**：本月 `NT$ {m_sum:,.0f}` vs 上月 `NT$ {pm_sum:,.0f}` (變化：**{trend_icon} `NT$ {diff_sum:,.0f}`**)")
                             
-                            if not mom_df_sig.empty:
-                                display_cols = ['Item_Norm', 'Unit_Norm', '上月總額', '本月總額', 'MoM 差異 (本月 - 上月)', '價差影響', '量差影響', '本月頻率', '頻率差異', '客數同步狀態', '大盤漲幅', '異常標記']
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.error("📈 成本增加最多的品項")
-                                    inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0][display_cols]
-                                    st.dataframe(inc_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
-                                with col2:
-                                    st.success("📉 成本減少最多的品項")
-                                    dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0][display_cols]
-                                    st.dataframe(dec_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
+                                if not mom_df_sig.empty:
+                                    display_cols = ['Item_Norm', 'Unit_Norm', '上月總額', '本月總額', 'MoM 差異 (本月 - 上月)', '價差影響', '量差影響', '本月頻率', '頻率差異', '客數同步狀態', '大盤漲幅', '異常標記']
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.error("📈 成本增加最多的品項")
+                                        inc_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] > 0][display_cols]
+                                        st.dataframe(inc_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '+{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
+                                    with col2:
+                                        st.success("📉 成本減少最多的品項")
+                                        dec_df = mom_df_sig[mom_df_sig['MoM 差異 (本月 - 上月)'] < 0][display_cols]
+                                        st.dataframe(dec_df.style.format({'上月總額': '{:,.0f}', '本月總額': '{:,.0f}', 'MoM 差異 (本月 - 上月)': '{:,.0f}', '價差影響': '{:,.0f}', '量差影響': '{:,.0f}', '本月頻率': '{:,.0f}', '頻率差異': '{:+,.0f}'}), use_container_width=True)
+                                else:
+                                    st.info("本月與上月的品項採購金額無顯著差異 (>500)。")
                             else:
-                                st.info("本月與上月的品項採購金額無顯著差異 (>500)。")
+                                st.warning("本月或上月缺乏 The Peak 的採購資料，無法進行比對。")
                         else:
-                            st.warning("本月或上月缺乏 The Peak 的採購資料，無法進行比對。")
-                    else:
-                        st.warning("缺乏本月或上月的官方採購資料，無法進行 MoM 比對。")
-                except Exception as e:
-                    st.error(f"MoM 分析工具發生錯誤: {e}")
-            # === 結束 MoM ===
+                            st.warning("缺乏本月或上月的官方採購資料，無法進行 MoM 比對。")
+                    except Exception as e:
+                        st.error(f"MoM 分析工具發生錯誤: {e}")
+                # === 結束 MoM ===
 
 
             
-            # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
-            import datetime
-            import calendar
-            today_d = datetime.date.today()
-            hist_guests = 0
-            future_guests = 0
-            hist_bf = 0
-            hist_af = 0
-            hist_hh = 0
+                # 2. 計算來客數: 歷史 (1號到昨天) + 未來 (今天到月底)
+                import datetime
+                import calendar
+                today_d = datetime.date.today()
+                hist_guests = 0
+                future_guests = 0
+                hist_bf = 0
+                hist_af = 0
+                hist_hh = 0
             
-            # 歷史客數 (拆分早餐/下午茶) - 使用兩館加總資料
-            df_fb_hist = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
-            if not df_fb_hist.empty:
-                df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date'], errors='coerce').dt.date
-                if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
-                    hist_guests = df_fb_hist['peak_guests'].sum()
-                    hist_bf = df_fb_hist['bf_act'].sum()
-                    hist_af = df_fb_hist['af_act'].sum()
-                    if 'hh_act' in df_fb_hist.columns:
-                        hist_hh = df_fb_hist['hh_act'].sum()
-                elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
-                    past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
-                    hist_guests = past_df['peak_guests'].sum()
-                    hist_bf = past_df['bf_act'].sum()
-                    hist_af = past_df['af_act'].sum()
-                    if 'hh_act' in past_df.columns:
-                        hist_hh = past_df['hh_act'].sum()
+                # 歷史客數 (拆分早餐/下午茶) - 使用兩館加總資料
+                df_fb_hist = get_combined_fb_daily_df(selected_date.year, selected_date.month, current_hotel)
+                if not df_fb_hist.empty:
+                    df_fb_hist['date_obj'] = pd.to_datetime(df_fb_hist['date'], errors='coerce').dt.date
+                    if (selected_date.year, selected_date.month) < (today_d.year, today_d.month):
+                        hist_guests = df_fb_hist['peak_guests'].sum()
+                        hist_bf = df_fb_hist['bf_act'].sum()
+                        hist_af = df_fb_hist['af_act'].sum()
+                        if 'hh_act' in df_fb_hist.columns:
+                            hist_hh = df_fb_hist['hh_act'].sum()
+                    elif (selected_date.year, selected_date.month) == (today_d.year, today_d.month):
+                        past_df = df_fb_hist[df_fb_hist['date_obj'] < today_d]
+                        hist_guests = past_df['peak_guests'].sum()
+                        hist_bf = past_df['bf_act'].sum()
+                        hist_af = past_df['af_act'].sum()
+                        if 'hh_act' in past_df.columns:
+                            hist_hh = past_df['hh_act'].sum()
             
-            # 本月歷史早/午比例推算
-            _total_hist_peak = hist_bf + hist_af
-            if _total_hist_peak > 0:
-                _bf_ratio = hist_bf / _total_hist_peak
-                _af_ratio = hist_af / _total_hist_peak
-            else:
-                _bf_ratio = 0.93  # 預設
-                _af_ratio = 0.07
+                # 本月歷史早/午比例推算
+                _total_hist_peak = hist_bf + hist_af
+                if _total_hist_peak > 0:
+                    _bf_ratio = hist_bf / _total_hist_peak
+                    _af_ratio = hist_af / _total_hist_peak
+                else:
+                    _bf_ratio = 0.93  # 預設
+                    _af_ratio = 0.07
 
-            # 到客率計算：統計目前選擇日期的過去 30 天 (動態浮動)
-            ref_start_d = selected_date - datetime.timedelta(days=30)
-            ref_end_d = selected_date - datetime.timedelta(days=1)
+                # 到客率計算：統計目前選擇日期的過去 30 天 (動態浮動)
+                ref_start_d = selected_date - datetime.timedelta(days=30)
+                ref_end_d = selected_date - datetime.timedelta(days=1)
             
-            start_30d_str = ref_start_d.strftime('%Y-%m-%d')
-            end_1d_str = ref_end_d.strftime('%Y-%m-%d')
+                start_30d_str = ref_start_d.strftime('%Y-%m-%d')
+                end_1d_str = ref_end_d.strftime('%Y-%m-%d')
             
-            fb_ref = compute_fb_mtd(start_30d_str, end_1d_str)
+                fb_ref = compute_fb_mtd(start_30d_str, end_1d_str)
 
-            bf_wd_median = fb_ref.get('bf_wd_median', 0.0)
-            bf_we_median = fb_ref.get('bf_we_median', 0.0)
-            af_wd_median = fb_ref.get('af_wd_median', 0.0)
-            af_we_median = fb_ref.get('af_we_median', 0.0)
+                bf_wd_median = fb_ref.get('bf_wd_median', 0.0)
+                bf_we_median = fb_ref.get('bf_we_median', 0.0)
+                af_wd_median = fb_ref.get('af_wd_median', 0.0)
+                af_we_median = fb_ref.get('af_we_median', 0.0)
             
-            _default_bf_rate = bf_wd_median
-            _default_af_rate = af_wd_median
+                _default_bf_rate = bf_wd_median
+                _default_af_rate = af_wd_median
 
-            # 未來客數原始數據
-            raw_future_guests = 0
-            raw_future_bf = 0
-            raw_future_af = 0
-            if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
-                df_fb_fut = get_combined_fb_future_data()
-                if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
-                    df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date'], errors='coerce').dt.date
-                    _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
-                    m_start_dt = datetime.date(selected_date.year, selected_date.month, 1)
-                    m_end_dt = datetime.date(selected_date.year, selected_date.month, last_d)
-                    calc_start = max(m_start_dt, today_d)
-                    fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end_dt)
-                    if '數量' in df_fb_fut.columns:
-                        _fut_df = df_fb_fut[fut_mask]
-                        raw_future_guests = _fut_df['數量'].sum()
+                # 未來客數原始數據
+                raw_future_guests = 0
+                raw_future_bf = 0
+                raw_future_af = 0
+                if (selected_date.year, selected_date.month) >= (today_d.year, today_d.month):
+                    df_fb_fut = get_combined_fb_future_data()
+                    if not df_fb_fut.empty and 'date' in df_fb_fut.columns:
+                        df_fb_fut['date_obj'] = pd.to_datetime(df_fb_fut['date'], errors='coerce').dt.date
+                        _, last_d = calendar.monthrange(selected_date.year, selected_date.month)
+                        m_start_dt = datetime.date(selected_date.year, selected_date.month, 1)
+                        m_end_dt = datetime.date(selected_date.year, selected_date.month, last_d)
+                        calc_start = max(m_start_dt, today_d)
+                        fut_mask = (df_fb_fut['date_obj'] >= calc_start) & (df_fb_fut['date_obj'] <= m_end_dt)
+                        if '數量' in df_fb_fut.columns:
+                            _fut_df = df_fb_fut[fut_mask]
+                            raw_future_guests = _fut_df['數量'].sum()
                         
-                        _meal_col = next((c for c in _fut_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                            _meal_col = next((c for c in _fut_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                            _bf_kw = ['早', 'breakfast', 'bf']
+                            _af_kw = ['下午', 'afternoon', 'tea', 'af']
+                        
+                            if _meal_col:
+                                _bf_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
+                                _af_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
+                                raw_future_bf = _fut_df.loc[_bf_mask, '數量'].sum()
+                                raw_future_af = _fut_df.loc[_af_mask, '數量'].sum()
+                            else:
+                                raw_future_bf = int(raw_future_guests * _bf_ratio)
+                                raw_future_af = int(raw_future_guests * _af_ratio)
+                            
+                            # --- 新增: 動態混合推算中位數 (Dynamic Blended Projection) ---
+                            _proj_bf = 0
+                            _proj_af = 0
+                            for _, row in _fut_df.iterrows():
+                                try:
+                                    qty = int(float(str(row.get('數量', 0)).replace(',', '')))
+                                except:
+                                    qty = 0
+                                is_we = row['date_obj'].weekday() >= 5
+                            
+                                if _meal_col:
+                                    val = str(row[_meal_col]).lower()
+                                    if any(k in val for k in _bf_kw):
+                                        _proj_bf += qty * (bf_we_median if is_we else bf_wd_median)
+                                    if any(k in val for k in _af_kw):
+                                        _proj_af += qty * (af_we_median if is_we else af_wd_median)
+                                else:
+                                    _proj_bf += (qty * _bf_ratio) * (bf_we_median if is_we else bf_wd_median)
+                                    _proj_af += (qty * _af_ratio) * (af_we_median if is_we else af_wd_median)
+                                
+                            if raw_future_bf > 0:
+                                _default_bf_rate = _proj_bf / raw_future_bf
+                            if raw_future_af > 0:
+                                _default_af_rate = _proj_af / raw_future_af
+
+                # 3. UI 呈現：到客率與 CPG
+                col_w1, col_w2, col_w3 = st.columns([1, 1, 1.5])
+                with col_w1:
+                    target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
+            
+                with col_w2:
+                    _rate_source_label = f"基準：{start_30d_str} 至 {end_1d_str} 實際到客率"
+                    bf_conv_rate = st.slider(
+                        "⚙️ 早餐到客率折算 (%)",
+                        min_value=0, max_value=120,
+                        value=int(min(120, max(0, _default_bf_rate * 100))),
+                        step=1,
+                        help=f"{_rate_source_label}：早餐 {_default_bf_rate*100:.1f}%"
+                    )
+                    af_conv_rate = st.slider(
+                        "⚙️ 下午茶到客率折算 (%)",
+                        min_value=0, max_value=120,
+                        value=int(min(120, max(0, _default_af_rate * 100))),
+                        step=1,
+                        help=f"{_rate_source_label}：下午茶 {_default_af_rate*100:.1f}%"
+                    )
+                    st.caption(f"📊 數值預設以「選擇日期({selected_date.strftime('%Y-%m-%d')})前30天」歷史表現為基準")
+            
+                # 套用折算率（各餐別未來預約人數 × 各自到客率）
+                adj_future_bf = int(raw_future_bf * (bf_conv_rate / 100.0))
+                adj_future_af = int(raw_future_af * (af_conv_rate / 100.0))
+                future_guests = adj_future_bf + adj_future_af
+            
+                total_est_guests = hist_guests + future_guests
+            
+                # 本月估計總人次 (用於 K值系統)
+                est_bf_total = hist_bf + adj_future_bf
+                est_af_total = max(hist_af + adj_future_af, 1)
+
+                total_budget = total_est_guests * target_cpg
+                remaining_budget = total_budget - peak_spent
+                remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+            
+                st.session_state['_budget_est_guests'] = total_est_guests
+                st.session_state['_budget_total'] = total_budget
+                st.session_state['_budget_ym'] = f"{selected_date.year}-{selected_date.month:02d}"
+            
+                # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 或前月 CPG 推算) ---
+                # 如果本月尚未有客數 (例如月初)，則改採「前月實際 CPG」作為未來消耗率預測基準，而非理想的目標值。
+                fallback_cpg = target_cpg
+                fallback_source = f"目標目標消耗率 (NT${int(target_cpg)})"
+                try:
+                    import dateutil.relativedelta
+                    prev_d = selected_date - dateutil.relativedelta.relativedelta(months=1)
+                    df_fb_hist_prev = get_combined_fb_daily_df(prev_d.year, prev_d.month, current_hotel)
+                    prev_hist_guests = df_fb_hist_prev['peak_guests'].sum() if not df_fb_hist_prev.empty and 'peak_guests' in df_fb_hist_prev.columns else 0
+                    prev_hist_bf = df_fb_hist_prev['bf_act'].sum() if not df_fb_hist_prev.empty and 'bf_act' in df_fb_hist_prev.columns else 0
+                    prev_hist_af = df_fb_hist_prev['af_act'].sum() if not df_fb_hist_prev.empty and 'af_act' in df_fb_hist_prev.columns else 0
+                
+                    prev_peak_spent = 0
+                    if 'df_prev_month' in locals() and not df_prev_month.empty:
+                        _df_pm = df_prev_month.copy()
+                        _df_pm['小計'] = pd.to_numeric(_df_pm[total_col], errors='coerce').fillna(0)
+                        _pm_depts = _df_pm.groupby(dept_col)['小計'].sum().reset_index()
+                        _all_pm_d = _pm_depts[dept_col].astype(str).tolist()
+                        _pm_hh = [d for d in _all_pm_d if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                        _pm_peak = [d for d in _all_pm_d if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in _pm_hh]
+                        prev_peak_spent = _pm_depts[_pm_depts[dept_col].isin(_pm_peak)]['小計'].sum()
+                
+                    if prev_hist_guests > 0 and prev_peak_spent > 0:
+                        fallback_cpg = prev_peak_spent / prev_hist_guests
+                        fallback_source = f"前月實際消耗率 (NT${int(fallback_cpg)})"
+                except Exception:
+                    pass
+
+                # (Projected CPG 計算已移至下方 k 值決定之後，以支援動態價量推算)
+                
+                # 渲染將延後至 k 值計算完成後
+                with col_w3:
+                    st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
+                    st.caption(
+                        f"└ 歷史已發生 `{int(hist_guests):,}` 人 "
+                        f"（早餐 `{int(hist_bf):,}` / 下午茶 `{int(hist_af):,}`）"
+                    )
+                    st.caption(
+                        f"└ 未來預約 `{int(raw_future_guests):,}` 人 × 到客率 "
+                        f"→ 早餐預估 `{int(adj_future_bf):,}` ({bf_conv_rate}%) "
+                        f"/ 下午茶預估 `{int(adj_future_af):,}` ({af_conv_rate}%) "
+                        f"= 合計 `{int(future_guests):,}` 人"
+                    )
+                    st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
+                    st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
+            
+                st.markdown("#### 🚨 接下來採購戰略指標")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("剩餘可用預算", f"NT$ {int(remaining_budget):,}")
+                c2.metric("未來預約人數", f"{int(future_guests):,} 人")
+            
+                if remaining_cpg < 0:
+                    c3.error(f"❌ 已經超支！無法計算剩餘 CPG")
+                elif remaining_cpg < target_cpg * 0.8:
+                    c3.warning(f"⚠️ 剩餘 CPG: ${remaining_cpg:.1f} (預算吃緊，請調整高價食材比例)")
+                else:
+                    c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
+
+                # ─────────────────────────────────────────────────
+                # 🔢 早餐 / 下午茶 CPG 拆分分析 (k 值系統)
+                # ─────────────────────────────────────────────────
+                st.divider()
+                st.markdown("#### 🍳 早餐 vs 🍰 下午茶 單客成本拆分分析")
+
+                # 說明早/午比例來源
+                _has_hist = hist_bf + hist_af > 0
+                _ratio_src = f"本月已發生數據 (早餐 {int(hist_bf):,} 人 / 下午茶 {int(hist_af):,} 人)" if _has_hist else "預設估算 (早餐 93% / 下午茶 7%)"
+                st.caption(f"📊 本月客數比例來源：{_ratio_src} → 估計早餐 `{est_bf_total:,}` 人 / 下午茶 `{est_af_total:,}` 人")
+
+                # 計算 k 值動態上限
+                CB_MIN = 80   # 早餐每人食材成本的絕對底線
+                B = est_bf_total
+                A = est_af_total
+                T = target_cpg
+                if A > 0 and CB_MIN > 0:
+                    k_max_raw = ((B + A) * T - CB_MIN * B) / (CB_MIN * A)
+                    k_max = max(1.0, round(k_max_raw, 1))
+                else:
+                    k_max = 5.0
+
+                k_col1, k_col2 = st.columns([1, 2])
+                with k_col1:
+                    k_val = st.slider(
+                        "⚖️ 下午茶相對成本係數 k",
+                        min_value=1.0,
+                        max_value=float(k_max),
+                        value=min(1.8, float(k_max)),
+                        step=0.1,
+                        help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
+                    )
+
+                # --- 深度優化版方案 B：庫存感知與動態收斂模型 (Inventory-Aware Pacing Model) ---
+                cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
+
+                # 1. 取得 Baseline CPG (歷史真實體質，若無則用 Target)
+                baseline_cpg = fallback_cpg if fallback_cpg > 0 else target_cpg
+
+                # 2. 判斷月份是否已過完或尚有未來客人（修復已過完月份強制溢價漏洞）
+                if future_guests <= 0:
+                    # 全月已結算或無未來預約客數：預估落點 100% 自然收斂至歷史實際發生 CPG
+                    remaining_purchases_needed = 0
+                    projected_eom_cost = peak_spent
+                    projected_cpg = cpg_actual
+                    used_rate_source = "全月已結算 (真實累積 CPG)"
+                else:
+                    # 月份進行中：未來採購需求嚴格依據未來預約客數與基線推算，避免過度修正或抹煞前期節流成效
+                    remaining_purchases_needed = future_guests * baseline_cpg
+                    projected_eom_cost = peak_spent + remaining_purchases_needed
+                    projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
+                    used_rate_source = f"動態預估 (未來維持基線 NT${int(baseline_cpg)} 推算)"
+
+                cpg_delta = projected_cpg - target_cpg
+
+                if projected_cpg > target_cpg * 1.05:
+                    status_color = "#e74c3c" # Red
+                    status_icon = "🚨 嚴重超支預警"
+                elif projected_cpg > target_cpg:
+                    status_color = "#f39c12" # Orange
+                    status_icon = "⚠️ 輕微超支預警"
+                else:
+                    status_color = "#2ecc71" # Green
+                    status_icon = "✅ 預算落點安全"
+
+                # 核心公式 (基於目標)
+                if B + k_val * A > 0:
+                    cb = (B + A) * T / (B + k_val * A)
+                    ca = k_val * cb
+                else:
+                    cb = T
+                    ca = T
+
+                _check = (B * cb + A * ca) / (B + A) if (B + A) > 0 else 0
+
+                # --- 新增：核心公式 (基於剩餘救援 Remaining CPG) ---
+                R = remaining_cpg
+                if B + k_val * A > 0:
+                    rem_cb = (B + A) * R / (B + k_val * A)
+                    rem_ca = k_val * rem_cb
+                else:
+                    rem_cb = R
+                    rem_ca = R
+
+                # 延後渲染的 Projected CPG 大面板（按 k 值拆解早午餐）
+                if B + k_val * A > 0:
+                    proj_cb = (B + A) * projected_cpg / (B + k_val * A)
+                    proj_ca = k_val * proj_cb
+                else:
+                    proj_cb = projected_cpg
+                    proj_ca = projected_cpg
+
+                hh_projected_cpg = hh_spent / hist_hh if hist_hh > 0 else 0
+
+                # 判斷副標題提示字樣
+                if future_guests <= 0:
+                    subtitle_text = f"全月已結算 ｜ 累積採購 <b>NT${int(peak_spent):,}</b> ÷ 實際來客 <b>{int(hist_guests):,}</b> 人 ｜ 狀態：<b>已自然收斂</b>"
+                else:
+                    subtitle_text = f"累積採購 <b>NT${int(peak_spent):,}</b> ｜ 截至目前實際 CPG：<b style='color:#5dade2;'>NT$ {cpg_actual:.1f}</b> ｜ 推估依據：{used_rate_source}"
+
+                projected_cpg_container.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                    <div style="flex: 1;">
+                        <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
+                        <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">{subtitle_text}</div>
+                        <div style="display:flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+                            <div style="background: rgba(52, 152, 219, 0.18); border: 1px solid rgba(52, 152, 219, 0.4); padding: 8px 15px; border-radius: 8px;">
+                                <span style="font-size:0.8rem; color:#ecf0f1;">📊 截至目前實際 CPG</span><br>
+                                <span style="font-size:1.2rem; font-weight:bold; color:#5dade2;">NT$ {cpg_actual:.1f}</span>
+                            </div>
+                            <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
+                                <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐落點</span><br>
+                                <span style="font-size:1.2rem; font-weight:bold; color:#2ecc71;">NT$ {proj_cb:.1f}</span>
+                            </div>
+                            <div style="background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.3); padding: 8px 15px; border-radius: 8px;">
+                                <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶落點</span><br>
+                                <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="text-align: right; padding-left: 20px;">
+                        <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
+                        <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # --- 獨立顯示 HH 預估落點 ---
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #2c1a40 0%, #4a2b66 100%); padding: 15px 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin-top: 15px;">
+                    <div style="flex: 1;">
+                        <h3 style="margin:0; color:#ecf0f1; font-size:1.1rem;">🥂 Happy Hour 預估落點單客成本</h3>
+                        <div style="font-size:0.85rem; color:#bdc3c7; margin-top:5px;">基於目前累積 HH 花費 <b>NT${int(hh_spent):,}</b> 與 MTD 累積客數推算，與 The Peak 完全獨立計算。</div>
+                    </div>
+                    <div style="text-align: right; padding-left: 20px;">
+                        <h1 style="margin:0; color:#d2b4de; font-size:2.4rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {hh_projected_cpg:.1f}</h1>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                with k_col2:
+                    cb_color = "#27ae60" if cb >= 100 else ("#f39c12" if cb >= CB_MIN else "#e74c3c")
+                    ca_color = "#27ae60" if ca <= 250 else ("#f39c12" if ca <= 350 else "#e74c3c")
+                    st.markdown(f"""
+                    <div style="display:flex; gap:12px; margin-top:8px;">
+                        <div style="flex:1; background:#1e2d40; border-left:5px solid {cb_color}; border-radius:10px; padding:16px; text-align:center; position:relative;">
+                            <div style="color:#aaa; font-size:0.8rem;">🍳 目標理想分配 (理想上限)</div>
+                            <div style="color:{cb_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {cb:.0f}</div>
+                            <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_bf_total:,} 人次</div>
+                        </div>
+                        <div style="flex:1; background:#1e2d40; border-left:5px solid {ca_color}; border-radius:10px; padding:16px; text-align:center;">
+                            <div style="color:#aaa; font-size:0.8rem;">🍰 目標理想分配 (理想上限)</div>
+                            <div style="color:{ca_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {ca:.0f}</div>
+                            <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_af_total:,} 人次</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                    # --- 新增：真實剩餘救援指標 ---
+                    if rem_cb < 0:
+                        rescue_msg = f"<div style='color:#e74c3c; margin-top:10px; font-weight:bold;'>🚨 預算已經透支！無法提供未來剩餘上限。</div>"
+                    else:
+                        rescue_msg = f"""
+                        <div style="background: rgba(231, 76, 60, 0.1); border: 1px solid #e74c3c; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                            <div style="color:#e74c3c; font-size:0.85rem; font-weight:bold; margin-bottom:5px;">⚠️ 真實採購防線 (扣除已花費後的嚴格上限)</div>
+                            <div style="display:flex; justify-content:space-between; color:#ecf0f1; font-size:0.9rem;">
+                                <span>🍳 早餐剩餘嚴格上限：<b>NT$ {rem_cb:.0f}</b> /人</span>
+                                <span>🍰 下午茶剩餘嚴格上限：<b>NT$ {rem_ca:.0f}</b> /人</span>
+                            </div>
+                        </div>
+                        """
+                    st.markdown(rescue_msg, unsafe_allow_html=True)
+
+                # k 值動態說明文字
+                st.markdown("")
+                if k_val >= k_max * 0.95:
+                    st.error(f"🚫 **k 值已達上限 ({k_val:.1f} / 上限 {k_max:.1f})**\n\n早餐每人成本已壓至 NT${cb:.0f}（接近最低底線 ${CB_MIN}）。繼續調高 k 將導致早餐食材嚴重縮水，影響餐點品質與住客滿意度。建議立即調低 k 值。")
+                elif k_val > 2.5:
+                    st.warning(f"⚠️ **k 值偏高 ({k_val:.1f})**\n\n目前下午茶每人食材預算達 NT${ca:.0f}，早餐僅剩 NT${cb:.0f}。\n- **再往高調的風險**：早餐供應品質下滑，住客投訴風險提升。\n- **往低調的效果**：早餐食材預算提升至 NT${((B+A)*T/(B+(k_val-0.3)*A)):.0f}，下午茶縮至 NT${((k_val-0.3)*(B+A)*T/(B+(k_val-0.3)*A)):.0f}。\n→ 建議範圍：k = 1.5 ～ 2.2")
+                elif k_val < 1.2:
+                    st.info(f"ℹ️ **k 值偏低 ({k_val:.1f})**\n\n早餐與下午茶每人食材成本幾乎相同（NT${cb:.0f} vs NT${ca:.0f}）。\n- **再往低調的風險**：下午茶預算不足，甜點備料品質難以維持。\n- **往高調的效果**：下午茶預算提升至 NT${((k_val+0.3)*(B+A)*T/(B+(k_val+0.3)*A)):.0f}，更真實反映備料成本。\n→ 建議至少設 k = 1.5")
+                else:
+                    st.success(f"✅ **k 值合理 ({k_val:.1f})** ─ 早餐 NT${cb:.0f} / 下午茶 NT${ca:.0f}\n\n目前分配符合業界常規，加權總 CPG = NT${_check:.0f}（等於目標 ${int(T)}）。\n- 若往上調 k 至 {k_val+0.2:.1f} → 下午茶提升至 NT${((k_val+0.2)*(B+A)*T/(B+(k_val+0.2)*A)):.0f}，早餐降至 NT${((B+A)*T/(B+(k_val+0.2)*A)):.0f}\n- 若往下調 k 至 {k_val-0.2:.1f} → 早餐提升至 NT${((B+A)*T/(B+(k_val-0.2)*A)):.0f}，下午茶降至 NT${((k_val-0.2)*(B+A)*T/(B+(k_val-0.2)*A)):.0f}")
+
+                # 月份早/午預算總額概覽
+                bf_budget_total = cb * est_bf_total
+                af_budget_total = ca * est_af_total
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,#1a1a2e,#16213e); border-radius:12px; padding:16px; margin-top:12px; display:flex; justify-content:space-around; text-align:center;">
+                    <div><div style="color:#aaa;font-size:0.8rem;">🍳 本月早餐食材總預算</div><div style="color:#2ecc71;font-size:1.4rem;font-weight:700;">NT$ {int(bf_budget_total):,}</div></div>
+                    <div style="color:#555;font-size:2rem; align-self:center;">+</div>
+                    <div><div style="color:#aaa;font-size:0.8rem;">🍰 本月下午茶食材總預算</div><div style="color:#e67e22;font-size:1.4rem;font-weight:700;">NT$ {int(af_budget_total):,}</div></div>
+                    <div style="color:#555;font-size:2rem; align-self:center;">=</div>
+                    <div><div style="color:#aaa;font-size:0.8rem;">🎯 本月總預算上限</div><div style="color:#3498db;font-size:1.4rem;font-weight:700;">NT$ {int(total_budget):,}</div></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ==========================================
+                # 🎯 預測準確度回顧與快照系統
+                # ==========================================
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.divider()
+                st.subheader("📊 預測準確度回顧與快照 (Prediction Accuracy)")
+                st.info("💡 此區塊讓您每週手動儲存「未來 7 天」的客數預測快照，並能在下週檢視預測準確度。")
+            
+                # --- 1. 儲存快照區塊 ---
+                snap_col1, snap_col2 = st.columns([1, 1])
+            
+                import datetime
+                today_date = datetime.date.today()
+                target_start = today_date + datetime.timedelta(days=1)
+                target_end = today_date + datetime.timedelta(days=7)
+            
+                # 精準計算未來 7 天的預估人數 (包含早/午分流與備用降級機制)
+                snap_future_bf = 0
+                snap_future_af = 0
+                if 'df_fb_fut' in locals() and not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns:
+                    snap_mask = (df_fb_fut['date_obj'] >= target_start) & (df_fb_fut['date_obj'] <= target_end)
+                    _snap_df = df_fb_fut[snap_mask]
+                    qty_col = next((c for c in _snap_df.columns if any(k in c for k in ['數量', '人數', '預估', 'qty', 'guests'])), None)
+                    _meal_col = next((c for c in _snap_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                
+                    if qty_col:
                         _bf_kw = ['早', 'breakfast', 'bf']
                         _af_kw = ['下午', 'afternoon', 'tea', 'af']
-                        
                         if _meal_col:
-                            _bf_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
-                            _af_mask = _fut_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
-                            raw_future_bf = _fut_df.loc[_bf_mask, '數量'].sum()
-                            raw_future_af = _fut_df.loc[_af_mask, '數量'].sum()
+                            _bf_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
+                            _af_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
+                            snap_raw_bf = pd.to_numeric(_snap_df.loc[_bf_m, qty_col], errors='coerce').fillna(0).sum()
+                            snap_raw_af = pd.to_numeric(_snap_df.loc[_af_m, qty_col], errors='coerce').fillna(0).sum()
                         else:
-                            raw_future_bf = int(raw_future_guests * _bf_ratio)
-                            raw_future_af = int(raw_future_guests * _af_ratio)
-                            
-                        # --- 新增: 動態混合推算中位數 (Dynamic Blended Projection) ---
-                        _proj_bf = 0
-                        _proj_af = 0
-                        for _, row in _fut_df.iterrows():
-                            try:
-                                qty = int(float(str(row.get('數量', 0)).replace(',', '')))
-                            except:
-                                qty = 0
-                            is_we = row['date_obj'].weekday() >= 5
-                            
-                            if _meal_col:
-                                val = str(row[_meal_col]).lower()
-                                if any(k in val for k in _bf_kw):
-                                    _proj_bf += qty * (bf_we_median if is_we else bf_wd_median)
-                                if any(k in val for k in _af_kw):
-                                    _proj_af += qty * (af_we_median if is_we else af_wd_median)
-                            else:
-                                _proj_bf += (qty * _bf_ratio) * (bf_we_median if is_we else bf_wd_median)
-                                _proj_af += (qty * _af_ratio) * (af_we_median if is_we else af_wd_median)
-                                
-                        if raw_future_bf > 0:
-                            _default_bf_rate = _proj_bf / raw_future_bf
-                        if raw_future_af > 0:
-                            _default_af_rate = _proj_af / raw_future_af
+                            snap_raw_all = pd.to_numeric(_snap_df[qty_col], errors='coerce').fillna(0).sum()
+                            snap_raw_bf = int(snap_raw_all * _bf_ratio)
+                            snap_raw_af = int(snap_raw_all * _af_ratio)
+                        snap_future_bf = int(snap_raw_bf * (bf_conv_rate / 100.0))
+                        snap_future_af = int(snap_raw_af * (af_conv_rate / 100.0))
 
-            # 3. UI 呈現：到客率與 CPG
-            col_w1, col_w2, col_w3 = st.columns([1, 1, 1.5])
-            with col_w1:
-                target_cpg = st.number_input("🎯 設定目標單客成本 (Target CPG)", value=150, step=5, min_value=1)
-            
-            with col_w2:
-                _rate_source_label = f"基準：{start_30d_str} 至 {end_1d_str} 實際到客率"
-                bf_conv_rate = st.slider(
-                    "⚙️ 早餐到客率折算 (%)",
-                    min_value=0, max_value=120,
-                    value=int(min(120, max(0, _default_bf_rate * 100))),
-                    step=1,
-                    help=f"{_rate_source_label}：早餐 {_default_bf_rate*100:.1f}%"
-                )
-                af_conv_rate = st.slider(
-                    "⚙️ 下午茶到客率折算 (%)",
-                    min_value=0, max_value=120,
-                    value=int(min(120, max(0, _default_af_rate * 100))),
-                    step=1,
-                    help=f"{_rate_source_label}：下午茶 {_default_af_rate*100:.1f}%"
-                )
-                st.caption(f"📊 數值預設以「選擇日期({selected_date.strftime('%Y-%m-%d')})前30天」歷史表現為基準")
-            
-            # 套用折算率（直覺公式：未來總預約人數 × 到客率）
-            adj_future_bf = int(raw_future_guests * (bf_conv_rate / 100.0))
-            adj_future_af = int(raw_future_guests * (af_conv_rate / 100.0))
-            future_guests = adj_future_bf + adj_future_af
-            
-            total_est_guests = hist_guests + future_guests
-            
-            # 本月估計總人次 (用於 K值系統)
-            est_bf_total = hist_bf + adj_future_bf
-            est_af_total = max(hist_af + adj_future_af, 1)
+                # 防呆降級保底：若無預約明細，從歷史 MTD 實際日均推算未來 7 天
+                _elapsed_d = max(1, len(past_df)) if 'past_df' in locals() else (max(1, len(df_fb_hist)) if 'df_fb_hist' in locals() and not df_fb_hist.empty else 1)
+                if snap_future_bf == 0 and 'hist_bf' in locals() and hist_bf > 0:
+                    snap_future_bf = int((hist_bf / _elapsed_d) * 7.0)
+                if snap_future_af == 0 and 'hist_af' in locals() and hist_af > 0:
+                    snap_future_af = int((hist_af / _elapsed_d) * 7.0)
 
-            total_budget = total_est_guests * target_cpg
-            remaining_budget = total_budget - peak_spent
-            remaining_cpg = remaining_budget / future_guests if future_guests > 0 else 0
+                snap_future_total = snap_future_bf + snap_future_af
             
-            st.session_state['_budget_est_guests'] = total_est_guests
-            st.session_state['_budget_total'] = total_budget
-            
-            # --- 修正：計算 Projected EOM CPG (改用 Current MTD CPG 或前月 CPG 推算) ---
-            # 如果本月尚未有客數 (例如月初)，則改採「前月實際 CPG」作為未來消耗率預測基準，而非理想的目標值。
-            fallback_cpg = target_cpg
-            fallback_source = f"目標目標消耗率 (NT${int(target_cpg)})"
-            try:
-                import dateutil.relativedelta
-                prev_d = selected_date - dateutil.relativedelta.relativedelta(months=1)
-                df_fb_hist_prev = get_combined_fb_daily_df(prev_d.year, prev_d.month, current_hotel)
-                prev_hist_guests = df_fb_hist_prev['peak_guests'].sum() if not df_fb_hist_prev.empty and 'peak_guests' in df_fb_hist_prev.columns else 0
-                prev_hist_bf = df_fb_hist_prev['bf_act'].sum() if not df_fb_hist_prev.empty and 'bf_act' in df_fb_hist_prev.columns else 0
-                prev_hist_af = df_fb_hist_prev['af_act'].sum() if not df_fb_hist_prev.empty and 'af_act' in df_fb_hist_prev.columns else 0
+                with snap_col1:
+                    st.markdown(f"**準備存檔的預測區間：** `{target_start}` 至 `{target_end}` (未來 7 天)")
+                    st.markdown(f"**預測人數：** 🍳 早 `{snap_future_bf}` 人 ｜ 🍰 午 `{snap_future_af}` 人 ｜ 總計 `{snap_future_total}` 人")
+                    st.markdown(f"**套用折算率：** 早餐 `{bf_conv_rate}%` ｜ 下午茶 `{af_conv_rate}%`")
                 
-                prev_peak_spent = 0
-                if 'df_prev_month' in locals() and not df_prev_month.empty:
-                    _df_pm = df_prev_month.copy()
-                    _df_pm['小計'] = pd.to_numeric(_df_pm[total_col], errors='coerce').fillna(0)
-                    _pm_depts = _df_pm.groupby(dept_col)['小計'].sum().reset_index()
-                    _all_pm_d = _pm_depts[dept_col].astype(str).tolist()
-                    _pm_hh = [d for d in _all_pm_d if '4' in d or any(k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                    _pm_peak = [d for d in _all_pm_d if any(k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in _pm_hh]
-                    prev_peak_spent = _pm_depts[_pm_depts[dept_col].isin(_pm_peak)]['小計'].sum()
-                
-                if prev_hist_guests > 0 and prev_peak_spent > 0:
-                    fallback_cpg = prev_peak_spent / prev_hist_guests
-                    fallback_source = f"前月實際消耗率 (NT${int(fallback_cpg)})"
-            except Exception:
-                pass
+                    if st.button("💾 儲存本週預測快照", use_container_width=True):
+                        new_snap = {
+                            'snapshot_date': today_date.strftime('%Y-%m-%d'),
+                            'target_date_start': target_start.strftime('%Y-%m-%d'),
+                            'target_date_end': target_end.strftime('%Y-%m-%d'),
+                            'bf_conv_rate': bf_conv_rate,
+                            'af_conv_rate': af_conv_rate,
+                            'future_bf': snap_future_bf,
+                            'future_af': snap_future_af,
+                            'future_total': snap_future_total
+                        }
+                        with st.spinner("正在將預測資料寫入 Google Sheets..."):
+                            if save_prediction_snapshot(new_snap):
+                                st.success(f"✅ 快照儲存成功！下週即可回頭檢視此區間的準確率。")
+                                st.rerun()
 
-            # (Projected CPG 計算已移至下方 k 值決定之後，以支援動態價量推算)
-                
-            # 渲染將延後至 k 值計算完成後
-            with col_w3:
-                st.markdown(f"**本月預估總客數**：`{int(total_est_guests):,}` 人")
-                st.caption(
-                    f"└ 歷史已發生 `{int(hist_guests):,}` 人 "
-                    f"（早餐 `{int(hist_bf):,}` / 下午茶 `{int(hist_af):,}`）"
-                )
-                st.caption(
-                    f"└ 未來預約 `{int(raw_future_guests):,}` 人 × 到客率 "
-                    f"→ 早餐預估 `{int(adj_future_bf):,}` ({bf_conv_rate}%) "
-                    f"/ 下午茶預估 `{int(adj_future_af):,}` ({af_conv_rate}%) "
-                    f"= 合計 `{int(future_guests):,}` 人"
-                )
-                st.markdown(f"**本月總預算額度**：`NT$ {int(total_budget):,}`")
-                st.markdown(f"**本月餐廳已花費**：`NT$ {int(peak_spent):,}`")
-            
-            st.markdown("#### 🚨 接下來採購戰略指標")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("剩餘可用預算", f"NT$ {int(remaining_budget):,}")
-            c2.metric("未來預約人數", f"{int(future_guests):,} 人")
-            
-            if remaining_cpg < 0:
-                c3.error(f"❌ 已經超支！無法計算剩餘 CPG")
-            elif remaining_cpg < target_cpg * 0.8:
-                c3.warning(f"⚠️ 剩餘 CPG: ${remaining_cpg:.1f} (預算吃緊，請調整高價食材比例)")
-            else:
-                c3.success(f"✅ 剩餘 CPG: ${remaining_cpg:.1f} (預算充裕，可正常採購)")
-
-            # ─────────────────────────────────────────────────
-            # 🔢 早餐 / 下午茶 CPG 拆分分析 (k 值系統)
-            # ─────────────────────────────────────────────────
-            st.divider()
-            st.markdown("#### 🍳 早餐 vs 🍰 下午茶 單客成本拆分分析")
-
-            # 說明早/午比例來源
-            _has_hist = hist_bf + hist_af > 0
-            _ratio_src = f"本月已發生數據 (早餐 {int(hist_bf):,} 人 / 下午茶 {int(hist_af):,} 人)" if _has_hist else "預設估算 (早餐 93% / 下午茶 7%)"
-            st.caption(f"📊 本月客數比例來源：{_ratio_src} → 估計早餐 `{est_bf_total:,}` 人 / 下午茶 `{est_af_total:,}` 人")
-
-            # 計算 k 值動態上限
-            CB_MIN = 80   # 早餐每人食材成本的絕對底線
-            B = est_bf_total
-            A = est_af_total
-            T = target_cpg
-            if A > 0 and CB_MIN > 0:
-                k_max_raw = ((B + A) * T - CB_MIN * B) / (CB_MIN * A)
-                k_max = max(1.0, round(k_max_raw, 1))
-            else:
-                k_max = 5.0
-
-            k_col1, k_col2 = st.columns([1, 2])
-            with k_col1:
-                k_val = st.slider(
-                    "⚖️ 下午茶相對成本係數 k",
-                    min_value=1.0,
-                    max_value=float(k_max),
-                    value=min(1.8, float(k_max)),
-                    step=0.1,
-                    help=f"k=1 代表早/午食材成本相同；k 越高代表下午茶比早餐每人貴越多倍。\n系統自動計算上限：當早餐 CPG 低於 NT${CB_MIN} 時視為不可接受，此時 k_max = {k_max:.1f}"
-                )
-
-            # --- 深度優化版方案 B：庫存感知與動態收斂模型 (Inventory-Aware Pacing Model) ---
-            cpg_actual = peak_spent / hist_guests if hist_guests > 0 else 0
-
-            # 1. 取得 Baseline CPG (歷史真實體質，若無則用 Target)
-            baseline_cpg = fallback_cpg if fallback_cpg > 0 else target_cpg
-
-            # 2. 判斷月份是否已過完或尚有未來客人（修復已過完月份強制溢價漏洞）
-            if future_guests <= 0:
-                # 全月已結算或無未來預約客數：預估落點 100% 自然收斂至歷史實際發生 CPG
-                remaining_purchases_needed = 0
-                projected_eom_cost = peak_spent
-                projected_cpg = cpg_actual
-                used_rate_source = "全月已結算 (真實累積 CPG)"
-            else:
-                # 月份進行中：未來採購需求嚴格依據未來預約客數與基線推算，避免過度修正或抹煞前期節流成效
-                remaining_purchases_needed = future_guests * baseline_cpg
-                projected_eom_cost = peak_spent + remaining_purchases_needed
-                projected_cpg = projected_eom_cost / total_est_guests if total_est_guests > 0 else 0
-                used_rate_source = f"動態預估 (未來維持基線 NT${int(baseline_cpg)} 推算)"
-
-            cpg_delta = projected_cpg - target_cpg
-
-            if projected_cpg > target_cpg * 1.05:
-                status_color = "#e74c3c" # Red
-                status_icon = "🚨 嚴重超支預警"
-            elif projected_cpg > target_cpg:
-                status_color = "#f39c12" # Orange
-                status_icon = "⚠️ 輕微超支預警"
-            else:
-                status_color = "#2ecc71" # Green
-                status_icon = "✅ 預算落點安全"
-
-            # 核心公式 (基於目標)
-            if B + k_val * A > 0:
-                cb = (B + A) * T / (B + k_val * A)
-                ca = k_val * cb
-            else:
-                cb = T
-                ca = T
-
-            _check = (B * cb + A * ca) / (B + A) if (B + A) > 0 else 0
-
-            # --- 新增：核心公式 (基於剩餘救援 Remaining CPG) ---
-            R = remaining_cpg
-            if B + k_val * A > 0:
-                rem_cb = (B + A) * R / (B + k_val * A)
-                rem_ca = k_val * rem_cb
-            else:
-                rem_cb = R
-                rem_ca = R
-
-            # 延後渲染的 Projected CPG 大面板（按 k 值拆解早午餐）
-            if B + k_val * A > 0:
-                proj_cb = (B + A) * projected_cpg / (B + k_val * A)
-                proj_ca = k_val * proj_cb
-            else:
-                proj_cb = projected_cpg
-                proj_ca = projected_cpg
-
-            hh_projected_cpg = hh_spent / hist_hh if hist_hh > 0 else 0
-
-            # 判斷副標題提示字樣
-            if future_guests <= 0:
-                subtitle_text = f"全月已結算 ｜ 累積採購 <b>NT${int(peak_spent):,}</b> ÷ 實際來客 <b>{int(hist_guests):,}</b> 人 ｜ 狀態：<b>已自然收斂</b>"
-            else:
-                subtitle_text = f"累積採購 <b>NT${int(peak_spent):,}</b> ｜ 截至目前實際 CPG：<b style='color:#5dade2;'>NT$ {cpg_actual:.1f}</b> ｜ 推估依據：{used_rate_source}"
-
-            projected_cpg_container.markdown(f"""
-            <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-                <div style="flex: 1;">
-                    <h3 style="margin:0; color:#ecf0f1; font-size:1.3rem;">🔮 本月預估落點單客成本 (Projected EOM CPG)</h3>
-                    <div style="font-size:0.9rem; color:#bdc3c7; margin-top:8px;">{subtitle_text}</div>
-                    <div style="display:flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
-                        <div style="background: rgba(52, 152, 219, 0.18); border: 1px solid rgba(52, 152, 219, 0.4); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">📊 截至目前實際 CPG</span><br>
-                            <span style="font-size:1.2rem; font-weight:bold; color:#5dade2;">NT$ {cpg_actual:.1f}</span>
-                        </div>
-                        <div style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">🍳 預估早餐落點</span><br>
-                            <span style="font-size:1.2rem; font-weight:bold; color:#2ecc71;">NT$ {proj_cb:.1f}</span>
-                        </div>
-                        <div style="background: rgba(243, 156, 18, 0.15); border: 1px solid rgba(243, 156, 18, 0.3); padding: 8px 15px; border-radius: 8px;">
-                            <span style="font-size:0.8rem; color:#ecf0f1;">🍰 預估下午茶落點</span><br>
-                            <span style="font-size:1.2rem; font-weight:bold; color:#f39c12;">NT$ {proj_ca:.1f}</span>
-                        </div>
-                    </div>
-                </div>
-                <div style="text-align: right; padding-left: 20px;">
-                    <h1 style="margin:0; color:{status_color}; font-size:3.2rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {projected_cpg:.1f}</h1>
-                    <div style="color:{status_color}; font-size:1.1rem; font-weight:bold; margin-top:5px;">{status_icon} (與目標差距: {cpg_delta:+.1f})</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # --- 獨立顯示 HH 預估落點 ---
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #2c1a40 0%, #4a2b66 100%); padding: 15px 25px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin-top: 15px;">
-                <div style="flex: 1;">
-                    <h3 style="margin:0; color:#ecf0f1; font-size:1.1rem;">🥂 Happy Hour 預估落點單客成本</h3>
-                    <div style="font-size:0.85rem; color:#bdc3c7; margin-top:5px;">基於目前累積 HH 花費 <b>NT${int(hh_spent):,}</b> 與 MTD 累積客數推算，與 The Peak 完全獨立計算。</div>
-                </div>
-                <div style="text-align: right; padding-left: 20px;">
-                    <h1 style="margin:0; color:#d2b4de; font-size:2.4rem; font-weight:900; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">NT$ {hh_projected_cpg:.1f}</h1>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            with k_col2:
-                cb_color = "#27ae60" if cb >= 100 else ("#f39c12" if cb >= CB_MIN else "#e74c3c")
-                ca_color = "#27ae60" if ca <= 250 else ("#f39c12" if ca <= 350 else "#e74c3c")
-                st.markdown(f"""
-                <div style="display:flex; gap:12px; margin-top:8px;">
-                    <div style="flex:1; background:#1e2d40; border-left:5px solid {cb_color}; border-radius:10px; padding:16px; text-align:center; position:relative;">
-                        <div style="color:#aaa; font-size:0.8rem;">🍳 目標理想分配 (理想上限)</div>
-                        <div style="color:{cb_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {cb:.0f}</div>
-                        <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_bf_total:,} 人次</div>
-                    </div>
-                    <div style="flex:1; background:#1e2d40; border-left:5px solid {ca_color}; border-radius:10px; padding:16px; text-align:center;">
-                        <div style="color:#aaa; font-size:0.8rem;">🍰 目標理想分配 (理想上限)</div>
-                        <div style="color:{ca_color}; font-size:1.8rem; font-weight:800; margin:6px 0;">NT$ {ca:.0f}</div>
-                        <div style="color:#aaa; font-size:0.75rem;">總均攤預估 {est_af_total:,} 人次</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # --- 新增：真實剩餘救援指標 ---
-                if rem_cb < 0:
-                    rescue_msg = f"<div style='color:#e74c3c; margin-top:10px; font-weight:bold;'>🚨 預算已經透支！無法提供未來剩餘上限。</div>"
-                else:
-                    rescue_msg = f"""
-                    <div style="background: rgba(231, 76, 60, 0.1); border: 1px solid #e74c3c; border-radius: 8px; padding: 12px; margin-top: 10px;">
-                        <div style="color:#e74c3c; font-size:0.85rem; font-weight:bold; margin-bottom:5px;">⚠️ 真實採購防線 (扣除已花費後的嚴格上限)</div>
-                        <div style="display:flex; justify-content:space-between; color:#ecf0f1; font-size:0.9rem;">
-                            <span>🍳 早餐剩餘嚴格上限：<b>NT$ {rem_cb:.0f}</b> /人</span>
-                            <span>🍰 下午茶剩餘嚴格上限：<b>NT$ {rem_ca:.0f}</b> /人</span>
-                        </div>
-                    </div>
-                    """
-                st.markdown(rescue_msg, unsafe_allow_html=True)
-
-            # k 值動態說明文字
-            st.markdown("")
-            if k_val >= k_max * 0.95:
-                st.error(f"🚫 **k 值已達上限 ({k_val:.1f} / 上限 {k_max:.1f})**\n\n早餐每人成本已壓至 NT${cb:.0f}（接近最低底線 ${CB_MIN}）。繼續調高 k 將導致早餐食材嚴重縮水，影響餐點品質與住客滿意度。建議立即調低 k 值。")
-            elif k_val > 2.5:
-                st.warning(f"⚠️ **k 值偏高 ({k_val:.1f})**\n\n目前下午茶每人食材預算達 NT${ca:.0f}，早餐僅剩 NT${cb:.0f}。\n- **再往高調的風險**：早餐供應品質下滑，住客投訴風險提升。\n- **往低調的效果**：早餐食材預算提升至 NT${((B+A)*T/(B+(k_val-0.3)*A)):.0f}，下午茶縮至 NT${((k_val-0.3)*(B+A)*T/(B+(k_val-0.3)*A)):.0f}。\n→ 建議範圍：k = 1.5 ～ 2.2")
-            elif k_val < 1.2:
-                st.info(f"ℹ️ **k 值偏低 ({k_val:.1f})**\n\n早餐與下午茶每人食材成本幾乎相同（NT${cb:.0f} vs NT${ca:.0f}）。\n- **再往低調的風險**：下午茶預算不足，甜點備料品質難以維持。\n- **往高調的效果**：下午茶預算提升至 NT${((k_val+0.3)*(B+A)*T/(B+(k_val+0.3)*A)):.0f}，更真實反映備料成本。\n→ 建議至少設 k = 1.5")
-            else:
-                st.success(f"✅ **k 值合理 ({k_val:.1f})** ─ 早餐 NT${cb:.0f} / 下午茶 NT${ca:.0f}\n\n目前分配符合業界常規，加權總 CPG = NT${_check:.0f}（等於目標 ${int(T)}）。\n- 若往上調 k 至 {k_val+0.2:.1f} → 下午茶提升至 NT${((k_val+0.2)*(B+A)*T/(B+(k_val+0.2)*A)):.0f}，早餐降至 NT${((B+A)*T/(B+(k_val+0.2)*A)):.0f}\n- 若往下調 k 至 {k_val-0.2:.1f} → 早餐提升至 NT${((B+A)*T/(B+(k_val-0.2)*A)):.0f}，下午茶降至 NT${((k_val-0.2)*(B+A)*T/(B+(k_val-0.2)*A)):.0f}")
-
-            # 月份早/午預算總額概覽
-            bf_budget_total = cb * est_bf_total
-            af_budget_total = ca * est_af_total
-            st.markdown(f"""
-            <div style="background:linear-gradient(135deg,#1a1a2e,#16213e); border-radius:12px; padding:16px; margin-top:12px; display:flex; justify-content:space-around; text-align:center;">
-                <div><div style="color:#aaa;font-size:0.8rem;">🍳 本月早餐食材總預算</div><div style="color:#2ecc71;font-size:1.4rem;font-weight:700;">NT$ {int(bf_budget_total):,}</div></div>
-                <div style="color:#555;font-size:2rem; align-self:center;">+</div>
-                <div><div style="color:#aaa;font-size:0.8rem;">🍰 本月下午茶食材總預算</div><div style="color:#e67e22;font-size:1.4rem;font-weight:700;">NT$ {int(af_budget_total):,}</div></div>
-                <div style="color:#555;font-size:2rem; align-self:center;">=</div>
-                <div><div style="color:#aaa;font-size:0.8rem;">🎯 本月總預算上限</div><div style="color:#3498db;font-size:1.4rem;font-weight:700;">NT$ {int(total_budget):,}</div></div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # ==========================================
-            # 🎯 預測準確度回顧與快照系統
-            # ==========================================
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.divider()
-            st.subheader("📊 預測準確度回顧與快照 (Prediction Accuracy)")
-            st.info("💡 此區塊讓您每週手動儲存「未來 7 天」的客數預測快照，並能在下週檢視預測準確度。")
-            
-            # --- 1. 儲存快照區塊 ---
-            snap_col1, snap_col2 = st.columns([1, 1])
-            
-            import datetime
-            today_date = datetime.date.today()
-            target_start = today_date + datetime.timedelta(days=1)
-            target_end = today_date + datetime.timedelta(days=7)
-            
-            # 精準計算未來 7 天的預估人數 (包含早/午分流與備用降級機制)
-            snap_future_bf = 0
-            snap_future_af = 0
-            if 'df_fb_fut' in locals() and not df_fb_fut.empty and 'date_obj' in df_fb_fut.columns:
-                snap_mask = (df_fb_fut['date_obj'] >= target_start) & (df_fb_fut['date_obj'] <= target_end)
-                _snap_df = df_fb_fut[snap_mask]
-                qty_col = next((c for c in _snap_df.columns if any(k in c for k in ['數量', '人數', '預估', 'qty', 'guests'])), None)
-                _meal_col = next((c for c in _snap_df.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
-                
-                if qty_col:
-                    _bf_kw = ['早', 'breakfast', 'bf']
-                    _af_kw = ['下午', 'afternoon', 'tea', 'af']
-                    if _meal_col:
-                        _bf_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_bf_kw), na=False)
-                        _af_m = _snap_df[_meal_col].astype(str).str.lower().str.contains('|'.join(_af_kw), na=False)
-                        snap_raw_bf = pd.to_numeric(_snap_df.loc[_bf_m, qty_col], errors='coerce').fillna(0).sum()
-                        snap_raw_af = pd.to_numeric(_snap_df.loc[_af_m, qty_col], errors='coerce').fillna(0).sum()
+                # --- 2. 回顧過往準確度 ---
+                with snap_col2:
+                    df_snapshots = get_prediction_snapshots()
+                    if df_snapshots.empty:
+                        st.warning("目前尚無任何預測快照記錄。請先儲存快照，一週後即可在此檢視準確率。")
                     else:
-                        snap_raw_all = pd.to_numeric(_snap_df[qty_col], errors='coerce').fillna(0).sum()
-                        snap_raw_bf = int(snap_raw_all * _bf_ratio)
-                        snap_raw_af = int(snap_raw_all * _af_ratio)
-                    snap_future_bf = int(snap_raw_bf * (bf_conv_rate / 100.0))
-                    snap_future_af = int(snap_raw_af * (af_conv_rate / 100.0))
-
-            # 防呆降級保底：若無預約明細，從歷史 MTD 均值推算未來 7 天
-            if snap_future_bf == 0 and 'hist_bf' in locals() and hist_bf > 0:
-                snap_future_bf = int((hist_bf / 30.0) * 7.0 * (bf_conv_rate / 100.0))
-            if snap_future_af == 0 and 'hist_af' in locals() and hist_af > 0:
-                snap_future_af = int((hist_af / 30.0) * 7.0 * (af_conv_rate / 100.0))
-
-            snap_future_total = snap_future_bf + snap_future_af
-            
-            with snap_col1:
-                st.markdown(f"**準備存檔的預測區間：** `{target_start}` 至 `{target_end}` (未來 7 天)")
-                st.markdown(f"**預測人數：** 🍳 早 `{snap_future_bf}` 人 ｜ 🍰 午 `{snap_future_af}` 人 ｜ 總計 `{snap_future_total}` 人")
-                st.markdown(f"**套用折算率：** 早餐 `{bf_conv_rate}%` ｜ 下午茶 `{af_conv_rate}%`")
-                
-                if st.button("💾 儲存本週預測快照", use_container_width=True):
-                    new_snap = {
-                        'snapshot_date': today_date.strftime('%Y-%m-%d'),
-                        'target_date_start': target_start.strftime('%Y-%m-%d'),
-                        'target_date_end': target_end.strftime('%Y-%m-%d'),
-                        'bf_conv_rate': bf_conv_rate,
-                        'af_conv_rate': af_conv_rate,
-                        'future_bf': snap_future_bf,
-                        'future_af': snap_future_af,
-                        'future_total': snap_future_total
-                    }
-                    with st.spinner("正在將預測資料寫入 Google Sheets..."):
-                        if save_prediction_snapshot(new_snap):
-                            st.success(f"✅ 快照儲存成功！下週即可回頭檢視此區間的準確率。")
-                            st.rerun()
-
-            # --- 2. 回顧過往準確度 ---
-            with snap_col2:
-                df_snapshots = get_prediction_snapshots()
-                if df_snapshots.empty:
-                    st.warning("目前尚無任何預測快照記錄。請先儲存快照，一週後即可在此檢視準確率。")
-                else:
-                    st.markdown("**🔍 歷史預測準確度覆盤**")
-                    # 數值型態清理
-                    df_snapshots['target_date_end_dt'] = pd.to_datetime(df_snapshots['target_date_end'], errors='coerce').dt.date
-                    df_snapshots['future_total_num'] = pd.to_numeric(df_snapshots['future_total'], errors='coerce').fillna(0).astype(int)
+                        st.markdown("**🔍 歷史預測準確度覆盤**")
+                        # 數值型態清理
+                        df_snapshots['target_date_end_dt'] = pd.to_datetime(df_snapshots['target_date_end'], errors='coerce').dt.date
+                        df_snapshots['future_total_num'] = pd.to_numeric(df_snapshots['future_total'], errors='coerce').fillna(0).astype(int)
                     
-                    # 篩選已過期的快照
-                    df_past_snaps = df_snapshots[df_snapshots['target_date_end_dt'] < today_date].copy()
+                        # 篩選已過期的快照
+                        df_past_snaps = df_snapshots[df_snapshots['target_date_end_dt'] < today_date].copy()
                     
-                    if df_past_snaps.empty:
-                        st.info("快照區間尚未結束，等設定的「未來 7 天」過完後，即可進行對比。")
-                        st.dataframe(df_snapshots[['snapshot_date', 'target_date_start', 'target_date_end', 'future_total']].tail(3), hide_index=True)
-                    else:
-                        # 🔒 過濾掉過往因 Bug 記錄成 0 人次的異常快照
-                        df_valid_past = df_past_snaps[df_past_snaps['future_total_num'] > 0]
+                        if df_past_snaps.empty:
+                            st.info("快照區間尚未結束，等設定的「未來 7 天」過完後，即可進行對比。")
+                            st.dataframe(df_snapshots[['snapshot_date', 'target_date_start', 'target_date_end', 'future_total']].tail(3), hide_index=True)
+                        else:
+                            # 🔒 過濾掉過往因 Bug 記錄成 0 人次的異常快照
+                            df_valid_past = df_past_snaps[df_past_snaps['future_total_num'] > 0]
                         
-                        if df_valid_past.empty:
-                            latest_bad = df_past_snaps.sort_values('target_date_end_dt', ascending=False).iloc[0]
-                            st.warning(
-                                f"⚠️ 找到區間 `{latest_bad['target_date_start']}` 至 `{latest_bad['target_date_end']}` 之歷史快照，"
-                                f"但當時紀錄之預測人數為 `0` 人次（原舊版本讀取欄位缺陷，現已修正）。\n\n"
-                                f"👉 請點選左側 **「💾 儲存本週預測快照」** 按鈕重新建立有效快照！"
-                            )
-                        else:
-                            # 取最新一筆有效之過期快照
-                            latest_snap = df_valid_past.sort_values('target_date_end_dt', ascending=False).iloc[0]
-                            p_start = latest_snap['target_date_start']
-                            p_end = latest_snap['target_date_end']
-                            p_total = int(latest_snap['future_total_num'])
+                            if df_valid_past.empty:
+                                latest_bad = df_past_snaps.sort_values('target_date_end_dt', ascending=False).iloc[0]
+                                st.warning(
+                                    f"⚠️ 找到區間 `{latest_bad['target_date_start']}` 至 `{latest_bad['target_date_end']}` 之歷史快照，"
+                                    f"但當時紀錄之預測人數為 `0` 人次（原舊版本讀取欄位缺陷，現已修正）。\n\n"
+                                    f"👉 請點選左側 **「💾 儲存本週預測快照」** 按鈕重新建立有效快照！"
+                                )
+                            else:
+                                # 取最新一筆有效之過期快照
+                                latest_snap = df_valid_past.sort_values('target_date_end_dt', ascending=False).iloc[0]
+                                p_start = latest_snap['target_date_start']
+                                p_end = latest_snap['target_date_end']
+                                p_total = int(latest_snap['future_total_num'])
                             
-                            # 從歷史 FB 報表抓取實際到客數（恢復雙館加總，因 The Peak/餐車為雙館共用且快照為總客流預測）
-                            actual_fb = compute_fb_mtd(str(p_start), str(p_end))
-                            a_total = actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)
+                                # 從歷史 FB 報表抓取實際到客數（恢復雙館加總，因 The Peak/餐車為雙館共用且快照為總客流預測）
+                                actual_fb = compute_fb_mtd(str(p_start), str(p_end))
+                                a_total = actual_fb.get('total_act_bf', 0) + actual_fb.get('total_act_af', 0)
                             
-                            diff = a_total - p_total
-                            accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
+                                diff = a_total - p_total
+                                accuracy = (min(a_total, p_total) / max(a_total, p_total) * 100) if max(a_total, p_total) > 0 else 100
                             
-                            st.markdown(f"📅 **覆盤區間：** `{p_start}` 至 `{p_end}`")
-                            st.markdown(f"🎯 **當時預測：** `{p_total}` 人次")
-                            st.markdown(f"🏆 **最終實際：** `{a_total}` 人次")
+                                st.markdown(f"📅 **覆盤區間：** `{p_start}` 至 `{p_end}`")
+                                st.markdown(f"🎯 **當時預測：** `{p_total}` 人次")
+                                st.markdown(f"🏆 **最終實際：** `{a_total}` 人次")
                             
-                            acc_color = "#2ecc71" if accuracy >= 90 else ("#f39c12" if accuracy >= 75 else "#e74c3c")
-                            diff_text = f"+{diff}" if diff > 0 else str(diff)
-                            st.markdown(f"📊 **準確率：** <span style='color:{acc_color}; font-size:1.2rem; font-weight:bold;'>{accuracy:.1f}%</span> (誤差: {diff_text} 人)", unsafe_allow_html=True)
+                                acc_color = "#2ecc71" if accuracy >= 90 else ("#f39c12" if accuracy >= 75 else "#e74c3c")
+                                diff_text = f"+{diff}" if diff > 0 else str(diff)
+                                st.markdown(f"📊 **準確率：** <span style='color:{acc_color}; font-size:1.2rem; font-weight:bold;'>{accuracy:.1f}%</span> (誤差: {diff_text} 人)", unsafe_allow_html=True)
                             
-                            if diff > 0:
-                                st.caption("💡 提示：實際人數大於預測，若誤差過大可能導致食材備料不足，建議微調到客率滑桿。")
-                            elif diff < 0:
-                                st.caption("💡 提示：實際人數少於預測，若誤差過大可能導致食材報廢浪費，建議下調到客率。")
+                                if diff > 0:
+                                    st.caption("💡 提示：實際人數大於預測，若誤差過大可能導致食材備料不足，建議微調到客率滑桿。")
+                                elif diff < 0:
+                                    st.caption("💡 提示：實際人數少於預測，若誤差過大可能導致食材報廢浪費，建議下調到客率。")
 
 
-            st.divider()
+                st.divider()
 
 
-            if not df_month.empty:
-                # 數值清理
-                df_month['小計'] = pd.to_numeric(
-                    df_month[total_col], errors='coerce').fillna(0)
-                if not df_prev_month.empty:
-                    df_prev_month['小計'] = pd.to_numeric(
-                        df_prev_month[total_col], errors='coerce').fillna(0)
+                if not df_month.empty:
+                    # 數值清理
+                    df_month['小計'] = pd.to_numeric(
+                        df_month[total_col], errors='coerce').fillna(0)
+                    if not df_prev_month.empty:
+                        df_prev_month['小計'] = pd.to_numeric(
+                            df_prev_month[total_col], errors='coerce').fillna(0)
 
-                total_month_expense = df_month['小計'].sum()
-                total_prev_expense = df_prev_month['小計'].sum(
-                ) if not df_prev_month.empty else 0
+                    total_month_expense = df_month['小計'].sum()
+                    total_prev_expense = df_prev_month['小計'].sum(
+                    ) if not df_prev_month.empty else 0
 
-                # 計算增長率
-                mom_delta = total_month_expense - total_prev_expense
-                mom_pcnt = (mom_delta / total_prev_expense *
-                            100) if total_prev_expense > 0 else 0
+                    # 計算增長率
+                    mom_delta = total_month_expense - total_prev_expense
+                    mom_pcnt = (mom_delta / total_prev_expense *
+                                100) if total_prev_expense > 0 else 0
 
-                # 1. 本月總開銷與 MoM
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                    <p style="margin: 0; font-size: 1.1rem; opacity: 0.8;">📅 {current_month_str} 本月總開銷金額</p>
-                    <h1 style="margin: 10px 0 0 0; font-size: 3rem; font-weight: 800; letter-spacing: 1px;">NT$ {int(total_month_expense):,}</h1>
-                </div>
-                """, unsafe_allow_html=True)
+                    # 1. 本月總開銷與 MoM
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #1f2c56 0%, #2e437c 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                        <p style="margin: 0; font-size: 1.1rem; opacity: 0.8;">📅 {current_month_str} 本月總開銷金額</p>
+                        <h1 style="margin: 10px 0 0 0; font-size: 3rem; font-weight: 800; letter-spacing: 1px;">NT$ {int(total_month_expense):,}</h1>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                # 顯示 MoM 指標
-                col_m1, col_m2, col_m3 = st.columns(3)
-                with col_m1:
-                    st.metric("上月同期總額", f"NT$ {int(total_prev_expense):,}")
-                with col_m2:
-                    st.metric("月增長金額 (MoM)", f"NT$ {int(mom_delta):,}", delta=int(
-                        mom_delta), delta_color="inverse")
-                with col_m3:
-                    st.metric(
-                        "月增長百分比", f"{mom_pcnt:.1f}%", delta=f"{mom_pcnt:.1f}%", delta_color="inverse")
+                    # 顯示 MoM 指標
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    with col_m1:
+                        st.metric("上月同期總額", f"NT$ {int(total_prev_expense):,}")
+                    with col_m2:
+                        st.metric("月增長金額 (MoM)", f"NT$ {int(mom_delta):,}", delta=int(
+                            mom_delta), delta_color="inverse")
+                    with col_m3:
+                        st.metric(
+                            "月增長百分比", f"{mom_pcnt:.1f}%", delta=f"{mom_pcnt:.1f}%", delta_color="inverse")
 
 
-                # --- 異常值監控：找出增長過快的部門 ---
-                st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
-                # 計算各部門本月 vs 上月
-                curr_depts = df_month.groupby(
-                    dept_col)['小計'].sum().reset_index()
-                curr_depts.columns = ['部門', '小計']
-
-                if not df_prev_month.empty:
-                    prev_depts = df_prev_month.groupby(
+                    # --- 異常值監控：找出增長過快的部門 ---
+                    st.subheader("⚠️ 採購異常監控 (MoM Spikes)")
+                    # 計算各部門本月 vs 上月
+                    curr_depts = df_month.groupby(
                         dept_col)['小計'].sum().reset_index()
-                    prev_depts.columns = ['部門', '小計']
-                else:
-                    prev_depts = pd.DataFrame(columns=['部門', '小計'])
+                    curr_depts.columns = ['部門', '小計']
 
-                comparison = pd.merge(
-                    curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
+                    if not df_prev_month.empty:
+                        prev_depts = df_prev_month.groupby(
+                            dept_col)['小計'].sum().reset_index()
+                        prev_depts.columns = ['部門', '小計']
+                    else:
+                        prev_depts = pd.DataFrame(columns=['部門', '小計'])
 
-                # 安全計算變動率 (避免 ZeroDivisionError 與 Indexing 類型報錯)
-                def calc_mom_ratio(row):
-                    if row['小計_昨'] > 0:
-                        return (row['小計_今'] - row['小計_昨']) / row['小計_昨'] * 100
-                    return 100.0 if row['小計_今'] > 0 else 0.0
+                    comparison = pd.merge(
+                        curr_depts, prev_depts, on='部門', how='left', suffixes=('_今', '_昨')).fillna(0)
 
-                comparison['變動率'] = comparison.apply(calc_mom_ratio, axis=1)
+                    # 安全計算變動率 (避免 ZeroDivisionError 與 Indexing 類型報錯)
+                    def calc_mom_ratio(row):
+                        if row['小計_昨'] > 0:
+                            return (row['小計_今'] - row['小計_昨']) / row['小計_昨'] * 100
+                        return 100.0 if row['小計_今'] > 0 else 0.0
 
-                # 找出變動率大於 20% 且金額大於一定門檻的 (例如 > 2000)
-                spikes = comparison[(comparison['變動率'] > 20) & (
-                    comparison['小計_今'] > 2000)].sort_values('變動率', ascending=False)
+                    comparison['變動率'] = comparison.apply(calc_mom_ratio, axis=1)
 
-                if not spikes.empty:
-                    for _, row in spikes.iterrows():
-                        st.warning(
-                            f"🚩 **{row['部門']}** 本月開銷異常！較上月增長 **{row['變動率']:.1f}%** (NT$ {int(row['小計_今']):,})")
-                else:
-                    st.success("✅ 目前各部門採購金額平穩，未偵測到異常大幅波動。")
+                    # 找出變動率大於 20% 且金額大於一定門檻的 (例如 > 2000)
+                    spikes = comparison[(comparison['變動率'] > 20) & (
+                        comparison['小計_今'] > 2000)].sort_values('變動率', ascending=False)
 
-                st.divider()
+                    if not spikes.empty:
+                        for _, row in spikes.iterrows():
+                            st.warning(
+                                f"🚩 **{row['部門']}** 本月開銷異常！較上月增長 **{row['變動率']:.1f}%** (NT$ {int(row['小計_今']):,})")
+                    else:
+                        st.success("✅ 目前各部門採購金額平穩，未偵測到異常大幅波動。")
 
-                # 2. 部門佔比圓餅圖
-                st.subheader("📊 各部門請購佔比分析")
-                dept_summary = df_month.groupby(
-                    dept_col)['小計'].sum().reset_index()
-                dept_summary.columns = ['部門', '小計']
+                    st.divider()
 
-                # 繪製圓餅圖 (依照金額排序)
-                base = alt.Chart(dept_summary).encode(
-                    theta=alt.Theta(
-                        field="小計", type="quantitative", stack=True),
-                    color=alt.Color(
-                        field="部門",
-                        type="nominal",
-                        scale=alt.Scale(scheme='category10'),
-                        legend=alt.Legend(title="部門", orient="right"),
-                        sort=alt.SortField("小計", order="descending")
-                    ),
-                    order=alt.Order("小計", sort="descending"),
-                    tooltip=["部門", alt.Tooltip(
-                        "小計", format=",.0f", title="總金額 (NT$)")]
-                ).properties(height=450)
+                    # 2. 部門佔比圓餅圖
+                    st.subheader("📊 各部門請購佔比分析")
+                    dept_summary = df_month.groupby(
+                        dept_col)['小計'].sum().reset_index()
+                    dept_summary.columns = ['部門', '小計']
 
-                # 圓餅主體
-                chart_arc = base.mark_arc(
-                    innerRadius=60, outerRadius=120, stroke="#fff")
+                    # 繪製圓餅圖 (依照金額排序)
+                    base = alt.Chart(dept_summary).encode(
+                        theta=alt.Theta(
+                            field="小計", type="quantitative", stack=True),
+                        color=alt.Color(
+                            field="部門",
+                            type="nominal",
+                            scale=alt.Scale(scheme='category10'),
+                            legend=alt.Legend(title="部門", orient="right"),
+                            sort=alt.SortField("小計", order="descending")
+                        ),
+                        order=alt.Order("小計", sort="descending"),
+                        tooltip=["部門", alt.Tooltip(
+                            "小計", format=",.0f", title="總金額 (NT$)")]
+                    ).properties(height=450)
 
-                # 在圓餅切片上顯示金額
-                chart_text = base.mark_text(radius=90, size=14, fontWeight="bold", color="white").encode(
-                    text=alt.Text("小計:Q", format=",.0f")
-                )
+                    # 圓餅主體
+                    chart_arc = base.mark_arc(
+                        innerRadius=60, outerRadius=120, stroke="#fff")
 
-                st.altair_chart(chart_arc + chart_text,
-                                use_container_width=True)
-
-                # --- 新增：餐飲績效分析 (The Peak & Happy Hour) ---
-                st.divider()
-                st.subheader("🍽️ 餐飲績效與成本深度分析 (Cash-basis)")
-
-                # 獲取當月每日數據 (含餐廳來客數)
-                m_data = fetch_month_summary(
-                    selected_date.year, selected_date.month)
-                df_daily_rest = m_data['df']
-
-                # 【關鍵修正】occ_data 沒有 F&B 欄位，直接從 f&b_report 注入每日來客數
-                df_fb_daily = get_combined_fb_daily_df(
-                    selected_date.year, selected_date.month, current_hotel)
-                if not df_fb_daily.empty and not df_daily_rest.empty:
-                    df_daily_rest = df_daily_rest.merge(df_fb_daily, on='date', how='left')
-                    df_daily_rest['bf_act']      = df_daily_rest['bf_act'].fillna(0)
-                    df_daily_rest['af_act']      = df_daily_rest['af_act'].fillna(0)
-                    df_daily_rest['hh_act']      = df_daily_rest['hh_act'].fillna(0)
-                    df_daily_rest['peak_guests'] = df_daily_rest['peak_guests'].fillna(0)
-                elif not df_fb_daily.empty:
-                    # df_daily_rest 是空的，用 fb_daily 代替
-                    df_daily_rest = df_fb_daily.copy()
-
-                if not df_daily_rest.empty:
-                    # 確保必要欄位存在並轉為數值
-                    target_cols = ['peak_guests', 'hh_act', 'revenue', 'bf_act', 'af_act']
-                    for c in target_cols:
-                        if c in df_daily_rest.columns:
-                            df_daily_rest[c] = pd.to_numeric(df_daily_rest[c].astype(
-                                str).str.replace(',', ''), errors='coerce').fillna(0)
-                        else:
-                            df_daily_rest[c] = 0
-
-                    # 使用真實 F&B 來客數 (直接用 peak_guests 和 hh_act)
-                    df_daily_rest['rest_day_guests'] = df_daily_rest['peak_guests']
-                    df_daily_rest['rest_hh_guests']  = df_daily_rest['hh_act']
-                    df_daily_rest['bf_total_act']    = df_daily_rest['bf_act']
-                    df_daily_rest['af_total_act']    = df_daily_rest['af_act']
-
-
-                    # --- 自動化邏輯：如果 The Peak 來客數為 0，則自動加總 早餐 + 下午茶 ---
-                    def calculate_peak_guests(row):
-                        if row['rest_day_guests'] > 0:
-                            return row['rest_day_guests']
-                        return row['bf_total_act'] + row['af_total_act']
-
-                    df_daily_rest['effective_peak_guests'] = df_daily_rest.apply(
-                        calculate_peak_guests, axis=1)
-
-                    # 篩選 The Peak 與 Happy Hour 採購 (強力模糊匹配)
-                    # 直接從 df_month 的部門欄抓取所有部門，保證 Daily Report 附加進來的 Happy Hour / The Peak 都被偵測到
-                    all_depts_list = df_month[dept_col].dropna().astype(str).unique().tolist()
-
-                    # HH 匹配：包含 'HH'、'HAPPY'、'歡樂時光'、'4F'、'交誼廳'，或直接等於 'Happy Hour'
-                    hh_matched = [d for d in all_depts_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳'])]
-                    # 確保 'Happy Hour'（Daily Report 附加的部門名）一定被包含
-                    if 'Happy Hour' not in hh_matched and 'Happy Hour' in all_depts_list:
-                        hh_matched.append('Happy Hour')
-
-                    # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門；或直接等於 'The Peak'
-                    peak_matched = [d for d in all_depts_list if (any(k in d.upper(
-                    ) for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and (d not in hh_matched)]
-                    # 確保 'The Peak'（Daily Report 附加的部門名）一定被包含
-                    if 'The Peak' not in peak_matched and 'The Peak' in all_depts_list:
-                        peak_matched.append('The Peak')
-
-                    with st.expander("🛠️ 數據匹配校準器 (若數據不正確請點開)"):
-                        st.info(f"📍 偵測到之所有部門: `{all_depts_list}`")
-                        st.success(
-                            f"🍷 歸類為 Happy Hour (HH) 之部門: `{hh_matched}`")
-                        st.success(
-                            f"🏰 歸類為 The Peak (餐廳) 之部門: `{peak_matched}`")
-
-                        st.divider()
-                        st.markdown("**🔍 本月採購原始明細 (DEBUG)**")
-                        _debug_cols = [c for c in [date_col, dept_col, total_col] + [
-                            c for c in df_month.columns if '品名' in c or 'Item' in c or '項目' in c
-                        ] if c in df_month.columns]
-                        st.caption(f"The Peak 原始列 (共 {len(df_month[df_month[dept_col].isin(peak_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(peak_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
-                        st.dataframe(df_month[df_month[dept_col].isin(peak_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
-                        st.caption(f"Happy Hour 原始列 (共 {len(df_month[df_month[dept_col].isin(hh_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(hh_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
-                        st.dataframe(df_month[df_month[dept_col].isin(hh_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
-                        st.caption(f"⚠️ 當月所有採購列共 {len(df_month)} 筆 | 整個 purchase data 表共 {len(df_purchase)} 筆")
-
-                    df_peak_purchase = df_month[df_month[dept_col].isin(
-                        peak_matched)].copy()
-                    df_hh_purchase = df_month[df_month[dept_col].isin(
-                        hh_matched)].copy()
-
-                    # --- 進階匹配：若部門抓不到 HH，嘗試從品名抓取 ---
-                    if df_hh_purchase.empty:
-                        item_col = next((c for c in df_month.columns if any(
-                            k in c for k in ['品名', '項目', 'Item'])), None)
-                        if item_col:
-                            df_hh_purchase = df_month[df_month[item_col].astype(
-                                str).str.upper().str.contains('HH|HAPPY|歡樂時光', na=False)].copy()
-
-                    # 計算每日採購總額（改用『以週為單位均攤』修正採購日 vs 消耗日失真）
-                    df_daily_rest['日期_obj'] = pd.to_datetime(
-                        df_daily_rest['date'], errors='coerce').dt.date
-                    df_daily_rest['日期_dt'] = pd.to_datetime(
-                        df_daily_rest['date'], errors='coerce')
-
-                    def spread_monthly_cost(df_purchase_input, df_daily_base, guest_col='effective_peak_guests'):
-                        """將全月總費用平分到當月有來客的每一天 (保存規模經濟差異)"""
-                        if df_purchase_input.empty or df_daily_base.empty:
-                            return pd.Series(0, index=df_daily_base['日期_obj'])
-                        
-                        df_purchase_local = df_purchase_input.copy()
-                        df_purchase_local[total_col] = pd.to_numeric(df_purchase_local[total_col], errors='coerce').fillna(0)
-                        total_month_cost = df_purchase_local[total_col].sum()
-                        
-                        df_base = df_daily_base.copy()
-                        
-                        if guest_col in df_base.columns:
-                            has_guests = df_base[guest_col] > 0
-                        else:
-                            has_guests = pd.Series(False, index=df_base.index)
-                            
-                        days_with_guests = has_guests.sum()
-                        
-                        df_base['spread_cost'] = 0.0
-                        if days_with_guests > 0:
-                            df_base.loc[has_guests, 'spread_cost'] = total_month_cost / days_with_guests
-                        else:
-                            # 沒客人則平分給所有天數
-                            df_base['spread_cost'] = total_month_cost / len(df_base)
-                            
-                        return df_base.set_index('日期_obj')['spread_cost']
-
-                    # 用月均攤計算每日成本
-                    peak_spread = spread_monthly_cost(
-                        df_peak_purchase, df_daily_rest, 'effective_peak_guests')
-                    hh_spread = spread_monthly_cost(
-                        df_hh_purchase, df_daily_rest, 'rest_hh_guests')
-
-                    # 合併來客數與週均攤成本
-                    analysis_df = df_daily_rest[[
-                        '日期_obj', 'effective_peak_guests', 'bf_act', 'af_act', 'rest_hh_guests', 'revenue']].copy()
-                    analysis_df['peak_cost'] = analysis_df['日期_obj'].map(
-                        peak_spread).fillna(0)
-                    analysis_df['hh_cost'] = analysis_df['日期_obj'].map(
-                        hh_spread).fillna(0)
-
-                    # --- 累計分析邏輯：計算本月至今的累積數據 ---
-                    analysis_df = analysis_df.sort_values('日期_obj')
-                    analysis_df['cum_peak_cost'] = analysis_df['peak_cost'].cumsum()
-                    analysis_df['cum_peak_guests'] = analysis_df['effective_peak_guests'].cumsum(
-                    )
-                    analysis_df['cum_hh_cost'] = analysis_df['hh_cost'].cumsum()
-                    analysis_df['cum_hh_guests'] = analysis_df['rest_hh_guests'].cumsum(
+                    # 在圓餅切片上顯示金額
+                    chart_text = base.mark_text(radius=90, size=14, fontWeight="bold", color="white").encode(
+                        text=alt.Text("小計:Q", format=",.0f")
                     )
 
-                    # 計算累積 CPG (這才是真實的平均成本走勢)
-                    analysis_df['cum_peak_cpg'] = analysis_df.apply(
-                        lambda r: r['cum_peak_cost']/r['cum_peak_guests'] if r['cum_peak_guests'] > 0 else 0, axis=1)
-                    analysis_df['cum_hh_cpg'] = analysis_df.apply(
-                        lambda r: r['cum_hh_cost']/r['cum_hh_guests'] if r['cum_hh_guests'] > 0 else 0, axis=1)
+                    st.altair_chart(chart_arc + chart_text,
+                                    use_container_width=True)
 
-                    # UI 呈現 (本月總結)
-                    total_peak_cost = analysis_df['cum_peak_cost'].iloc[-1] if not analysis_df.empty else 0
-                    total_peak_guests = analysis_df['cum_peak_guests'].iloc[-1] if not analysis_df.empty else 0
-                    final_peak_cpg = total_peak_cost / \
-                        total_peak_guests if total_peak_guests > 0 else 0
+                    # --- 新增：餐飲績效分析 (The Peak & Happy Hour) ---
+                    st.divider()
+                    st.subheader("🍽️ 餐飲績效與成本深度分析 (Cash-basis)")
 
-                    total_hh_cost = analysis_df['cum_hh_cost'].iloc[-1] if not analysis_df.empty else 0
-                    total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
-                    
-                    if total_hh_cost == 0 and not df_month.empty:
-                        try:
-                            _d_list = df_month[dept_col].dropna().unique().tolist() if dept_col else []
-                            st.caption(f"⚠️ 系統找不到 Happy Hour (HH) 的採購資料。目前讀取到的部門有：{_d_list}")
-                        except:
-                            pass
-                    final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
+                    # 獲取當月每日數據 (含餐廳來客數)
+                    m_data = fetch_month_summary(
+                        selected_date.year, selected_date.month)
+                    df_daily_rest = m_data['df']
 
-                    # --- 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數) ---
-                    st.markdown("##### 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數)")
-                    st.caption(
-                        "💡 **防禦力判定**：若紅虛線(菜價)上升，但藍實線(CPG)持平或下降，代表採購防禦成功！")
+                    # 【關鍵修正】occ_data 沒有 F&B 欄位，直接從 f&b_report 注入每日來客數
+                    df_fb_daily = get_combined_fb_daily_df(
+                        selected_date.year, selected_date.month, current_hotel)
+                    if not df_fb_daily.empty and not df_daily_rest.empty:
+                        df_daily_rest = df_daily_rest.merge(df_fb_daily, on='date', how='left')
+                        df_daily_rest['bf_act']      = df_daily_rest['bf_act'].fillna(0)
+                        df_daily_rest['af_act']      = df_daily_rest['af_act'].fillna(0)
+                        df_daily_rest['hh_act']      = df_daily_rest['hh_act'].fillna(0)
+                        df_daily_rest['peak_guests'] = df_daily_rest['peak_guests'].fillna(0)
+                    elif not df_fb_daily.empty:
+                        # df_daily_rest 是空的，用 fb_daily 代替
+                        df_daily_rest = df_fb_daily.copy()
 
-                    trend_rows = []
-                    for n_back in range(5, -1, -1):  # 從 5 個月前到本月
-                        t_date = get_month_delta(selected_date, -n_back)
-                        t_label = t_date.strftime('%Y-%m')
-
-                        # 抓該月採購數據
-                        df_t_purchase = df_purchase[pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m') == t_label].copy()
-
-                        if not df_t_purchase.empty:
-                            df_t_purchase['小計'] = pd.to_numeric(
-                                df_t_purchase[total_col], errors='coerce').fillna(0)
-
-                        # 抓該月來客數 (修正版：從餐飲合併報表抓取)
-                        t_fb_data = get_combined_fb_daily_df(t_date.year, t_date.month, current_hotel)
-                        t_guests = 0
-                        if not t_fb_data.empty:
-                            for _c in ['peak_guests', 'bf_act', 'af_act']:
-                                if _c in t_fb_data.columns:
-                                    t_fb_data[_c] = pd.to_numeric(t_fb_data[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                            
-                            peak_sum = t_fb_data['peak_guests'].sum() if 'peak_guests' in t_fb_data.columns else 0
-                            if peak_sum > 0:
-                                t_guests = peak_sum
+                    if not df_daily_rest.empty:
+                        # 確保必要欄位存在並轉為數值
+                        target_cols = ['peak_guests', 'hh_act', 'revenue', 'bf_act', 'af_act']
+                        for c in target_cols:
+                            if c in df_daily_rest.columns:
+                                df_daily_rest[c] = pd.to_numeric(df_daily_rest[c].astype(
+                                    str).str.replace(',', ''), errors='coerce').fillna(0)
                             else:
-                                bf_sum = t_fb_data['bf_act'].sum() if 'bf_act' in t_fb_data.columns else 0
-                                af_sum = t_fb_data['af_act'].sum() if 'af_act' in t_fb_data.columns else 0
-                                t_guests = bf_sum + af_sum
+                                df_daily_rest[c] = 0
 
-                        # 篩選 The Peak 採購
-                        t_peak_cost = 0
-                        if not df_t_purchase.empty and dept_col in df_t_purchase.columns:
-                            t_all_depts = df_t_purchase[dept_col].astype(
-                                str).unique().tolist()
-                            t_hh = [d for d in t_all_depts if '4' in d or any(
-                                k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
-                            t_peak_depts = [d for d in t_all_depts if any(
-                                k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
-                            t_peak_cost = df_t_purchase[df_t_purchase[dept_col].isin(
-                                t_peak_depts)]['小計'].sum()
+                        # 使用真實 F&B 來客數 (直接用 peak_guests 和 hh_act)
+                        df_daily_rest['rest_day_guests'] = df_daily_rest['peak_guests']
+                        df_daily_rest['rest_hh_guests']  = df_daily_rest['hh_act']
+                        df_daily_rest['bf_total_act']    = df_daily_rest['bf_act']
+                        df_daily_rest['af_total_act']    = df_daily_rest['af_act']
 
-                        t_cpg = t_peak_cost / t_guests if t_guests > 0 else None
-                        trend_rows.append(
-                            {'月份': t_label, 'CPG': t_cpg, '目標': 150})
 
-                    trend_df = pd.DataFrame(trend_rows).dropna(subset=['CPG'])
+                        # --- 自動化邏輯：如果 The Peak 來客數為 0，則自動加總 早餐 + 下午茶 ---
+                        def calculate_peak_guests(row):
+                            if row['rest_day_guests'] > 0:
+                                return row['rest_day_guests']
+                            return row['bf_total_act'] + row['af_total_act']
 
-                    if not trend_df.empty and len(trend_df) >= 2:
-                        # 取得大盤指數並與 trend_df 合併
-                        sp_df = fetch_supplier_prices()
-                        idx_df = get_market_index_df(sp_df)
+                        df_daily_rest['effective_peak_guests'] = df_daily_rest.apply(
+                            calculate_peak_guests, axis=1)
 
-                        if not idx_df.empty:
-                            # 若同個月份有多期指數，取平均
-                            idx_monthly = idx_df.groupby('month_label')[
-                                'index'].mean().reset_index()
-                            trend_df = trend_df.merge(
-                                idx_monthly, left_on='月份', right_on='month_label', how='left')
-                        else:
-                            trend_df['index'] = None
+                        # 篩選 The Peak 與 Happy Hour 採購 (強力模糊匹配)
+                        # 直接從 df_month 的部門欄抓取所有部門，保證 Daily Report 附加進來的 Happy Hour / The Peak 都被偵測到
+                        all_depts_list = df_month[dept_col].dropna().astype(str).unique().tolist()
 
-                        base = alt.Chart(trend_df)
+                        # HH 匹配：包含 'HH'、'HAPPY'、'歡樂時光'、'4F'、'交誼廳'，或直接等於 'Happy Hour'
+                        hh_matched = [d for d in all_depts_list if any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡樂時光', '4F', '交誼廳'])]
+                        # 確保 'Happy Hour'（Daily Report 附加的部門名）一定被包含
+                        if 'Happy Hour' not in hh_matched and 'Happy Hour' in all_depts_list:
+                            hh_matched.append('Happy Hour')
 
-                        # 左軸：CPG 藍實線
-                        cpg_line = base.mark_line(point=True, strokeWidth=3, color='#1f2c56').encode(
-                            x=alt.X('月份:N', title='月份', sort=None),
-                            y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(
-                                zero=False), axis=alt.Axis(titleColor='#1f2c56')),
-                            tooltip=[
-                                alt.Tooltip('月份:N', title='月份'),
-                                alt.Tooltip(
-                                    'CPG:Q', title='CPG (NT$)', format=',.0f')
-                            ]
+                        # Peak 匹配：包含 'PEAK' 或 '餐廳'，且排除 HH 部門；或直接等於 'The Peak'
+                        peak_matched = [d for d in all_depts_list if (any(k in d.upper(
+                        ) for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲'])) and (d not in hh_matched)]
+                        # 確保 'The Peak'（Daily Report 附加的部門名）一定被包含
+                        if 'The Peak' not in peak_matched and 'The Peak' in all_depts_list:
+                            peak_matched.append('The Peak')
+
+                        with st.expander("🛠️ 數據匹配校準器 (若數據不正確請點開)"):
+                            st.info(f"📍 偵測到之所有部門: `{all_depts_list}`")
+                            st.success(
+                                f"🍷 歸類為 Happy Hour (HH) 之部門: `{hh_matched}`")
+                            st.success(
+                                f"🏰 歸類為 The Peak (餐廳) 之部門: `{peak_matched}`")
+
+                            st.divider()
+                            st.markdown("**🔍 本月採購原始明細 (DEBUG)**")
+                            _debug_cols = [c for c in [date_col, dept_col, total_col] + [
+                                c for c in df_month.columns if '品名' in c or 'Item' in c or '項目' in c
+                            ] if c in df_month.columns]
+                            st.caption(f"The Peak 原始列 (共 {len(df_month[df_month[dept_col].isin(peak_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(peak_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
+                            st.dataframe(df_month[df_month[dept_col].isin(peak_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
+                            st.caption(f"Happy Hour 原始列 (共 {len(df_month[df_month[dept_col].isin(hh_matched)])} 筆，合計 NT$ {int(df_month[df_month[dept_col].isin(hh_matched)][total_col].apply(pd.to_numeric, errors='coerce').sum()):,})")
+                            st.dataframe(df_month[df_month[dept_col].isin(hh_matched)][_debug_cols].sort_values(date_col), use_container_width=True)
+                            st.caption(f"⚠️ 當月所有採購列共 {len(df_month)} 筆 | 整個 purchase data 表共 {len(df_purchase)} 筆")
+
+                        df_peak_purchase = df_month[df_month[dept_col].isin(
+                            peak_matched)].copy()
+                        df_hh_purchase = df_month[df_month[dept_col].isin(
+                            hh_matched)].copy()
+
+                        # --- 進階匹配：若部門抓不到 HH，嘗試從品名抓取 ---
+                        if df_hh_purchase.empty:
+                            item_col = next((c for c in df_month.columns if any(
+                                k in c for k in ['品名', '項目', 'Item'])), None)
+                            if item_col:
+                                df_hh_purchase = df_month[df_month[item_col].astype(
+                                    str).str.upper().str.contains('HH|HAPPY|歡樂時光', na=False)].copy()
+
+                        # 計算每日採購總額（改用『以週為單位均攤』修正採購日 vs 消耗日失真）
+                        df_daily_rest['日期_obj'] = pd.to_datetime(
+                            df_daily_rest['date'], errors='coerce').dt.date
+                        df_daily_rest['日期_dt'] = pd.to_datetime(
+                            df_daily_rest['date'], errors='coerce')
+
+                        def spread_monthly_cost(df_purchase_input, df_daily_base, guest_col='effective_peak_guests'):
+                            """將全月總費用平分到當月有來客的每一天 (保存規模經濟差異)"""
+                            if df_purchase_input.empty or df_daily_base.empty:
+                                return pd.Series(0, index=df_daily_base['日期_obj'])
+                        
+                            df_purchase_local = df_purchase_input.copy()
+                            df_purchase_local[total_col] = pd.to_numeric(df_purchase_local[total_col], errors='coerce').fillna(0)
+                            total_month_cost = df_purchase_local[total_col].sum()
+                        
+                            df_base = df_daily_base.copy()
+                        
+                            if guest_col in df_base.columns:
+                                has_guests = df_base[guest_col] > 0
+                            else:
+                                has_guests = pd.Series(False, index=df_base.index)
+                            
+                            days_with_guests = has_guests.sum()
+                        
+                            df_base['spread_cost'] = 0.0
+                            if days_with_guests > 0:
+                                df_base.loc[has_guests, 'spread_cost'] = total_month_cost / days_with_guests
+                            else:
+                                # 沒客人則平分給所有天數
+                                df_base['spread_cost'] = total_month_cost / len(df_base)
+                            
+                            return df_base.set_index('日期_obj')['spread_cost']
+
+                        # 用月均攤計算每日成本
+                        peak_spread = spread_monthly_cost(
+                            df_peak_purchase, df_daily_rest, 'effective_peak_guests')
+                        hh_spread = spread_monthly_cost(
+                            df_hh_purchase, df_daily_rest, 'rest_hh_guests')
+
+                        # 合併來客數與週均攤成本
+                        analysis_df = df_daily_rest[[
+                            '日期_obj', 'effective_peak_guests', 'bf_act', 'af_act', 'rest_hh_guests', 'revenue']].copy()
+                        analysis_df['peak_cost'] = analysis_df['日期_obj'].map(
+                            peak_spread).fillna(0)
+                        analysis_df['hh_cost'] = analysis_df['日期_obj'].map(
+                            hh_spread).fillna(0)
+
+                        # --- 累計分析邏輯：計算本月至今的累積數據 ---
+                        analysis_df = analysis_df.sort_values('日期_obj')
+                        analysis_df['cum_peak_cost'] = analysis_df['peak_cost'].cumsum()
+                        analysis_df['cum_peak_guests'] = analysis_df['effective_peak_guests'].cumsum(
                         )
-                        cpg_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
-                            x=alt.X('月份:N', sort=None),
-                            y=alt.Y('CPG:Q'),
-                            text=alt.Text('CPG:Q', format=',.0f')
+                        analysis_df['cum_hh_cost'] = analysis_df['hh_cost'].cumsum()
+                        analysis_df['cum_hh_guests'] = analysis_df['rest_hh_guests'].cumsum(
                         )
 
-                        target_line = alt.Chart(pd.DataFrame({'y': [150]})).mark_rule(
-                            color='#1f2c56', strokeDash=[6, 3], strokeWidth=1.5, opacity=0.5
-                        ).encode(y='y:Q')
-                        target_label = alt.Chart(pd.DataFrame({'y': [150], 'x': [trend_df['月份'].iloc[-1]], 'text': ['目標 $150']})).mark_text(
-                            align='right', dx=-4, dy=-8, color='#1f2c56', fontSize=11, fontWeight='bold', opacity=0.8
-                        ).encode(x='x:N', y='y:Q', text='text:N')
+                        # 計算累積 CPG (這才是真實的平均成本走勢)
+                        analysis_df['cum_peak_cpg'] = analysis_df.apply(
+                            lambda r: r['cum_peak_cost']/r['cum_peak_guests'] if r['cum_peak_guests'] > 0 else 0, axis=1)
+                        analysis_df['cum_hh_cpg'] = analysis_df.apply(
+                            lambda r: r['cum_hh_cost']/r['cum_hh_guests'] if r['cum_hh_guests'] > 0 else 0, axis=1)
 
-                        cpg_layer = alt.layer(
-                            cpg_line, cpg_text, target_line, target_label)
+                        # UI 呈現 (本月總結)
+                        total_peak_cost = analysis_df['cum_peak_cost'].iloc[-1] if not analysis_df.empty else 0
+                        total_peak_guests = analysis_df['cum_peak_guests'].iloc[-1] if not analysis_df.empty else 0
+                        final_peak_cpg = total_peak_cost / \
+                            total_peak_guests if total_peak_guests > 0 else 0
 
-                        # 右軸：大盤指數 紅虛線
-                        has_index_data = False
-                        if 'index' in trend_df.columns and not trend_df['index'].isna().all():
-                            valid_idx_count = trend_df['index'].notna().sum()
-                            has_index_data = True
+                        total_hh_cost = analysis_df['cum_hh_cost'].iloc[-1] if not analysis_df.empty else 0
+                        total_hh_guests = analysis_df['cum_hh_guests'].iloc[-1] if not analysis_df.empty else 0
+                    
+                        if total_hh_cost == 0 and not df_month.empty:
+                            try:
+                                _d_list = df_month[dept_col].dropna().unique().tolist() if dept_col else []
+                                st.caption(f"⚠️ 系統找不到 Happy Hour (HH) 的採購資料。目前讀取到的部門有：{_d_list}")
+                            except:
+                                pass
+                        final_hh_cpg = total_hh_cost / total_hh_guests if total_hh_guests > 0 else 0
 
-                            idx_line = base.mark_line(point={'color': '#e74c3c', 'size': 60}, strokeDash=[5, 5], strokeWidth=2, color='#e74c3c').encode(
-                                x=alt.X('月份:N', sort=None),
-                                y=alt.Y('index:Q', title='菜商大盤指數 (100=基準)', scale=alt.Scale(
-                                    zero=False), axis=alt.Axis(titleColor='#e74c3c')),
+                        # --- 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數) ---
+                        st.markdown("##### 📈 The Peak CPG 防禦力績效圖 (CPG vs 菜商指數)")
+                        st.caption(
+                            "💡 **防禦力判定**：若紅虛線(菜價)上升，但藍實線(CPG)持平或下降，代表採購防禦成功！")
+
+                        trend_rows = []
+                        for n_back in range(5, -1, -1):  # 從 5 個月前到本月
+                            t_date = get_month_delta(selected_date, -n_back)
+                            t_label = t_date.strftime('%Y-%m')
+
+                            # 抓該月採購數據
+                            df_t_purchase = df_purchase[pd.to_datetime(df_purchase['日期'], errors='coerce').dt.strftime('%Y-%m') == t_label].copy()
+
+                            if not df_t_purchase.empty:
+                                df_t_purchase['小計'] = pd.to_numeric(
+                                    df_t_purchase[total_col], errors='coerce').fillna(0)
+
+                            # 抓該月來客數 (修正版：從餐飲合併報表抓取)
+                            t_fb_data = get_combined_fb_daily_df(t_date.year, t_date.month, current_hotel)
+                            t_guests = 0
+                            if not t_fb_data.empty:
+                                for _c in ['peak_guests', 'bf_act', 'af_act']:
+                                    if _c in t_fb_data.columns:
+                                        t_fb_data[_c] = pd.to_numeric(t_fb_data[_c].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            
+                                peak_sum = t_fb_data['peak_guests'].sum() if 'peak_guests' in t_fb_data.columns else 0
+                                if peak_sum > 0:
+                                    t_guests = peak_sum
+                                else:
+                                    bf_sum = t_fb_data['bf_act'].sum() if 'bf_act' in t_fb_data.columns else 0
+                                    af_sum = t_fb_data['af_act'].sum() if 'af_act' in t_fb_data.columns else 0
+                                    t_guests = bf_sum + af_sum
+
+                            # 篩選 The Peak 採購
+                            t_peak_cost = 0
+                            if not df_t_purchase.empty and dept_col in df_t_purchase.columns:
+                                t_all_depts = df_t_purchase[dept_col].astype(
+                                    str).unique().tolist()
+                                t_hh = [d for d in t_all_depts if '4' in d or any(
+                                    k in d.upper() for k in ['HH', 'HAPPY', '歡樂時光'])]
+                                t_peak_depts = [d for d in t_all_depts if any(
+                                    k in d.upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                                t_peak_cost = df_t_purchase[df_t_purchase[dept_col].isin(
+                                    t_peak_depts)]['小計'].sum()
+
+                            t_cpg = t_peak_cost / t_guests if t_guests > 0 else None
+                            trend_rows.append(
+                                {'月份': t_label, 'CPG': t_cpg, '目標': 150})
+
+                        trend_df = pd.DataFrame(trend_rows).dropna(subset=['CPG'])
+
+                        if not trend_df.empty and len(trend_df) >= 2:
+                            # 取得大盤指數並與 trend_df 合併
+                            sp_df = fetch_supplier_prices()
+                            idx_df = get_market_index_df(sp_df)
+
+                            if not idx_df.empty:
+                                # 若同個月份有多期指數，取平均
+                                idx_monthly = idx_df.groupby('month_label')[
+                                    'index'].mean().reset_index()
+                                trend_df = trend_df.merge(
+                                    idx_monthly, left_on='月份', right_on='month_label', how='left')
+                            else:
+                                trend_df['index'] = None
+
+                            base = alt.Chart(trend_df)
+
+                            # 左軸：CPG 藍實線
+                            cpg_line = base.mark_line(point=True, strokeWidth=3, color='#1f2c56').encode(
+                                x=alt.X('月份:N', title='月份', sort=None),
+                                y=alt.Y('CPG:Q', title='每客成本 CPG (NT$)', scale=alt.Scale(
+                                    zero=False), axis=alt.Axis(titleColor='#1f2c56')),
                                 tooltip=[
                                     alt.Tooltip('月份:N', title='月份'),
                                     alt.Tooltip(
-                                        'index:Q', title='菜商指數', format=',.1f')
+                                        'CPG:Q', title='CPG (NT$)', format=',.0f')
                                 ]
                             )
-                            idx_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+                            cpg_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
                                 x=alt.X('月份:N', sort=None),
-                                y=alt.Y('index:Q'),
-                                text=alt.Text('index:Q', format=',.1f')
+                                y=alt.Y('CPG:Q'),
+                                text=alt.Text('CPG:Q', format=',.0f')
                             )
-                            chart = alt.layer(cpg_layer, alt.layer(idx_line, idx_text)).resolve_scale(
-                                y='independent')
 
-                            if valid_idx_count < 2:
-                                st.info(
-                                    "💡 提醒：大盤指數（紅虛線）的對應月份不足 2 個月，因此目前圖表上僅會顯示一個紅色點點。請在「菜單分析」分頁補齊過去月份的菜價資料以顯示完整折線。")
+                            target_line = alt.Chart(pd.DataFrame({'y': [150]})).mark_rule(
+                                color='#1f2c56', strokeDash=[6, 3], strokeWidth=1.5, opacity=0.5
+                            ).encode(y='y:Q')
+                            target_label = alt.Chart(pd.DataFrame({'y': [150], 'x': [trend_df['月份'].iloc[-1]], 'text': ['目標 $150']})).mark_text(
+                                align='right', dx=-4, dy=-8, color='#1f2c56', fontSize=11, fontWeight='bold', opacity=0.8
+                            ).encode(x='x:N', y='y:Q', text='text:N')
+
+                            cpg_layer = alt.layer(
+                                cpg_line, cpg_text, target_line, target_label)
+
+                            # 右軸：大盤指數 紅虛線
+                            has_index_data = False
+                            if 'index' in trend_df.columns and not trend_df['index'].isna().all():
+                                valid_idx_count = trend_df['index'].notna().sum()
+                                has_index_data = True
+
+                                idx_line = base.mark_line(point={'color': '#e74c3c', 'size': 60}, strokeDash=[5, 5], strokeWidth=2, color='#e74c3c').encode(
+                                    x=alt.X('月份:N', sort=None),
+                                    y=alt.Y('index:Q', title='菜商大盤指數 (100=基準)', scale=alt.Scale(
+                                        zero=False), axis=alt.Axis(titleColor='#e74c3c')),
+                                    tooltip=[
+                                        alt.Tooltip('月份:N', title='月份'),
+                                        alt.Tooltip(
+                                            'index:Q', title='菜商指數', format=',.1f')
+                                    ]
+                                )
+                                idx_text = base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e74c3c').encode(
+                                    x=alt.X('月份:N', sort=None),
+                                    y=alt.Y('index:Q'),
+                                    text=alt.Text('index:Q', format=',.1f')
+                                )
+                                chart = alt.layer(cpg_layer, alt.layer(idx_line, idx_text)).resolve_scale(
+                                    y='independent')
+
+                                if valid_idx_count < 2:
+                                    st.info(
+                                        "💡 提醒：大盤指數（紅虛線）的對應月份不足 2 個月，因此目前圖表上僅會顯示一個紅色點點。請在「菜單分析」分頁補齊過去月份的菜價資料以顯示完整折線。")
+                            else:
+                                chart = cpg_layer
+
+                            st.altair_chart(chart.properties(
+                                height=280), use_container_width=True)
                         else:
-                            chart = cpg_layer
+                            st.info("💡 需要至少 2 個月的數據才能顯示 CPG 趨勢圖。")
 
-                        st.altair_chart(chart.properties(
-                            height=280), use_container_width=True)
-                    else:
-                        st.info("💡 需要至少 2 個月的數據才能顯示 CPG 趨勢圖。")
-
-                    st.divider()
-
-                    # --- 📊 採購花費 vs 早餐來客數 相關性驗證（以週為單位）---
-                    st.markdown("##### 📊 採購花費 vs 早餐來客數 相關性驗證（週）")
-                    st.caption(
-                        "💡 兩條線的形狀應趨近一致。若某週「採購↑ 來客↓」或「採購↓ 來客↑」，代表食材控管可能有問題。")
-
-                    corr_df = analysis_df[['日期_obj', 'effective_peak_guests']].copy()
-                    corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'], errors='coerce')
-                    corr_df['week_start'] = corr_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
-                    
-                    # 1. 每週來客數與天數 (計算日均來客)
-                    weekly_guests = corr_df.groupby('week_start').agg(
-                        來客人數=('effective_peak_guests', 'sum'),
-                        營業天數=('日期_obj', 'count')
-                    ).reset_index()
-                    weekly_guests['日均來客'] = weekly_guests['來客人數'] / weekly_guests['營業天數']
-                    
-                    # 2. 每週真實採購金額 (計算日均採購)
-                    if not df_peak_purchase.empty:
-                        df_peak_p = df_peak_purchase.copy()
-                        if '日期' in df_peak_p.columns:
-                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p['日期'], errors='coerce')
-                        elif date_col:
-                            df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col], errors='coerce')
-                        else:
-                            df_peak_p['日期_dt'] = pd.NaT
-                            
-                        if not df_peak_p['日期_dt'].isna().all():
-                            df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
-                            df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
-                            
-                            # 注意 total_col 確保被轉為數值型態
-                            df_peak_p['__cost'] = pd.to_numeric(df_peak_p[total_col], errors='coerce').fillna(0)
-                            weekly_purchases = df_peak_p.groupby('week_start').agg(
-                                採購總額=('__cost', 'sum')
-                            ).reset_index()
-                        else:
-                            weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
-                    else:
-                        weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
-                        
-                    weekly_corr = pd.merge(weekly_guests, weekly_purchases, on='week_start', how='left').fillna({'採購總額': 0})
-                    weekly_corr['日均採購'] = weekly_corr['採購總額'] / weekly_corr['營業天數']
-                    weekly_corr['週次'] = weekly_corr['week_start'].dt.strftime('W%V\n%m/%d')
-                    
-                    # 標準化成 0–100%（對各自日均最大值）
-                    max_cost_avg = weekly_corr['日均採購'].max()
-                    max_guest_avg = weekly_corr['日均來客'].max()
-                    weekly_corr['採購(%)'] = (weekly_corr['日均採購'] / max_cost_avg * 100).round(1) if max_cost_avg > 0 else 0
-                    weekly_corr['來客(%)'] = (weekly_corr['日均來客'] / max_guest_avg * 100).round(1) if max_guest_avg > 0 else 0
-                    
-                    # 為了 tooltip 顯示以及下方判斷
-                    weekly_corr['採購金額'] = weekly_corr['採購總額']
-                    max_cost = weekly_corr['採購金額'].max()
-                    max_guest = weekly_corr['來客人數'].max()
-                    
-                    weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
-                    
-
-
-                    if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
-                        # 轉成長格式給 Altair
-                        melt_df = weekly_corr.melt(
-                            id_vars=['週次', '背道而馳', '採購金額', '來客人數'],
-                            value_vars=['採購(%)', '來客(%)'],
-                            var_name='指標', value_name='標準化數值'
-                        )
-                        color_map = {'採購(%)': '#e67e22', '來客(%)': '#2980b9'}
-
-                        corr_chart_line = alt.Chart(melt_df).mark_line(point=True, strokeWidth=2.5).encode(
-                            x=alt.X('週次:N', title='週次', sort=None),
-                            y=alt.Y('標準化數值:Q', title='相對比例 (% of max)',
-                                    scale=alt.Scale(domain=[0, 110])),
-                            color=alt.Color('指標:N',
-                                            scale=alt.Scale(domain=list(
-                                                color_map.keys()), range=list(color_map.values())),
-                                            legend=alt.Legend(
-                                                title='指標', orient='bottom')
-                                            ),
-                            tooltip=[
-                                alt.Tooltip('週次:N', title='週次'),
-                                alt.Tooltip('指標:N', title='指標'),
-                                alt.Tooltip(
-                                    '採購金額:Q', title='採購金額 (NT$)', format=',.0f'),
-                                alt.Tooltip(
-                                    '來客人數:Q', title='來客人數 (人)', format=',.0f'),
-                                alt.Tooltip('背道而馳:N', title='健康狀態'),
-                            ]
-                        )
-                        corr_chart_text = alt.Chart(melt_df).mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
-                            x=alt.X('週次:N', sort=None),
-                            y=alt.Y('標準化數值:Q'),
-                            text=alt.Text('標準化數值:Q', format=',.1f'),
-                            color=alt.Color('指標:N', scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())))
-                        )
-                        corr_chart = alt.layer(corr_chart_line, corr_chart_text).properties(height=220)
-
-                        st.altair_chart(corr_chart, use_container_width=True)
-
-                        # 標出背道而馳的週次
-                        bad_weeks = weekly_corr[weekly_corr['背道而馳'] == '⚠️ 異常']
-                        if not bad_weeks.empty:
-                            for _, bw in bad_weeks.iterrows():
-                                diff = bw['採購(%)'] - bw['來客(%)']
-                                direction = "採購偏高（來客少但食材買太多）" if diff > 0 else "來客偏高（來客多但食材買太少）"
-                                st.warning(
-                                    f"⚠️ **{bw['週次'].replace(chr(10), ' ')}** 出現背道而馳！{direction}　採購 NT$ {int(bw['採購金額']):,} | 來客 {int(bw['來客人數'])} 人")
-                        else:
-                            st.success("✅ 本月各週採購花費與來客人數走勢一致，食材控管健康。")
-                    else:
-                        st.info("💡 本月資料不足，無法進行相關性分析。")
-
-                    st.divider()
-                    c_ana1, c_ana2 = st.columns(2)
-
-                    with c_ana1:
-                        st.markdown(
-                            f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
-                        st.markdown(f"**🏰 The Peak (餐廳)**")
-                        st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
-                        is_auto = "(自動加總)" if (
-                            df_daily_rest['rest_day_guests'].sum() == 0 and total_peak_guests > 0) else ""
-                        st.metric(f"本月總來客數 {is_auto}",
-                                  f"{int(total_peak_guests):,} 人")
-
-                        # CPG 顏色警示 (目標 $150)
-                        peak_target = 150
-                        delta_val = peak_target - final_peak_cpg
-                        st.metric("平均每客成本 (CPG)", f"NT$ {int(final_peak_cpg):,}", delta=f"{int(delta_val)} (距離目標)" if delta_val >=
-                                  0 else f"{int(delta_val)} (已超標)", delta_color="normal" if delta_val >= 0 else "inverse")
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                        # --- 新增：財務預測與目標控管 ---
-                        st.write("")
-                        st.markdown("##### 🎯 財務目標控管")
-                        # 1. 成本佔比 (餐飲成本 / 總營收)
-                        total_hotel_rev = m_data['rev']
-                        cost_ratio = (
-                            total_peak_cost / total_hotel_rev * 100) if total_hotel_rev > 0 else 0
-                        st.write(f"📊 目前成本佔總營收比例: **{cost_ratio:.1f}%**")
-
-                        # 2. 月底支出預測
-                        import calendar
-                        _, last_day_num = calendar.monthrange(
-                            selected_date.year, selected_date.month)
-                        current_day_num = len(analysis_df)
-                        if current_day_num > 0:
-                            daily_avg_cost = total_peak_cost / current_day_num
-                            forecast_total = total_peak_cost + \
-                                (daily_avg_cost * (last_day_num - current_day_num))
-
-                            forecast_color = "red" if final_peak_cpg > peak_target else "green"
-                            st.markdown(
-                                f"🔮 月底預估總支出: <span style='color:{forecast_color}; font-weight:bold;'>NT$ {int(forecast_total):,}</span>", unsafe_allow_html=True)
-                            if final_peak_cpg > peak_target:
-                                st.warning(
-                                    f"⚠️ 警告：目前每客成本 ({int(final_peak_cpg)}) 已高於目標 {peak_target} 元，請檢視進貨項目或份量控管。")
-                        # ----------------------------
-                    with c_ana2:
-                        st.markdown(
-                            f"<div style='background:#fff9f0; padding:15px; border-radius:10px; border-top:4px solid #ff9f43;'>", unsafe_allow_html=True)
-                        st.markdown(f"**🥂 Happy Hour (HH)**")
-                        st.metric("本月總採購額", f"NT$ {int(total_hh_cost):,}")
-                        st.metric("本月總來客數", f"{int(total_hh_guests):,} 人")
-                        st.metric("平均每客服務成本", f"NT$ {int(final_hh_cpg):,}")
-                        if total_hh_cost > 0 and total_hh_guests == 0:
-                            st.warning(
-                                "⚠️ 有產生 HH 採購費用但總來客數為 0！請至「🍽️ 餐廳數據」補登以計算每客服務成本 (CPG)。")
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                    st.write("")
-                    # 趨勢圖表
-                    st.markdown("#### 📈 本月累計每客成本趨勢 (Monthly Cumulative CPG)")
-                    analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
-
-                    # 整合圖表
-                    base_chart = alt.Chart(analysis_df).encode(
-                        x=alt.X('日期_str:O', title='日期'))
-
-                    peak_line = base_chart.mark_line(point=True, color='#1f2c56', strokeWidth=3).encode(
-                        y=alt.Y('cum_peak_cpg:Q', title='累計平均成本 (NT$)'),
-                        tooltip=['日期_str', alt.Tooltip('cum_peak_guests', title='累計來客'), alt.Tooltip(
-                            'cum_peak_cost', title='累計採購'), alt.Tooltip('cum_peak_cpg', format='.0f', title='累計 CPG')]
-                    )
-                    peak_text = base_chart.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
-                        y=alt.Y('cum_peak_cpg:Q'),
-                        text=alt.Text('cum_peak_cpg:Q', format=',.0f')
-                    )
-
-                    st.altair_chart(alt.layer(peak_line, peak_text).properties(
-                        title="The Peak 累計平均成本趨勢", height=300), use_container_width=True)
-
-                    if total_hh_guests > 0:
-                        st.write("")
-                        st.markdown("#### 🥂 Happy Hour 累計成本分析")
-
-                        # 顯示累計人數 vs 累計成本
-                        hh_chart_base = alt.Chart(analysis_df).encode(
-                            x=alt.X('日期_str:O', title='日期'))
-
-                        # 長條圖顯示累計 CPG
-                        hh_bar = hh_chart_base.mark_bar(color='#ff9f43', opacity=0.7).encode(
-                            y=alt.Y('cum_hh_cpg:Q', title='累計平均成本 (NT$)'),
-                            tooltip=[
-                                '日期_str',
-                                alt.Tooltip('cum_hh_guests',
-                                            title='累計來客 (分母)'),
-                                alt.Tooltip('cum_hh_cost', title='累計採購 (分子)'),
-                                alt.Tooltip(
-                                    'cum_hh_cpg', format='.1f', title='累計 CPG')
-                            ]
-                        )
-
-                        # 疊加一條線顯示累計人數的成長 (確保分母正確)
-                        hh_guest_line = hh_chart_base.mark_line(color='#e67e22', strokeDash=[5, 5]).encode(
-                            y=alt.Y('cum_hh_guests:Q', title='累計人數'),
-                            tooltip=['日期_str', alt.Tooltip(
-                                'cum_hh_guests', title='累計人數')]
-                        )
-                        hh_guest_text = hh_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e67e22').encode(
-                            y=alt.Y('cum_hh_guests:Q'),
-                            text=alt.Text('cum_hh_guests:Q', format=',.0f')
-                        )
-
-                        st.altair_chart(alt.layer(hh_bar, hh_guest_line, hh_guest_text).resolve_scale(y='independent').properties(
-                            title="Happy Hour 累計趨勢 (長條:成本, 虛線:人數)", height=300), use_container_width=True)
-
-                    # --- 新增：雙冠日食材消耗對比分析 (Dynamic CPG Analysis) ---
-                    st.divider()
-                    st.markdown("#### 🎯 雙冠日 vs 一般日：食材消耗對比分析")
-
-                    # 獲取雙冠日清單
-                    curr_metrics = calc_key_metrics(m_data)
-                    dual_match_dates = curr_metrics.get('dual_match_dates', [])
-
-                    if dual_match_dates:
-                        # 將日期標記為雙冠日
-                        analysis_df['is_dual_match'] = analysis_df['日期_str'].isin(
-                            dual_match_dates)
-
-                        df_dual = analysis_df[analysis_df['is_dual_match']]
-                        df_normal = analysis_df[~analysis_df['is_dual_match']]
-
-                        # 計算雙冠日 CPG
-                        dual_peak_cost = df_dual['peak_cost'].sum()
-                        dual_peak_guests = df_dual['effective_peak_guests'].sum()
-                        dual_cpg = dual_peak_cost / dual_peak_guests if dual_peak_guests > 0 else 0
-                        
-                        dual_bf = df_dual['bf_act'].sum()
-                        dual_af = df_dual['af_act'].sum()
-                        if dual_bf + k_val * dual_af > 0:
-                            dual_cb = (dual_bf + dual_af) * dual_cpg / (dual_bf + k_val * dual_af)
-                            dual_ca = k_val * dual_cb
-                        else:
-                            dual_cb = dual_cpg
-                            dual_ca = dual_cpg
-
-                        # 計算一般日 CPG
-                        normal_peak_cost = df_normal['peak_cost'].sum()
-                        normal_peak_guests = df_normal['effective_peak_guests'].sum()
-                        normal_cpg = normal_peak_cost / normal_peak_guests if normal_peak_guests > 0 else 0
-                        
-                        normal_bf = df_normal['bf_act'].sum()
-                        normal_af = df_normal['af_act'].sum()
-                        if normal_bf + k_val * normal_af > 0:
-                            normal_cb = (normal_bf + normal_af) * normal_cpg / (normal_bf + k_val * normal_af)
-                            normal_ca = k_val * normal_cb
-                        else:
-                            normal_cb = normal_cpg
-                            normal_ca = normal_cpg
-
-                        cpg_col1, cpg_col2 = st.columns(2)
-
-                        with cpg_col1:
-                            st.markdown(f"""
-                            <div style="background:#fff5e6; border-left:4px solid #e67e22; padding:15px; border-radius:8px;">
-                                <p style="margin:0; font-size:13px; color:#e67e22; font-weight:bold;">🏆 雙冠日 (共 {len(df_dual)} 天)</p>
-                                <h3 style="margin:5px 0;">總平均 NT$ {int(dual_cpg):,} / 客</h3>
-                                <div style="display:flex; gap:10px; margin: 10px 0;">
-                                    <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${dual_cb:.1f}</span></div>
-                                    <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${dual_ca:.1f}</span></div>
-                                </div>
-                                <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(dual_peak_cost):,} | 服務客數: {int(dual_peak_guests):,} 人</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        with cpg_col2:
-                            st.markdown(f"""
-                            <div style="background:#f8f9fa; border-left:4px solid #95a5a6; padding:15px; border-radius:8px;">
-                                <p style="margin:0; font-size:13px; color:#7f8c8d; font-weight:bold;">📉 一般日 (共 {len(df_normal)} 天)</p>
-                                <h3 style="margin:5px 0;">總平均 NT$ {int(normal_cpg):,} / 客</h3>
-                                <div style="display:flex; gap:10px; margin: 10px 0;">
-                                    <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${normal_cb:.1f}</span></div>
-                                    <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${normal_ca:.1f}</span></div>
-                                </div>
-                                <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(normal_peak_cost):,} | 服務客數: {int(normal_peak_guests):,} 人</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        # 顯示策略建議（基於比例，而非絕對差值）
-                        st.write("")
-                        target_ratio = 1.10  # 雙冠日 CPG 應達到一般日的 110%
-                        actual_ratio = (
-                            dual_cpg / normal_cpg) if normal_cpg > 0 else 0
-                        ratio_pct = actual_ratio * 100
-
-                        if actual_ratio >= target_ratio:
-                            st.success(
-                                f"💡 **主動備戰策略成功！** 雙冠日的單客成本（NT$ {int(dual_cpg):,}）達到一般日（NT$ {int(normal_cpg):,}）的 **{ratio_pct:.0f}%**，超過 110% 目標。代表你在大日子前有主動備了更好的食材，與高房價形成正向配對。")
-                        elif actual_ratio >= 0.90:
-                            diff_to_target = int(
-                                normal_cpg * target_ratio - dual_cpg)
-                            st.info(
-                                f"⚖️ **採購尚未主動分級。** 雙冠日 CPG 為一般日的 {ratio_pct:.0f}%（目標 ≥ 110%）。由於週均攤讓旺日（人多）天然壓低 CPG，這個差距屬於合理的規模效應。建議在雙冠日當週多編列 NT$ {diff_to_target:,} / 人左右的品質預算，讓高端客感受得到差異。")
-                        else:
-                            # 計算行動指引數據
-                            avg_normal_guests = (
-                                normal_peak_guests / len(df_normal)) if len(df_normal) > 0 else 0
-                            peak_target_cpg = 150  # 目標 CPG 上限（與前面財務目標一致）
-                            # 建議週採購上限：目標 CPG × 一般日平均每日來客數 × 7 天
-                            recommended_weekly_budget = int(
-                                peak_target_cpg * avg_normal_guests * 7)
-                            # 本月實際週均採購
-                            total_weeks = max(1, round(len(df_normal) / 7))
-                            actual_weekly_avg = int(
-                                normal_peak_cost / total_weeks) if total_weeks > 0 else 0
-                            overrun = actual_weekly_avg - recommended_weekly_budget
-
-                            st.error(
-                                f"⚠️ **平日食材成本明顯偏高（雙冠日 CPG 僅為一般日的 {ratio_pct:.0f}%）**\n\n"
-                                f"📊 **一般日數據**\n"
-                                f"- 一般日平均每日來客數：**{avg_normal_guests:.1f} 人**\n"
-                                f"- 一般日單客食材成本 (CPG)：**NT$ {int(normal_cpg):,}**\n\n"
-                                f"💰 **週採購建議**\n"
-                                f"- 以目標 CPG $150 計算，建議每週 The Peak 採購上限：**NT$ {recommended_weekly_budget:,}**\n"
-                                f"- 本月實際週均採購：**NT$ {actual_weekly_avg:,}**\n"
-                                f"- {'🔴 超出建議上限：NT$ ' + f'{overrun:,}' if overrun > 0 else '🟢 在目標範圍內'}\n\n"
-                                f"📋 **可能原因（請擇一追查）**\n"
-                                f"1. 平日來客數也偏高，被迫追加採購（合理，可對照 OCC 確認）\n"
-                                f"2. 平日備料過多，有生鮮報廢（須檢視）\n"
-                                f"3. 領用未確實盤點（須追查）"
-                            )
-                    else:
-                        st.info("💡 本月目前無符合條件的雙冠日，無法進行對比分析。")
-                        st.caption(
-                            "💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
-
-                    st.info(
-                        "💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
-
-                else:
-                    st.info("尚未偵測到本月的餐廳來客數據，無法進行成本效益分析。")
-
-                st.divider()
-
-                # 3. 各部門詳細統計
-                st.subheader("🏢 各部門經費分析")
-
-                # 取得所有部門
-                departments = dept_summary.sort_values(
-                    '小計', ascending=False)['部門'].tolist()
-
-                for dept in departments:
-                    dept_df = df_month[df_month[dept_col] == dept].copy()
-                    dept_total = dept_df['小計'].sum()
-
-                    with st.expander(f"📌 {dept} (總計: NT$ {int(dept_total):,})", expanded=False):
-                        # --- 新增：Top 5 高額品項排行榜 ---
-                        item_name_col = next((c for c in dept_df.columns if any(
-                            k in c for k in ['品名', '項目', 'Item'])), None)
-                        if item_name_col:
-                            st.markdown("##### 🏆 前五名高額採購品項")
-                            top_items = dept_df.groupby(item_name_col)['小計'].sum(
-                            ).sort_values(ascending=False).head(5).reset_index()
-                            t_cols = st.columns(5)
-                            for idx, row in top_items.iterrows():
-                                with t_cols[idx]:
-                                    st.metric(
-                                        f"No.{idx+1} {row[item_name_col][:8]}", f"NT$ {int(row['小計']):,}")
                         st.divider()
 
-                        # --- 新增：排序控制 ---
-                        sort_by = st.selectbox(f"排序方式 ({dept})", [
-                                               "日期 (新→舊)", "金額 (高→低)", "金額 (低→高)", "品項名稱"], key=f"sort_{dept}")
+                        # --- 📊 採購花費 vs 早餐來客數 相關性驗證（以週為單位）---
+                        st.markdown("##### 📊 採購花費 vs 早餐來客數 相關性驗證（週）")
+                        st.caption(
+                            "💡 兩條線的形狀應趨近一致。若某週「採購↑ 來客↓」或「採購↓ 來客↑」，代表食材控管可能有問題。")
 
-                        if sort_by == "金額 (高→低)":
-                            dept_df = dept_df.sort_values(
-                                '小計', ascending=False)
-                        elif sort_by == "金額 (低→高)":
-                            dept_df = dept_df.sort_values('小計', ascending=True)
-                        elif sort_by == "日期 (新→舊)":
-                            dept_df = dept_df.sort_values(
-                                '日期', ascending=False)
-                        elif sort_by == "品項名稱" and item_name_col:
-                            dept_df = dept_df.sort_values(item_name_col)
+                        corr_df = analysis_df[['日期_obj', 'effective_peak_guests']].copy()
+                        corr_df['日期_dt'] = pd.to_datetime(corr_df['日期_obj'], errors='coerce')
+                        corr_df['week_start'] = corr_df['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                    
+                        # 1. 每週來客數與天數 (計算日均來客)
+                        weekly_guests = corr_df.groupby('week_start').agg(
+                            來客人數=('effective_peak_guests', 'sum'),
+                            營業天數=('日期_obj', 'count')
+                        ).reset_index()
+                        weekly_guests['日均來客'] = weekly_guests['來客人數'] / weekly_guests['營業天數']
+                    
+                        # 2. 每週真實採購金額 (計算日均採購)
+                        if not df_peak_purchase.empty:
+                            df_peak_p = df_peak_purchase.copy()
+                            if '日期' in df_peak_p.columns:
+                                df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p['日期'], errors='coerce')
+                            elif date_col:
+                                df_peak_p['日期_dt'] = pd.to_datetime(df_peak_p[date_col], errors='coerce')
+                            else:
+                                df_peak_p['日期_dt'] = pd.NaT
+                            
+                            if not df_peak_p['日期_dt'].isna().all():
+                                df_peak_p = df_peak_p.dropna(subset=['日期_dt'])
+                                df_peak_p['week_start'] = df_peak_p['日期_dt'].apply(lambda x: x - pd.Timedelta(days=x.dayofweek))
+                            
+                                # 注意 total_col 確保被轉為數值型態
+                                df_peak_p['__cost'] = pd.to_numeric(df_peak_p[total_col], errors='coerce').fillna(0)
+                                weekly_purchases = df_peak_p.groupby('week_start').agg(
+                                    採購總額=('__cost', 'sum')
+                                ).reset_index()
+                            else:
+                                weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
+                        else:
+                            weekly_purchases = pd.DataFrame(columns=['week_start', '採購總額'])
+                        
+                        weekly_corr = pd.merge(weekly_guests, weekly_purchases, on='week_start', how='left').fillna({'採購總額': 0})
+                        weekly_corr['日均採購'] = weekly_corr['採購總額'] / weekly_corr['營業天數']
+                        weekly_corr['週次'] = weekly_corr['week_start'].dt.strftime('W%V\n%m/%d')
+                    
+                        # 標準化成 0–100%（對各自日均最大值）
+                        max_cost_avg = weekly_corr['日均採購'].max()
+                        max_guest_avg = weekly_corr['日均來客'].max()
+                        weekly_corr['採購(%)'] = (weekly_corr['日均採購'] / max_cost_avg * 100).round(1) if max_cost_avg > 0 else 0
+                        weekly_corr['來客(%)'] = (weekly_corr['日均來客'] / max_guest_avg * 100).round(1) if max_guest_avg > 0 else 0
+                    
+                        # 為了 tooltip 顯示以及下方判斷
+                        weekly_corr['採購金額'] = weekly_corr['採購總額']
+                        max_cost = weekly_corr['採購金額'].max()
+                        max_guest = weekly_corr['來客人數'].max()
+                    
+                        weekly_corr['背道而馳'] = (abs(weekly_corr['採購(%)'] - weekly_corr['來客(%)']) > 25).map({True: '⚠️ 異常', False: '✅ 正常'})
+                    
 
-                        # 顯示該部門表格
-                        cols_to_show = [c for c in [
-                            '日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計'] if c in dept_df.columns]
-                        if not cols_to_show:
-                            cols_to_show = dept_df.columns.tolist()
 
-                        st.dataframe(
-                            dept_df[cols_to_show],
-                            use_container_width=True,
-                            hide_index=True
+                        if not weekly_corr.empty and max_cost > 0 and max_guest > 0:
+                            # 轉成長格式給 Altair
+                            melt_df = weekly_corr.melt(
+                                id_vars=['週次', '背道而馳', '採購金額', '來客人數'],
+                                value_vars=['採購(%)', '來客(%)'],
+                                var_name='指標', value_name='標準化數值'
+                            )
+                            color_map = {'採購(%)': '#e67e22', '來客(%)': '#2980b9'}
+
+                            corr_chart_line = alt.Chart(melt_df).mark_line(point=True, strokeWidth=2.5).encode(
+                                x=alt.X('週次:N', title='週次', sort=None),
+                                y=alt.Y('標準化數值:Q', title='相對比例 (% of max)',
+                                        scale=alt.Scale(domain=[0, 110])),
+                                color=alt.Color('指標:N',
+                                                scale=alt.Scale(domain=list(
+                                                    color_map.keys()), range=list(color_map.values())),
+                                                legend=alt.Legend(
+                                                    title='指標', orient='bottom')
+                                                ),
+                                tooltip=[
+                                    alt.Tooltip('週次:N', title='週次'),
+                                    alt.Tooltip('指標:N', title='指標'),
+                                    alt.Tooltip(
+                                        '採購金額:Q', title='採購金額 (NT$)', format=',.0f'),
+                                    alt.Tooltip(
+                                        '來客人數:Q', title='來客人數 (人)', format=',.0f'),
+                                    alt.Tooltip('背道而馳:N', title='健康狀態'),
+                                ]
+                            )
+                            corr_chart_text = alt.Chart(melt_df).mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold').encode(
+                                x=alt.X('週次:N', sort=None),
+                                y=alt.Y('標準化數值:Q'),
+                                text=alt.Text('標準化數值:Q', format=',.1f'),
+                                color=alt.Color('指標:N', scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())))
+                            )
+                            corr_chart = alt.layer(corr_chart_line, corr_chart_text).properties(height=220)
+
+                            st.altair_chart(corr_chart, use_container_width=True)
+
+                            # 標出背道而馳的週次
+                            bad_weeks = weekly_corr[weekly_corr['背道而馳'] == '⚠️ 異常']
+                            if not bad_weeks.empty:
+                                for _, bw in bad_weeks.iterrows():
+                                    diff = bw['採購(%)'] - bw['來客(%)']
+                                    direction = "採購偏高（來客少但食材買太多）" if diff > 0 else "來客偏高（來客多但食材買太少）"
+                                    st.warning(
+                                        f"⚠️ **{bw['週次'].replace(chr(10), ' ')}** 出現背道而馳！{direction}　採購 NT$ {int(bw['採購金額']):,} | 來客 {int(bw['來客人數'])} 人")
+                            else:
+                                st.success("✅ 本月各週採購花費與來客人數走勢一致，食材控管健康。")
+                        else:
+                            st.info("💡 本月資料不足，無法進行相關性分析。")
+
+                        st.divider()
+                        c_ana1, c_ana2 = st.columns(2)
+
+                        with c_ana1:
+                            st.markdown(
+                                f"<div style='background:#f8f9fa; padding:15px; border-radius:10px; border-top:4px solid #1f2c56;'>", unsafe_allow_html=True)
+                            st.markdown(f"**🏰 The Peak (餐廳)**")
+                            st.metric("本月總採購額", f"NT$ {int(total_peak_cost):,}")
+                            is_auto = "(自動加總)" if (
+                                df_daily_rest['rest_day_guests'].sum() == 0 and total_peak_guests > 0) else ""
+                            st.metric(f"本月總來客數 {is_auto}",
+                                      f"{int(total_peak_guests):,} 人")
+
+                            # CPG 顏色警示 (目標 $150)
+                            peak_target = 150
+                            delta_val = peak_target - final_peak_cpg
+                            st.metric("平均每客成本 (CPG)", f"NT$ {int(final_peak_cpg):,}", delta=f"{int(delta_val)} (距離目標)" if delta_val >=
+                                      0 else f"{int(delta_val)} (已超標)", delta_color="normal" if delta_val >= 0 else "inverse")
+                            st.markdown("</div>", unsafe_allow_html=True)
+
+                            # --- 新增：財務預測與目標控管 ---
+                            st.write("")
+                            st.markdown("##### 🎯 財務目標控管")
+                            # 1. 成本佔比 (餐飲成本 / 雙館總營收)
+                            _sum_zq = fetch_month_summary_by_hotel(selected_date.year, selected_date.month, "站前館")
+                            _sum_th = fetch_month_summary_by_hotel(selected_date.year, selected_date.month, "主題館")
+                            total_hotel_rev = _sum_zq.get('rev', 0) + _sum_th.get('rev', 0)
+                            if total_hotel_rev == 0:
+                                total_hotel_rev = m_data['rev']
+                            cost_ratio = (
+                                total_peak_cost / total_hotel_rev * 100) if total_hotel_rev > 0 else 0
+                            st.write(f"📊 目前成本佔總營收比例: **{cost_ratio:.1f}%**")
+
+                            # 2. 月底支出預測
+                            import calendar
+                            _, last_day_num = calendar.monthrange(
+                                selected_date.year, selected_date.month)
+                            _today_dt = datetime.date.today()
+                            if (selected_date.year, selected_date.month) < (_today_dt.year, _today_dt.month):
+                                current_day_num = last_day_num
+                                forecast_total = total_peak_cost
+                            else:
+                                current_day_num = int((analysis_df['effective_peak_guests'] > 0).sum()) if 'effective_peak_guests' in analysis_df.columns else len(analysis_df)
+                                if current_day_num > 0:
+                                    daily_avg_cost = total_peak_cost / current_day_num
+                                    forecast_total = total_peak_cost + \
+                                        (daily_avg_cost * max(0, last_day_num - current_day_num))
+                            if current_day_num > 0:
+
+                                forecast_color = "red" if final_peak_cpg > peak_target else "green"
+                                st.markdown(
+                                    f"🔮 月底預估總支出: <span style='color:{forecast_color}; font-weight:bold;'>NT$ {int(forecast_total):,}</span>", unsafe_allow_html=True)
+                                if final_peak_cpg > peak_target:
+                                    st.warning(
+                                        f"⚠️ 警告：目前每客成本 ({int(final_peak_cpg)}) 已高於目標 {peak_target} 元，請檢視進貨項目或份量控管。")
+                            # ----------------------------
+                        with c_ana2:
+                            st.markdown(
+                                f"<div style='background:#fff9f0; padding:15px; border-radius:10px; border-top:4px solid #ff9f43;'>", unsafe_allow_html=True)
+                            st.markdown(f"**🥂 Happy Hour (HH)**")
+                            st.metric("本月總採購額", f"NT$ {int(total_hh_cost):,}")
+                            st.metric("本月總來客數", f"{int(total_hh_guests):,} 人")
+                            st.metric("平均每客服務成本", f"NT$ {int(final_hh_cpg):,}")
+                            if total_hh_cost > 0 and total_hh_guests == 0:
+                                st.warning(
+                                    "⚠️ 有產生 HH 採購費用但總來客數為 0！請至「🍽️ 餐廳數據」補登以計算每客服務成本 (CPG)。")
+                            st.markdown("</div>", unsafe_allow_html=True)
+
+                        st.write("")
+                        # 趨勢圖表
+                        st.markdown("#### 📈 本月累計每客成本趨勢 (Monthly Cumulative CPG)")
+                        analysis_df['日期_str'] = analysis_df['日期_obj'].astype(str)
+
+                        # 整合圖表
+                        base_chart = alt.Chart(analysis_df).encode(
+                            x=alt.X('日期_str:O', title='日期'))
+
+                        peak_line = base_chart.mark_line(point=True, color='#1f2c56', strokeWidth=3).encode(
+                            y=alt.Y('cum_peak_cpg:Q', title='累計平均成本 (NT$)'),
+                            tooltip=['日期_str', alt.Tooltip('cum_peak_guests', title='累計來客'), alt.Tooltip(
+                                'cum_peak_cost', title='累計採購'), alt.Tooltip('cum_peak_cpg', format='.0f', title='累計 CPG')]
+                        )
+                        peak_text = base_chart.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#1f2c56').encode(
+                            y=alt.Y('cum_peak_cpg:Q'),
+                            text=alt.Text('cum_peak_cpg:Q', format=',.0f')
                         )
 
-    except Exception as e:
-        if "WorksheetNotFound" in str(e):
-            st.error(f"❌ 找不到採購相關分頁！請確認 Google Sheet 中的分頁名稱（如 purchase data）。")
-        else:
-            st.error(f"讀取採購數據出錯: {e}")
-        import traceback
-        st.expander("錯誤詳細資訊").code(traceback.format_exc())
+                        st.altair_chart(alt.layer(peak_line, peak_text).properties(
+                            title="The Peak 累計平均成本趨勢", height=300), use_container_width=True)
+
+                        if total_hh_guests > 0:
+                            st.write("")
+                            st.markdown("#### 🥂 Happy Hour 累計成本分析")
+
+                            # 顯示累計人數 vs 累計成本
+                            hh_chart_base = alt.Chart(analysis_df).encode(
+                                x=alt.X('日期_str:O', title='日期'))
+
+                            # 長條圖顯示累計 CPG
+                            hh_bar = hh_chart_base.mark_bar(color='#ff9f43', opacity=0.7).encode(
+                                y=alt.Y('cum_hh_cpg:Q', title='累計平均成本 (NT$)'),
+                                tooltip=[
+                                    '日期_str',
+                                    alt.Tooltip('cum_hh_guests',
+                                                title='累計來客 (分母)'),
+                                    alt.Tooltip('cum_hh_cost', title='累計採購 (分子)'),
+                                    alt.Tooltip(
+                                        'cum_hh_cpg', format='.1f', title='累計 CPG')
+                                ]
+                            )
+
+                            # 疊加一條線顯示累計人數的成長 (確保分母正確)
+                            hh_guest_line = hh_chart_base.mark_line(color='#e67e22', strokeDash=[5, 5]).encode(
+                                y=alt.Y('cum_hh_guests:Q', title='累計人數'),
+                                tooltip=['日期_str', alt.Tooltip(
+                                    'cum_hh_guests', title='累計人數')]
+                            )
+                            hh_guest_text = hh_chart_base.mark_text(align='center', baseline='bottom', dy=-10, fontSize=11, fontWeight='bold', color='#e67e22').encode(
+                                y=alt.Y('cum_hh_guests:Q'),
+                                text=alt.Text('cum_hh_guests:Q', format=',.0f')
+                            )
+
+                            st.altair_chart(alt.layer(hh_bar, hh_guest_line, hh_guest_text).resolve_scale(y='independent').properties(
+                                title="Happy Hour 累計趨勢 (長條:成本, 虛線:人數)", height=300), use_container_width=True)
+
+                        # --- 新增：雙冠日食材消耗對比分析 (Dynamic CPG Analysis) ---
+                        st.divider()
+                        st.markdown("#### 🎯 雙冠日 vs 一般日：食材消耗對比分析")
+
+                        # 獲取雙冠日清單
+                        curr_metrics = calc_key_metrics(m_data)
+                        dual_match_dates = curr_metrics.get('dual_match_dates', [])
+
+                        if dual_match_dates:
+                            # 將日期標記為雙冠日
+                            analysis_df['is_dual_match'] = analysis_df['日期_str'].isin(
+                                dual_match_dates)
+
+                            df_dual = analysis_df[analysis_df['is_dual_match']]
+                            df_normal = analysis_df[~analysis_df['is_dual_match']]
+
+                            # 計算雙冠日 CPG
+                            dual_peak_cost = df_dual['peak_cost'].sum()
+                            dual_peak_guests = df_dual['effective_peak_guests'].sum()
+                            dual_cpg = dual_peak_cost / dual_peak_guests if dual_peak_guests > 0 else 0
+                        
+                            dual_bf = df_dual['bf_act'].sum()
+                            dual_af = df_dual['af_act'].sum()
+                            if dual_bf + k_val * dual_af > 0:
+                                dual_cb = (dual_bf + dual_af) * dual_cpg / (dual_bf + k_val * dual_af)
+                                dual_ca = k_val * dual_cb
+                            else:
+                                dual_cb = dual_cpg
+                                dual_ca = dual_cpg
+
+                            # 計算一般日 CPG
+                            normal_peak_cost = df_normal['peak_cost'].sum()
+                            normal_peak_guests = df_normal['effective_peak_guests'].sum()
+                            normal_cpg = normal_peak_cost / normal_peak_guests if normal_peak_guests > 0 else 0
+                        
+                            normal_bf = df_normal['bf_act'].sum()
+                            normal_af = df_normal['af_act'].sum()
+                            if normal_bf + k_val * normal_af > 0:
+                                normal_cb = (normal_bf + normal_af) * normal_cpg / (normal_bf + k_val * normal_af)
+                                normal_ca = k_val * normal_cb
+                            else:
+                                normal_cb = normal_cpg
+                                normal_ca = normal_cpg
+
+                            cpg_col1, cpg_col2 = st.columns(2)
+
+                            with cpg_col1:
+                                st.markdown(f"""
+                                <div style="background:#fff5e6; border-left:4px solid #e67e22; padding:15px; border-radius:8px;">
+                                    <p style="margin:0; font-size:13px; color:#e67e22; font-weight:bold;">🏆 雙冠日 (共 {len(df_dual)} 天)</p>
+                                    <h3 style="margin:5px 0;">總平均 NT$ {int(dual_cpg):,} / 客</h3>
+                                    <div style="display:flex; gap:10px; margin: 10px 0;">
+                                        <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${dual_cb:.1f}</span></div>
+                                        <div style="background:rgba(230,126,34,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${dual_ca:.1f}</span></div>
+                                    </div>
+                                    <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(dual_peak_cost):,} | 服務客數: {int(dual_peak_guests):,} 人</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                            with cpg_col2:
+                                st.markdown(f"""
+                                <div style="background:#f8f9fa; border-left:4px solid #95a5a6; padding:15px; border-radius:8px;">
+                                    <p style="margin:0; font-size:13px; color:#7f8c8d; font-weight:bold;">📉 一般日 (共 {len(df_normal)} 天)</p>
+                                    <h3 style="margin:5px 0;">總平均 NT$ {int(normal_cpg):,} / 客</h3>
+                                    <div style="display:flex; gap:10px; margin: 10px 0;">
+                                        <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍳 早 <span style="font-weight:bold;">NT${normal_cb:.1f}</span></div>
+                                        <div style="background:rgba(149,165,166,0.1); padding:5px 10px; border-radius:5px;">🍰 午 <span style="font-weight:bold;">NT${normal_ca:.1f}</span></div>
+                                    </div>
+                                    <p style="margin:0; font-size:12px; color:#666;">總食材花費: NT$ {int(normal_peak_cost):,} | 服務客數: {int(normal_peak_guests):,} 人</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                            # 顯示策略建議（基於比例，而非絕對差值）
+                            st.write("")
+                            target_ratio = 1.10  # 雙冠日 CPG 應達到一般日的 110%
+                            actual_ratio = (
+                                dual_cpg / normal_cpg) if normal_cpg > 0 else 0
+                            ratio_pct = actual_ratio * 100
+
+                            if actual_ratio >= target_ratio:
+                                st.success(
+                                    f"💡 **主動備戰策略成功！** 雙冠日的單客成本（NT$ {int(dual_cpg):,}）達到一般日（NT$ {int(normal_cpg):,}）的 **{ratio_pct:.0f}%**，超過 110% 目標。代表你在大日子前有主動備了更好的食材，與高房價形成正向配對。")
+                            elif actual_ratio >= 0.90:
+                                diff_to_target = int(
+                                    normal_cpg * target_ratio - dual_cpg)
+                                st.info(
+                                    f"⚖️ **採購尚未主動分級。** 雙冠日 CPG 為一般日的 {ratio_pct:.0f}%（目標 ≥ 110%）。由於週均攤讓旺日（人多）天然壓低 CPG，這個差距屬於合理的規模效應。建議在雙冠日當週多編列 NT$ {diff_to_target:,} / 人左右的品質預算，讓高端客感受得到差異。")
+                            else:
+                                # 計算行動指引數據
+                                avg_normal_guests = (
+                                    normal_peak_guests / len(df_normal)) if len(df_normal) > 0 else 0
+                                peak_target_cpg = 150  # 目標 CPG 上限（與前面財務目標一致）
+                                # 建議週採購上限：目標 CPG × 一般日平均每日來客數 × 7 天
+                                recommended_weekly_budget = int(
+                                    peak_target_cpg * avg_normal_guests * 7)
+                                # 本月實際週均採購
+                                total_weeks = max(1, round(len(df_normal) / 7))
+                                actual_weekly_avg = int(
+                                    normal_peak_cost / total_weeks) if total_weeks > 0 else 0
+                                overrun = actual_weekly_avg - recommended_weekly_budget
+
+                                st.error(
+                                    f"⚠️ **平日食材成本明顯偏高（雙冠日 CPG 僅為一般日的 {ratio_pct:.0f}%）**\n\n"
+                                    f"📊 **一般日數據**\n"
+                                    f"- 一般日平均每日來客數：**{avg_normal_guests:.1f} 人**\n"
+                                    f"- 一般日單客食材成本 (CPG)：**NT$ {int(normal_cpg):,}**\n\n"
+                                    f"💰 **週採購建議**\n"
+                                    f"- 以目標 CPG $150 計算，建議每週 The Peak 採購上限：**NT$ {recommended_weekly_budget:,}**\n"
+                                    f"- 本月實際週均採購：**NT$ {actual_weekly_avg:,}**\n"
+                                    f"- {'🔴 超出建議上限：NT$ ' + f'{overrun:,}' if overrun > 0 else '🟢 在目標範圍內'}\n\n"
+                                    f"📋 **可能原因（請擇一追查）**\n"
+                                    f"1. 平日來客數也偏高，被迫追加採購（合理，可對照 OCC 確認）\n"
+                                    f"2. 平日備料過多，有生鮮報廢（須檢視）\n"
+                                    f"3. 領用未確實盤點（須追查）"
+                                )
+                        else:
+                            st.info("💡 本月目前無符合條件的雙冠日，無法進行對比分析。")
+                            st.caption(
+                                "💡 虛線代表累積來客數。如果長條圖在月初是空的，代表該時段尚未產生 HH 相關的採購支出。")
+
+                        st.info(
+                            "💡 **分析小撇步**：當「每客成本」異常偏高時，請檢查該日期是否有大宗採購進入庫存，或來客數輸入是否正確。")
+
+                    else:
+                        st.info("尚未偵測到本月的餐廳來客數據，無法進行成本效益分析。")
+
+                    st.divider()
+
+                    # 3. 各部門詳細統計
+                    st.subheader("🏢 各部門經費分析")
+
+                    # 取得所有部門
+                    departments = dept_summary.sort_values(
+                        '小計', ascending=False)['部門'].tolist()
+
+                    for dept in departments:
+                        dept_df = df_month[df_month[dept_col] == dept].copy()
+                        dept_total = dept_df['小計'].sum()
+
+                        with st.expander(f"📌 {dept} (總計: NT$ {int(dept_total):,})", expanded=False):
+                            # --- 新增：Top 5 高額品項排行榜 ---
+                            item_name_col = next((c for c in dept_df.columns if any(
+                                k in c for k in ['品名', '項目', 'Item'])), None)
+                            if item_name_col:
+                                st.markdown("##### 🏆 前五名高額採購品項")
+                                top_items = dept_df.groupby(item_name_col)['小計'].sum(
+                                ).sort_values(ascending=False).head(5).reset_index()
+                                t_cols = st.columns(5)
+                                for idx, row in top_items.iterrows():
+                                    with t_cols[idx]:
+                                        st.metric(
+                                            f"No.{idx+1} {row[item_name_col][:8]}", f"NT$ {int(row['小計']):,}")
+                            st.divider()
+
+                            # --- 新增：排序控制 ---
+                            sort_by = st.selectbox(f"排序方式 ({dept})", [
+                                                   "日期 (新→舊)", "金額 (高→低)", "金額 (低→高)", "品項名稱"], key=f"sort_{dept}")
+
+                            if sort_by == "金額 (高→低)":
+                                dept_df = dept_df.sort_values(
+                                    '小計', ascending=False)
+                            elif sort_by == "金額 (低→高)":
+                                dept_df = dept_df.sort_values('小計', ascending=True)
+                            elif sort_by == "日期 (新→舊)":
+                                dept_df = dept_df.sort_values(
+                                    '日期', ascending=False)
+                            elif sort_by == "品項名稱" and item_name_col:
+                                dept_df = dept_df.sort_values(item_name_col)
+
+                            # 顯示該部門表格
+                            cols_to_show = [c for c in [
+                                '日期', '供應商', '品名', '規格', '數量', '單位', '單價', '小計'] if c in dept_df.columns]
+                            if not cols_to_show:
+                                cols_to_show = dept_df.columns.tolist()
+
+                            st.dataframe(
+                                dept_df[cols_to_show],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+        except Exception as e:
+            if "WorksheetNotFound" in str(e):
+                st.error(f"❌ 找不到採購相關分頁！請確認 Google Sheet 中的分頁名稱（如 purchase data）。")
+            else:
+                st.error(f"讀取採購數據出錯: {e}")
+            import traceback
+            st.expander("錯誤詳細資訊").code(traceback.format_exc())
 
 
 # ─────────────────────────────────────────────────────
 # --- 📦 食材安全庫存盤點與叫貨預測 (獨立模組) ---
 # ─────────────────────────────────────────────────────
-if selected_page == "💰 採購分析":
+if selected_page == "💰 採購分析" and current_hotel != "主題館":
     import datetime as _dt_inv
     today_inv = _dt_inv.date.today()
     window_90_start = (today_inv - _dt_inv.timedelta(days=90)).strftime("%Y-%m-%d")
@@ -7342,23 +7500,24 @@ if selected_page == "💰 採購分析":
             _unit_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['單位', 'Unit'])), None)
             _dept_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['部門', 'Dept', '工地'])), None)
             _vendor_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['供應商', '廠商', 'Vendor'])), None)
+            _price_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['單價', 'Price', 'Rate', 'price'])), None)
+            _tot_col_inv = next((c for c in df_purchase_all.columns if any(k in c for k in ['小計', '總計', '金額', 'Total'])), None)
 
             if _date_col_inv and _item_col_inv and _qty_col_inv:
-                df_purchase_all_clean = df_purchase_all.copy()
+                df_purchase_all = df_purchase_all.copy()
+                df_purchase_all['_is_live'] = False
                 
                 # ─── 合入 thepeak_daily_purchase_report（日報請購單）───
                 # 這裡包含的採購紀錄可能比正式採購單更即時，需要一起計入
                 try:
                     _daily_peak_inv = fetch_thepeak_daily_purchase_report()
                     if not _daily_peak_inv.empty:
-                        # 找日期欄
                         _daily_date_col = next((c for c in _daily_peak_inv.columns if '日期' in c or 'Date' in c), None)
-                        # 找品名欄
                         _daily_item_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['品名', '品項', '規格', 'Item'])), None)
-                        # 找數量欄
                         _daily_qty_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['數量', 'Qty'])), None)
-                        # 找單位欄
                         _daily_unit_col = next((c for c in _daily_peak_inv.columns if '單位' in c or 'Unit' in c), None)
+                        _daily_price_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['當期單價', '單價', 'Price', 'price'])), None)
+                        _daily_tot_col = next((c for c in _daily_peak_inv.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
 
                         if _daily_date_col and _daily_item_col and _daily_qty_col:
                             _daily_append = pd.DataFrame()
@@ -7368,8 +7527,15 @@ if selected_page == "💰 採購分析":
                                 _daily_peak_inv[_daily_qty_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             _daily_append[_unit_col_inv if _unit_col_inv else '單位'] = (
                                 _daily_peak_inv[_daily_unit_col].astype(str) if _daily_unit_col else '')
+                            if _price_col_inv and _daily_price_col:
+                                _daily_append[_price_col_inv] = pd.to_numeric(
+                                    _daily_peak_inv[_daily_price_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            if _tot_col_inv and _daily_tot_col:
+                                _daily_append[_tot_col_inv] = pd.to_numeric(
+                                    _daily_peak_inv[_daily_tot_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             if _dept_col_inv:
                                 _daily_append[_dept_col_inv] = 'The Peak'
+                            _daily_append['_is_live'] = True
                             df_purchase_all = pd.concat([df_purchase_all, _daily_append], ignore_index=True)
                 except Exception:
                     pass
@@ -7382,6 +7548,8 @@ if selected_page == "💰 採購分析":
                         _daily_item_col_hh = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['品名', '品項', '規格', 'Item'])), None)
                         _daily_qty_col_hh  = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['數量', 'Qty'])), None)
                         _daily_unit_col_hh = next((c for c in _daily_hh_inv.columns if '單位' in c or 'Unit' in c), None)
+                        _daily_price_col_hh = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['當期單價', '單價', 'Price', 'price'])), None)
+                        _daily_tot_col_hh = next((c for c in _daily_hh_inv.columns if any(k in c for k in ['總價', '金額', '小計'])), None)
 
                         if _daily_date_col_hh and _daily_item_col_hh and _daily_qty_col_hh:
                             _daily_append_hh = pd.DataFrame()
@@ -7391,8 +7559,15 @@ if selected_page == "💰 採購分析":
                                 _daily_hh_inv[_daily_qty_col_hh].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             _daily_append_hh[_unit_col_inv if _unit_col_inv else '單位'] = (
                                 _daily_hh_inv[_daily_unit_col_hh].astype(str) if _daily_unit_col_hh else '')
+                            if _price_col_inv and _daily_price_col_hh:
+                                _daily_append_hh[_price_col_inv] = pd.to_numeric(
+                                    _daily_hh_inv[_daily_price_col_hh].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                            if _tot_col_inv and _daily_tot_col_hh:
+                                _daily_append_hh[_tot_col_inv] = pd.to_numeric(
+                                    _daily_hh_inv[_daily_tot_col_hh].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             if _dept_col_inv:
                                 _daily_append_hh[_dept_col_inv] = 'HH'
+                            _daily_append_hh['_is_live'] = True
                             df_purchase_all = pd.concat([df_purchase_all, _daily_append_hh], ignore_index=True)
                 except Exception:
                     pass
@@ -7409,6 +7584,12 @@ if selected_page == "💰 採購分析":
                 df_purchase_all_clean['_unit'] = df_purchase_all_clean[_unit_col_inv].astype(str).str.strip() if _unit_col_inv else ''
                 df_purchase_all_clean['_dept'] = df_purchase_all_clean[_dept_col_inv].astype(str).str.strip() if _dept_col_inv else ''
                 df_purchase_all_clean['_vendor'] = df_purchase_all_clean[_vendor_col_inv].astype(str).str.strip() if _vendor_col_inv else ''
+                # 依 (date_str, item_name) 去重，避免與官方 purchase_data 重複計入
+                if '_is_live' in df_purchase_all_clean.columns:
+                    _off_mask = ~df_purchase_all_clean['_is_live'].fillna(False)
+                    _official_pairs = set(zip(df_purchase_all_clean.loc[_off_mask, '_date_str'], df_purchase_all_clean.loc[_off_mask, '_item']))
+                    _keep_mask = _off_mask | (~df_purchase_all_clean.apply(lambda r: (r['_date_str'], r['_item']) in _official_pairs, axis=1))
+                    df_purchase_all_clean = df_purchase_all_clean[_keep_mask].drop(columns=['_is_live'])
 
         # ── B. 品項選擇 ──
         inv_col1, inv_col2 = st.columns([2, 1])
@@ -7461,12 +7642,29 @@ if selected_page == "💰 採購分析":
                 key="inv_forecast_days"
             )
 
-        # ── C. 取得 90 天 F&B 到客數（全區域通用） ──
+        # ── C. 取得 90 天 F&B 到客數（全區域通用，合併最近 4 個月） ──
         total_guests_90d = 0
-        try:
-            _df_fb_hist = get_combined_fb_data(selected_date.year, selected_date.month) if 'get_combined_fb_data' in dir() else pd.DataFrame()
-        except Exception:
-            _df_fb_hist = pd.DataFrame()
+        _fb_hist_parts = []
+        for _m_off in range(4):
+            _d_m = get_month_delta(today_inv, -_m_off)
+            try:
+                _df_m_fb = get_combined_fb_daily_df(_d_m.year, _d_m.month, current_hotel)
+                if _df_m_fb is not None and not _df_m_fb.empty:
+                    _fb_hist_parts.append(_df_m_fb)
+            except Exception:
+                pass
+        _df_fb_hist = pd.concat(_fb_hist_parts, ignore_index=True) if _fb_hist_parts else pd.DataFrame()
+        if not _df_fb_hist.empty:
+            if 'date' in _df_fb_hist.columns:
+                _df_fb_hist = _df_fb_hist.drop_duplicates(subset=['date'], keep='last')
+            for _gc in ['peak_guests', 'bf_act', 'af_act', 'hh_act']:
+                if _gc in _df_fb_hist.columns:
+                    _df_fb_hist[_gc] = pd.to_numeric(_df_fb_hist[_gc].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                else:
+                    _df_fb_hist[_gc] = 0
+            _pg = _df_fb_hist['peak_guests']
+            _df_fb_hist['effective_peak_guests'] = _pg.where(_pg > 0, _df_fb_hist['bf_act'] + _df_fb_hist['af_act'])
+            _df_fb_hist['rest_hh_guests'] = _df_fb_hist['hh_act']
 
         try:
             if _df_fb_hist.empty and 'df_daily_rest' in dir():
@@ -7644,10 +7842,6 @@ if selected_page == "💰 採購分析":
                                 signal = "🔴 採購過晚（斷貨風險）"
                             elif ratio > 1.2:
                                 signal = "🟡 略慢，請留意"
-                            elif ratio < 0.5:
-                                signal = "🔴 採購過早（可能囤積）"
-                            elif ratio < 0.7:
-                                signal = "🟡 略早，輕度囤積"
                             else:
                                 signal = "✅ 節奏正常"
                         else:
@@ -7886,16 +8080,15 @@ if selected_page == "💰 採購分析":
                 median_qty = daily_orders['_qty'].median()
                 upg = total_qty_90d / total_guests_90d if total_guests_90d > 0 else 0
                 
-                # 2. 最新單價擷取 (供預算檢核)
+                # 2. 最新單價擷取 (供預算檢核，跳過 NaN/0 取最後一筆有效正數單價)
                 price_col = next((c for c in item_purchase_df.columns if any(k in c for k in ['單價', 'Price', 'Rate', 'price'])), None)
                 latest_price = 0
                 if price_col:
                     try:
-                        last_val = str(item_purchase_df.iloc[-1][price_col]).replace(',', '')
-                        latest_price = float(last_val)
-                        if pd.isna(latest_price):
-                            latest_price = 0
-                    except:
+                        _valid_p = pd.to_numeric(item_purchase_df[price_col].astype(str).str.replace(',', ''), errors='coerce').dropna()
+                        _valid_p = _valid_p[_valid_p > 0]
+                        latest_price = float(_valid_p.iloc[-1]) if not _valid_p.empty else 0
+                    except Exception:
                         latest_price = 0
 
                 # 從 F&B 預測資料取得未來到客數 (套用戰情室動態到客率邏輯)
@@ -8026,7 +8219,7 @@ if selected_page == "💰 採購分析":
                     )
 
 # --- 📅 本月接下來各週採購金額建議（獨立區塊，不依賴採購數據）---
-if selected_page == "💰 採購分析":
+if selected_page == "💰 採購分析" and current_hotel != "主題館":
     st.divider()
     st.markdown("#### 📅 本月接下來各週採購金額建議")
 
@@ -8059,15 +8252,16 @@ if selected_page == "💰 採購分析":
         rem_budget_val = max(0, rem_budget_val)  # 若為負數(超支)，強制配額為 0
         
         # 先計算這段時間的未來總客數，以計算分配比例
-        temp_cursor = today_dt2
+        start_cursor = max(today_dt2, dt_date(selected_date.year, selected_date.month, 1))
+        temp_cursor = start_cursor
         temp_seen = set()
         overall_future_guests = 0
         while temp_cursor <= month_end_dt2:
             mon = temp_cursor - dt_timedelta(days=temp_cursor.weekday())
             sun = mon + dt_timedelta(days=6)
-            ws = max(mon, dt_date(selected_date.year, selected_date.month, 1))
+            ws = max(mon, start_cursor)
             we = min(sun, month_end_dt2)
-            if ws not in temp_seen and we >= today_dt2:
+            if ws <= we and ws not in temp_seen and we >= start_cursor:
                 temp_seen.add(ws)
                 if not df_fb_fut.empty and '數量' in df_fb_fut.columns:
                     w_mask = (df_fb_fut['date_obj'] >= ws) & (df_fb_fut['date_obj'] <= we)
@@ -8079,16 +8273,16 @@ if selected_page == "💰 採購分析":
         
         # 逐週生成
         fw_week_plans = []
-        fw_cursor = today_dt2
+        fw_cursor = start_cursor
         fw_seen = set()
         total_fut_guests_in_weeks = 0
         
         while fw_cursor <= month_end_dt2:
             mon = fw_cursor - dt_timedelta(days=fw_cursor.weekday())
             sun = mon + dt_timedelta(days=6)
-            ws = max(mon, dt_date(selected_date.year, selected_date.month, 1))
+            ws = max(mon, start_cursor)
             we = min(sun, month_end_dt2)
-            if ws not in fw_seen and we >= today_dt2:
+            if ws <= we and ws not in fw_seen and we >= start_cursor:
                 fw_seen.add(ws)
                 wdates = [(ws + dt_timedelta(days=i)).strftime('%Y-%m-%d')
                           for i in range((we - ws).days + 1)]
@@ -8133,19 +8327,12 @@ if selected_page == "💰 採購分析":
                 # 1. 計算「理論需求 (Standard Need)」
                 standard_need = int((cpg_val * 1.15 if has_d else cpg_val) * week_guests)
                 
-                # 2. 計算「戰情室分配限額 (Adjusted Limit)」
-                allocated_limit = 0
-                # 使用從 tab_p 傳過來的已折算 future_guests 作為總未來分母
-                _overall_fut = future_guests if 'future_guests' in locals() else overall_future_guests
-                if _overall_fut > 0:
-                    guest_ratio = week_guests / _overall_fut
-                    allocated_limit = int(rem_budget_val * guest_ratio)
-                
+                # 2. 計算「戰情室分配限額 (Adjusted Limit)」於迴圈後以總合分母統一配額
                 fw_week_plans.append({
                     'label': f"{ws.strftime('%m/%d')} ～ {we.strftime('%m/%d')}",
                     'has_dual': has_d,
                     'standard_need': standard_need,
-                    'allocated_limit': allocated_limit,
+                    'allocated_limit': 0,
                     'week_guests': week_guests,
                     'raw_week_bf': raw_week_bf,
                     'raw_week_af': raw_week_af,
@@ -8155,6 +8342,11 @@ if selected_page == "💰 採購分析":
                     'days_cnt': days_cnt,
                 })
             fw_cursor = sun + dt_timedelta(days=1)
+
+        _overall_fut = total_fut_guests_in_weeks if total_fut_guests_in_weeks > 0 else (future_guests if 'future_guests' in locals() else overall_future_guests)
+        if _overall_fut > 0:
+            for wp in fw_week_plans:
+                wp['allocated_limit'] = int(rem_budget_val * (wp['week_guests'] / _overall_fut))
 
         if total_fut_guests_in_weeks > 0 and fw_week_plans:
             st.caption(
@@ -8541,9 +8733,10 @@ if selected_page == "🛒 菜價分析":
         st.caption("ℹ️ 此預算為本月餐廳**整體**食材預算，涵蓋 The Peak 與 Happy Hour 所有部門的合計總額度。")
 
         # 抓取本月總預算與客數 (直接沿用採購分析 tab_p 戰情室的計算結果)
-        total_guests_for_budget = st.session_state.get('_budget_est_guests', 0)
-        cur_budget = st.session_state.get('_budget_total', 0)
         current_month_str = f"{selected_date.year}-{selected_date.month:02d}"
+        _is_same_budget_ym = (st.session_state.get('_budget_ym') == current_month_str)
+        total_guests_for_budget = st.session_state.get('_budget_est_guests', 0) if _is_same_budget_ym else 0
+        cur_budget = st.session_state.get('_budget_total', 0) if _is_same_budget_ym else 0
 
         if total_guests_for_budget == 0 or cur_budget == 0:
             st.info("💡 預算與客數資料未載入。請先點擊上方「📊 採購分析」頁籤以完成資料讀取。")
@@ -8615,31 +8808,29 @@ if selected_page == "🛒 菜價分析":
         freq_map = {}  # item_name -> purchase count
         for _h_df in [df_peak_hist, df_hh_hist]:
             if not _h_df.empty:
-                _item_col = next((c for c in _h_df.columns if '品項' in c or 'item' in c.lower()), None)
+                _item_col = next((c for c in _h_df.columns if '品項' in c or '品名' in c or 'item' in c.lower()), None)
                 if _item_col:
                     for item_val in _h_df[_item_col].dropna().astype(str).values:
                         # 品項名稱有時候包含數量資訊如 "雞蛋 (10 個)", 嘗試取純品項名
                         item_clean = item_val.split('(')[0].strip()
                         freq_map[item_clean] = freq_map.get(item_clean, 0) + 1
 
-        # 用品項名模糊對應到 sp_df 中的 item_name (帶寬鬆匹配)
+        # 用品項名精準優先 + 模糊對應到 sp_df 中的 item_name (避免重複累加 2 次)
         all_sp_items = latest_df['item_name'].astype(str).tolist() if not latest_df.empty else []
         frequent_items_set = set()
         item_freq_count = {}  # item_name -> total frequency
         for sp_item in all_sp_items:
-            matched_count = 0
-            for freq_item, cnt in freq_map.items():
-                if sp_item in freq_item or freq_item in sp_item:
-                    matched_count += cnt
+            if sp_item in freq_map:
+                matched_count = freq_map[sp_item]
+            else:
+                matched_count = 0
+                if len(sp_item.strip()) >= 2:
+                    for freq_item, cnt in freq_map.items():
+                        if len(freq_item.strip()) >= 2 and (sp_item in freq_item or freq_item in sp_item):
+                            matched_count += cnt
             if matched_count > 0:
                 frequent_items_set.add(sp_item)
                 item_freq_count[sp_item] = matched_count
-        
-        # 也從請購單歷史品項名稱中直接配對到 sp_df
-        for freq_item, cnt in freq_map.items():
-            if freq_item in all_sp_items:
-                frequent_items_set.add(freq_item)
-                item_freq_count[freq_item] = item_freq_count.get(freq_item, 0) + cnt
         
         n_frequent = len(frequent_items_set)
         
@@ -9059,8 +9250,9 @@ if selected_page == "🛒 菜價分析":
 
         # ── H. 雙冠備戰行事曆 (Peak Demand Radar) ──────────────────
         st.divider()
-        if 'm_curr' in locals() or 'm_curr' in globals():
-            s_curr_metrics = calc_key_metrics(m_curr)
+        m_curr_radar = fetch_month_summary(selected_date.year, selected_date.month)
+        if m_curr_radar:
+            s_curr_metrics = calc_key_metrics(m_curr_radar)
             if s_curr_metrics.get('dual_match_dates'):
                 st.markdown("#### 🎯 H. 雙冠備戰行事曆 (Peak Demand Radar)")
                 st.info(
@@ -9093,13 +9285,24 @@ if selected_page == "🛒 菜價分析":
                             if not row.empty and 'bf_act' in row.columns:
                                 bf_count = pd.to_numeric(row['bf_act'], errors='coerce').fillna(0).iloc[0]
                     else:
-                        # 優化 C：未來日期使用預估欄位 bf_est，若不存在才退回 bf_act
+                        # 優化 C：未來日期優先查 df_fut 的 '數量' (早餐)，若無再退回 df_hist 的 bf_est / bf_act
                         if not df_fut.empty and 'date' in df_fut.columns:
                             row = df_fut[df_fut['date'] == next_day]
                             if not row.empty:
-                                est_col = 'bf_est' if 'bf_est' in row.columns else ('bf_act' if 'bf_act' in row.columns else None)
+                                _m_col_r = next((c for c in row.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                                if _m_col_r:
+                                    _bf_row = row[row[_m_col_r].astype(str).str.lower().str.contains('早|breakfast|bf', na=False)]
+                                    if not _bf_row.empty:
+                                        row = _bf_row
+                                est_col = '數量' if '數量' in row.columns else ('bf_est' if 'bf_est' in row.columns else ('bf_act' if 'bf_act' in row.columns else None))
                                 if est_col:
-                                    bf_count = pd.to_numeric(row[est_col], errors='coerce').sum() # 可能有多列，全部加總
+                                    bf_count = pd.to_numeric(row[est_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum()
+                        if bf_count == 0 and not df_hist.empty and 'date' in df_hist.columns:
+                            row_h = df_hist[df_hist['date'] == next_day]
+                            if not row_h.empty:
+                                est_h_col = 'bf_est' if 'bf_est' in row_h.columns else ('bf_act' if 'bf_act' in row_h.columns else None)
+                                if est_h_col:
+                                    bf_count = pd.to_numeric(row_h[est_h_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum()
 
                     c = s_radar_cols[i % 5]
                     c.markdown(f"""
@@ -9290,431 +9493,445 @@ if selected_page == "🥬 H1 菜價戰略總評":
 if current_hotel != "採購":
     if selected_page == "👥 人事概況":
         st.header("👥 人事概況")
-
-        # -- 人事管理函數 (Google Sheets 版) --
-        def get_all_employees():
-            try:
-                df = get_all_employees_cached()
-                return df if df is not None else pd.DataFrame()
-            except:
-                return pd.DataFrame()
-
-        def add_employee(e_id, name, dept, pos, salary, start_date):
-            try:
-                df = conn.read(worksheet="employees", ttl="0")
-                required_cols = ["employee_id", "name",
-                                 "dept", "position", "salary", "start_date"]
-
-                if df is None or df.empty or not all(c in df.columns for c in required_cols):
-                    if df is None or df.empty:
-                        df = pd.DataFrame(columns=required_cols)
-                    else:
-                        for c in required_cols:
-                            if c not in df.columns:
-                                df[c] = ""
-
-                if str(e_id) in df['employee_id'].astype(str).values:
-                    return "ID_EXISTS"
-
-                new_emp = pd.DataFrame([{"employee_id": str(
-                    e_id), "name": name, "dept": dept, "position": pos, "salary": salary, "start_date": str(start_date)}])
-                df = pd.concat([df, new_emp], ignore_index=True)
-                conn.update(worksheet="employees", data=df.fillna(""))
-                get_all_employees_cached.clear()
-                return True
-            except Exception as e:
-                return str(e)
-
-        def delete_employee(e_id):
-            try:
-                df = conn.read(worksheet="employees", ttl="0")
-                if df is not None and not df.empty and 'employee_id' in df.columns:
-                    df['employee_id'] = df['employee_id'].astype(str).str.strip()
-                    df['employee_id'] = df['employee_id'].str.replace(r'\.0$', '', regex=True)
-                    target_id = str(e_id).strip()
-                    import re
-                    target_id = re.sub(r'\.0$', '', target_id)
-                    df = df[df['employee_id'] != target_id]
-                    conn.update(worksheet="employees", data=df.fillna(""))
-                get_all_employees_cached.clear()
-            except:
-                pass
-
-        # -- UI: 新增員工區 --
-        with st.expander("➕ 新增新進員工資訊", expanded=False):
-            with st.form("add_employee_form", clear_on_submit=True):
-                col1, col2, col3 = st.columns(3)
-                new_id = col1.text_input("員工編號 (必填)")
-                new_name = col2.text_input("姓名 (必填)")
-                import datetime
-                new_start_date = col3.date_input("到職日", value=datetime.date.today())
-
-                col4, col5, col6 = st.columns(3)
-                new_dept = col4.selectbox(
-                    "所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
-                new_pos = col5.text_input("職位")
-                new_salary = col6.number_input("薪資", min_value=0, step=1000)
-
-                submit_btn = st.form_submit_button("✅ 確認新增")
-                if submit_btn:
-                    if not new_id or not new_name:
-                        st.error("❌ 請填寫員工編號與姓名！")
-                    else:
-                        res = add_employee(
-                            new_id, new_name, new_dept, new_pos, new_salary, new_start_date)
-                        if res == True:
-                            st.success(f"✅ 成功新增員工：{new_name}")
-                            st.rerun()
-                        elif res == "ID_EXISTS":
-                            st.error("❌ 員工編號已存在，請檢查是否重覆。")
-                        else:
-                            st.error(f"❌ 新增失敗：{res}")
-
-        st.divider()
-
-        # -- UI: 員工列表與排序 --
-        df_emp = get_all_employees()
-
-        # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
-        if not df_emp.empty and 'employee_id' in df_emp.columns:
-            df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
-            # 移除 pandas 自動將數字轉為 float 所產生的 .0 結尾
-            df_emp['employee_id'] = df_emp['employee_id'].str.replace(
-                r'\.0$', '', regex=True)
-            df_emp = df_emp[df_emp['employee_id'] != '']
-            df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
-
-        if df_emp.empty:
-            st.info("💡 目前資料庫中尚無員工資訊。")
+        if current_hotel == "主題館":
+            _render_theme_unavailable_notice(
+                '👥 人事概況',
+                '統整各部門人員編制、薪資結構與績效獎金分配機制，支援人力成本佔比評估與達標激勵試算。',
+                ['部門別人力配置、薪資結構分布與員工年資統計總覽', '依據營收目標達成率與個人績效權重，自動化動態試算月度團隊與個人獎金', '產出可稽核之獎金歷史發放紀錄與一鍵匯出簽收明細表'],
+            )
         else:
-            # 計算總薪資 (排除職位為 PT 的人)
-            # 確保 position 欄位存在且處理大小寫
-            if 'position' in df_emp.columns:
-                non_pt_df = df_emp[df_emp['position'].fillna(
-                    '').astype(str).str.upper() != 'PT']
-                total_salary = pd.to_numeric(
-                    non_pt_df['salary'], errors='coerce').fillna(0).sum()
-            else:
-                total_salary = pd.to_numeric(
-                    df_emp['salary'], errors='coerce').fillna(0).sum()
 
-            st.markdown(f"""
-            <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
-                <p style="margin: 0; font-size: 14px; color: #666;">💰 正職員工薪資總計</p>
-                <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
-                <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            col_sort, col_search = st.columns([1, 1])
-            sort_opt = col_sort.selectbox(
-                "排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
-            search_query = col_search.text_input("🔍 搜尋姓名或編號")
-
-            # 搜尋過濾
-            if search_query:
-                df_emp = df_emp[df_emp['name'].astype(str).str.contains(
-                    search_query, case=False) | df_emp['employee_id'].str.contains(search_query, case=False)]
-
-            # 確保 salary 為數值以便排序
-            if 'salary' in df_emp.columns:
-                df_emp['salary'] = pd.to_numeric(
-                    df_emp['salary'], errors='coerce').fillna(0)
-
-            # 排序邏輯
-            if sort_opt == "員工編號順序":
-                df_emp = df_emp.sort_values("employee_id")
-            elif sort_opt == "薪資 (由高到低)":
-                if 'salary' in df_emp.columns:
-                    df_emp = df_emp.sort_values("salary", ascending=False)
-            elif sort_opt == "薪資 (由低到高)":
-                if 'salary' in df_emp.columns:
-                    df_emp = df_emp.sort_values("salary", ascending=True)
-            elif sort_opt == "按部門排序":
-                if 'dept' in df_emp.columns:
-                    df_emp = df_emp.sort_values(["dept", "employee_id"])
-
-            # 自定義表格顯示
-            st.write(f"📊 目前共有 {len(df_emp)} 位員工")
-
-            # 標題列
-            header_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
-            header_cols[0].markdown("**員工編號**")
-            header_cols[1].markdown("**姓名**")
-            header_cols[2].markdown("**部門**")
-            header_cols[3].markdown("**職位**")
-            header_cols[4].markdown("**薪資**")
-            header_cols[5].markdown("**到職日**")
-            header_cols[6].markdown("**操作**")
-
-            st.divider()
-
-            for idx, row in df_emp.iterrows():
-                row_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
-                row_cols[0].write(row.get('employee_id', ''))
-                row_cols[1].write(row.get('name', ''))
-                row_cols[2].write(row.get('dept', ''))
-                row_cols[3].write(row.get('position', ''))
-
-                salary_val = row.get('salary', 0)
+            # -- 人事管理函數 (Google Sheets 版) --
+            def get_all_employees():
                 try:
-                    salary_int = int(float(salary_val))
+                    df = get_all_employees_cached()
+                    return df if df is not None else pd.DataFrame()
                 except:
-                    salary_int = 0
-                row_cols[4].write(f"NT$ {salary_int:,}")
-                row_cols[5].write(str(row.get('start_date', '')))
+                    return pd.DataFrame()
 
-                # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
-                if row_cols[6].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
-                    delete_employee(row.get('employee_id', ''))
-                    st.toast(f"已刪除員工: {row['name']}")
-                    time.sleep(0.5)
-                    st.rerun()
-
-            # --- 💰 獎金發放與試算系統 ---
-            st.divider()
-            st.header("💰 獎金發放與試算系統")
-            
-            # 獎金發放標準與加權公式說明
-            with st.expander("📖 獎金發放標準、加權規則與計算公式說明（點擊展開/收合）", expanded=True):
-                st.markdown("""
-                ### 🎯 獎金分配核心機制（模型 B：純點數積分制）
-                本系統採用**「純點數積分制」**，依據每位同仁的**職位職階**、**年資累積**以及**本期績效考核分數**進行公平、透明的加權分配，並嚴格控管總發放金額不超過預算上限。
-                
-                ---
-                #### 1️⃣ 基本資格條件
-                * **任職門檻**：依據年資截止日，**任職滿 6 個月 (180 天)** 方具備本期獎金分配資格。
-                * **排除機制**：已離職員工或特定不列入名單人員不參與分配。
-                * **名單鎖定**：點擊「儲存本次發放名單與考核分數」後，系統即固定保存此名單與分數，重整頁面時自動載入。
-
-                ---
-                #### 2️⃣ 點數加權規則
-                """)
-                
-                col_r1, col_r2 = st.columns(2)
-                with col_r1:
-                    st.markdown("""
-                    **📌 職位基準點數 (A)**
-                    * **18 點**：組長、大廳經理
-                    * **15 點**：副組長、外場副組長
-                    * **13 點**：職代、內場、工務
-                    * **10 點**：房務員、公清、櫃台員、館助、夜櫃及其他同仁
-                    """)
-                with col_r2:
-                    st.markdown("""
-                    **⏳ 年資點數 (B)**
-                    * **計算方式**：年資（年數）精確採計至小數點後兩位。
-                    * **上限規範**：年資點數最高上限為 **10 點**（年資滿 10 年者最高計 10 點）。
-                    * **試算範例**：滿 1.5 年 = 1.5 點；滿 4 年 2 個月 ≈ 4.17 點。
-                    """)
-
-                st.markdown("""
-                ---
-                #### 3️⃣ 核心計算公式
-                """)
-                
-                st.latex(r"\text{個人總點數} = (\text{職位點數} + \text{年資點數}) \times \left( \frac{\text{績效評核分數}}{100} \right)")
-                st.latex(r"\text{每點價值 (NT\$)} = \frac{\text{本期總獎金池額度}}{\sum \text{所有合格同仁的總點數}}")
-                st.latex(r"\text{建議分配獎金} = \left\lfloor \frac{\text{個人總點數} \times \text{每點價值}}{100} \right\rfloor \times 100 \quad \text{(無條件捨去至百位數)}")
-                
-                st.info("💡 **無條件捨去規則**：為確保總發放金額絕對不超過設定的總獎金池上限，每位同仁的建議金額均自動無條件捨去至百位數（如 NT$ 12,385 → NT$ 12,300），剩餘零頭保留於公司預算中。")
-            
-            # 全局設定區
-            with st.container():
-                st.subheader("1. 全局設定")
-                col_settings1, col_settings2, col_settings3 = st.columns(3)
-                bonus_period = col_settings1.text_input("發放期別", value="2026年中績效獎金")
-                total_bonus_pool = col_settings2.number_input("本期總獎金池額度 (NT$)", min_value=0, step=10000, value=450000)
-                import datetime
-                tenure_cutoff = col_settings3.date_input("年資計算截止日", value=datetime.date.today())
-                
-            # ✨ 智慧化 PDF 自動匯入功能
-            st.subheader("2. 上傳本期評核表 (PDF)")
-            uploaded_pdf = st.file_uploader("上傳 PDF 檔案", type=['pdf'])
-            
-            pdf_data = {}
-            if uploaded_pdf is not None:
+            def add_employee(e_id, name, dept, pos, salary, start_date):
                 try:
-                    import PyPDF2
-                    import re
-                    pdf_reader = PyPDF2.PdfReader(uploaded_pdf)
-                    text = ""
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-                    
-                    matches = re.findall(r'([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*(\d{1,3}(?:\.\d{1,2})?)', text)
-                    for name, score in matches:
-                        pdf_data[name] = float(score)
-                        
-                    st.success(f"成功解析 PDF，共讀取 {len(pdf_data)} 筆成績資料。")
+                    emp_conn = get_hotel_conn("站前館")
+                    df = emp_conn.read(worksheet="employees", ttl="0")
+                    required_cols = ["employee_id", "name",
+                                     "dept", "position", "salary", "start_date"]
+
+                    if df is None or df.empty or not all(c in df.columns for c in required_cols):
+                        if df is None or df.empty:
+                            df = pd.DataFrame(columns=required_cols)
+                        else:
+                            for c in required_cols:
+                                if c not in df.columns:
+                                    df[c] = ""
+
+                    clean_eids = df['employee_id'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                    target_eid = re.sub(r'\.0$', '', str(e_id).strip())
+                    if target_eid in clean_eids.values:
+                        return "ID_EXISTS"
+
+                    new_emp = pd.DataFrame([{"employee_id": target_eid, "name": name, "dept": dept, "position": pos, "salary": salary, "start_date": str(start_date)}])
+                    df = pd.concat([df, new_emp], ignore_index=True)
+                    emp_conn.update(worksheet="employees", data=df.fillna(""))
+                    get_all_employees_cached.clear()
+                    return True
                 except Exception as e:
-                    st.error(f"PDF 解析失敗：{e}")
-                    
-            # 試算與輸入看板
-            st.subheader("3. 試算與輸入看板 (Data Editor)")
-            
-            if not df_emp.empty:
-                bonus_df = df_emp[df_emp['name'] != '余冠傑'].copy()
-                
-                if 'start_date' not in bonus_df.columns:
-                    bonus_df['start_date'] = pd.NaT
-                else:
-                    def _parse_bonus_date(x):
-                        import pandas as pd
-                        s = str(x).replace('.0', '').strip()
-                        if len(s) == 8 and s.isdigit():
-                            return pd.to_datetime(f"{s[:4]}-{s[4:6]}-{s[6:]}", errors='coerce')
-                        return pd.to_datetime(x, errors='coerce')
-                    bonus_df['start_date'] = bonus_df['start_date'].apply(_parse_bonus_date)
-                    
-                bonus_df['tenure_days'] = (pd.to_datetime(tenure_cutoff) - bonus_df['start_date']).dt.days
-                bonus_df['tenure_days'] = bonus_df['tenure_days'].fillna(365)
-                bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
-                bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(1.0)
-                
-                # 讀取已儲存的名單與分數設定 (bonus_config)
-                saved_scores = {}
-                saved_eids = []
+                    return str(e)
+
+            def delete_employee(e_id):
                 try:
-                    cfg_df = conn.read(worksheet="bonus_config", ttl="0")
-                    if cfg_df is not None and not cfg_df.empty:
-                        for _, r in cfg_df.iterrows():
-                            eid = str(r.get('employee_id', '')).replace('.0', '').strip()
-                            if eid:
-                                saved_eids.append(eid)
-                                if 'perf_score' in r and pd.notna(r['perf_score']):
-                                    try:
-                                        saved_scores[eid] = float(r['perf_score'])
-                                    except:
-                                        pass
-                except Exception:
+                    emp_conn = get_hotel_conn("站前館")
+                    df = emp_conn.read(worksheet="employees", ttl="0")
+                    if df is not None and not df.empty and 'employee_id' in df.columns:
+                        df['employee_id'] = df['employee_id'].astype(str).str.strip()
+                        df['employee_id'] = df['employee_id'].str.replace(r'\.0$', '', regex=True)
+                        target_id = str(e_id).strip()
+                        import re
+                        target_id = re.sub(r'\.0$', '', target_id)
+                        df = df[df['employee_id'] != target_id]
+                        emp_conn.update(worksheet="employees", data=df.fillna(""))
+                    get_all_employees_cached.clear()
+                except:
                     pass
 
-                # 若 bonus_config 已有固定名單則直接帶入該名單；若尚無儲存紀錄，預設以滿 180 天為發放名單
-                if saved_eids:
-                    bonus_df['eid_clean'] = bonus_df['employee_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                    bonus_df = bonus_df[bonus_df['eid_clean'].isin(saved_eids)].copy()
+            # -- UI: 新增員工區 --
+            with st.expander("➕ 新增新進員工資訊", expanded=False):
+                with st.form("add_employee_form", clear_on_submit=True):
+                    col1, col2, col3 = st.columns(3)
+                    new_id = col1.text_input("員工編號 (必填)")
+                    new_name = col2.text_input("姓名 (必填)")
+                    import datetime
+                    new_start_date = col3.date_input("到職日", value=datetime.date.today())
+
+                    col4, col5, col6 = st.columns(3)
+                    new_dept = col4.selectbox(
+                        "所屬部門", ["路徒Plus行旅站前館", "櫃檯", "房務", "工務", "The Peak"])
+                    new_pos = col5.text_input("職位")
+                    new_salary = col6.number_input("薪資", min_value=0, step=1000)
+
+                    submit_btn = st.form_submit_button("✅ 確認新增")
+                    if submit_btn:
+                        if not new_id or not new_name:
+                            st.error("❌ 請填寫員工編號與姓名！")
+                        else:
+                            res = add_employee(
+                                new_id, new_name, new_dept, new_pos, new_salary, new_start_date)
+                            if res == True:
+                                st.success(f"✅ 成功新增員工：{new_name}")
+                                st.rerun()
+                            elif res == "ID_EXISTS":
+                                st.error("❌ 員工編號已存在，請檢查是否重覆。")
+                            else:
+                                st.error(f"❌ 新增失敗：{res}")
+
+            st.divider()
+
+            # -- UI: 員工列表與排序 --
+            df_emp = get_all_employees()
+
+            # 過濾掉空白的資料列 (如 Google Sheets 常見的結尾空白行)
+            if not df_emp.empty and 'employee_id' in df_emp.columns:
+                df_emp['employee_id'] = df_emp['employee_id'].astype(str).str.strip()
+                # 移除 pandas 自動將數字轉為 float 所產生的 .0 結尾
+                df_emp['employee_id'] = df_emp['employee_id'].str.replace(
+                    r'\.0$', '', regex=True)
+                df_emp = df_emp[df_emp['employee_id'] != '']
+                df_emp = df_emp[df_emp['employee_id'].str.lower() != 'nan']
+
+            if df_emp.empty:
+                st.info("💡 目前資料庫中尚無員工資訊。")
+            else:
+                # 計算總薪資 (排除職位為 PT 的人)
+                # 確保 position 欄位存在且處理大小寫
+                if 'position' in df_emp.columns:
+                    non_pt_df = df_emp[df_emp['position'].fillna(
+                        '').astype(str).str.upper() != 'PT']
+                    total_salary = pd.to_numeric(
+                        non_pt_df['salary'].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum()
                 else:
-                    bonus_df = bonus_df[bonus_df['tenure_days'] >= 180].copy()
-                
-                def get_position_points(pos):
-                    pos = str(pos)
-                    if any(x in pos for x in ['組長', '大廳經理']) and '副' not in pos:
-                        return 18
-                    elif '副組長' in pos:
-                        return 15
-                    elif any(x in pos for x in ['職代', '內場', '工務']):
-                        return 13
-                    else:
-                        return 10
-                        
-                bonus_df['pos_points'] = bonus_df['position'].apply(get_position_points)
-                bonus_df['tenure_points'] = bonus_df['tenure_years'].apply(lambda x: min(round(x, 2), 10.0))
+                    total_salary = pd.to_numeric(
+                        df_emp['salary'].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum()
 
-                def get_initial_score(row):
-                    name = str(row.get('name', '')).strip()
-                    eid = str(row.get('employee_id', '')).replace('.0', '').strip()
-                    if pdf_data and name in pdf_data:
-                        return float(pdf_data[name])
-                    if eid in saved_scores:
-                        return float(saved_scores[eid])
-                    return 80.0
+                st.markdown(f"""
+                <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50; margin-bottom: 20px;">
+                    <p style="margin: 0; font-size: 14px; color: #666;">💰 正職員工薪資總計</p>
+                    <h2 style="margin: 0; color: #2e437c;">NT$ {int(total_salary):,}</h2>
+                    <p style="margin: 5px 0 0 0; font-size: 12px; color: #999;">* 已自動排除職位名稱為 "PT" 的人員數據</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-                bonus_df['perf_score'] = bonus_df.apply(get_initial_score, axis=1)
-                
-                edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points', 'perf_score']].copy()
-                edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
-                
-                st.markdown("請確認並微調以下考核分數 (可隨時點擊下方儲存按鈕將名單與分數固定保存)：")
-                edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'], num_rows="dynamic")
-                
-                col_save_cfg, _ = st.columns([3, 7])
-                if col_save_cfg.button("💾 儲存本次發放名單與考核分數 (重整時固定載入)", help="將目前表格中的發放名單與考核分數固定儲存至資料庫"):
+                col_sort, col_search = st.columns([1, 1])
+                sort_opt = col_sort.selectbox(
+                    "排序方式", ["員工編號順序", "薪資 (由高到低)", "薪資 (由低到高)", "按部門排序"])
+                search_query = col_search.text_input("🔍 搜尋姓名或編號")
+
+                # 搜尋過濾 (使用獨立顯示用 DataFrame，避免搜尋後破壞下方獎金試算母體)
+                df_emp_display = df_emp.copy()
+                if search_query:
+                    df_emp_display = df_emp_display[df_emp_display['name'].astype(str).str.contains(
+                        search_query, case=False) | df_emp_display['employee_id'].str.contains(search_query, case=False)]
+
+                # 確保 salary 為數值以便排序
+                if 'salary' in df_emp_display.columns:
+                    df_emp_display['salary'] = pd.to_numeric(
+                        df_emp_display['salary'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
+                # 排序邏輯
+                if sort_opt == "員工編號順序":
+                    df_emp_display = df_emp_display.sort_values("employee_id")
+                elif sort_opt == "薪資 (由高到低)":
+                    if 'salary' in df_emp_display.columns:
+                        df_emp_display = df_emp_display.sort_values("salary", ascending=False)
+                elif sort_opt == "薪資 (由低到高)":
+                    if 'salary' in df_emp_display.columns:
+                        df_emp_display = df_emp_display.sort_values("salary", ascending=True)
+                elif sort_opt == "按部門排序":
+                    if 'dept' in df_emp_display.columns:
+                        df_emp_display = df_emp_display.sort_values(["dept", "employee_id"])
+
+                # 自定義表格顯示
+                st.write(f"📊 目前共有 {len(df_emp_display)} 位員工")
+
+                # 標題列
+                header_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
+                header_cols[0].markdown("**員工編號**")
+                header_cols[1].markdown("**姓名**")
+                header_cols[2].markdown("**部門**")
+                header_cols[3].markdown("**職位**")
+                header_cols[4].markdown("**薪資**")
+                header_cols[5].markdown("**到職日**")
+                header_cols[6].markdown("**操作**")
+
+                st.divider()
+
+                for idx, row in df_emp_display.iterrows():
+                    row_cols = st.columns([1.2, 1.2, 1.5, 1.5, 1.5, 1.2, 1])
+                    row_cols[0].write(row.get('employee_id', ''))
+                    row_cols[1].write(row.get('name', ''))
+                    row_cols[2].write(row.get('dept', ''))
+                    row_cols[3].write(row.get('position', ''))
+
+                    salary_val = row.get('salary', 0)
                     try:
-                        save_cfg = edited_df[['employee_id', 'name', 'perf_score']].copy()
-                        save_cfg['employee_id'] = save_cfg['employee_id'].astype(str)
-                        conn.update(worksheet="bonus_config", data=save_cfg.fillna(""))
-                        st.success("✅ 成功儲存發放名單與分數！下次重新整理網頁時將自動鎖定此名單。")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"儲存失敗（若尚未建立工作表，請先在 Google Sheets 新增名為 bonus_config 的頁籤）：{e}")
-                
-                edited_df['total_points'] = (edited_df['pos_points'] + edited_df['tenure_points']) * (edited_df['perf_score'] / 100)
-                
-                total_valid_points = edited_df['total_points'].sum()
-                point_value = total_bonus_pool / total_valid_points if total_valid_points > 0 else 0
-                
-                edited_df['suggested_bonus'] = (edited_df['total_points'] * point_value).fillna(0)
-                edited_df['suggested_bonus'] = edited_df['suggested_bonus'].apply(lambda x: int(x / 100) * 100)
-                
-                # 建立薪資對照字典
-                bonus_df['salary_num'] = pd.to_numeric(bonus_df['salary'], errors='coerce').fillna(0).astype(int)
-                salary_dict = bonus_df.set_index('employee_id')['salary_num'].to_dict()
+                        salary_int = int(float(str(salary_val).replace(',', '')))
+                    except:
+                        salary_int = 0
+                    row_cols[4].write(f"NT$ {salary_int:,}")
+                    row_cols[5].write(str(row.get('start_date', '')))
 
-                st.markdown("微調實際發放金額：")
-                final_edit_df = edited_df[['employee_id', 'name', 'total_points', 'suggested_bonus']].copy()
-                final_edit_df['salary'] = final_edit_df['employee_id'].map(salary_dict).fillna(0).astype(int)
-                final_edit_df['actual_bonus'] = final_edit_df['suggested_bonus']
-                final_edit_df['bonus_salary_ratio'] = final_edit_df.apply(
-                    lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r['salary'] > 0 else "0.0%", axis=1
-                )
-                final_edit_df = final_edit_df[['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'actual_bonus', 'bonus_salary_ratio']]
+                    # 使用 idx 來保證 key 絕對唯一，避免 StreamlitDuplicateElementKey
+                    if row_cols[6].button("🗑️", key=f"del_{idx}_{row.get('employee_id', '')}", help="刪除此員工"):
+                        delete_employee(row.get('employee_id', ''))
+                        st.toast(f"已刪除員工: {row['name']}")
+                        time.sleep(0.5)
+                        st.rerun()
+
+                # --- 💰 獎金發放與試算系統 ---
+                st.divider()
+                st.header("💰 獎金發放與試算系統")
+            
+                # 獎金發放標準與加權公式說明
+                with st.expander("📖 獎金發放標準、加權規則與計算公式說明（點擊展開/收合）", expanded=True):
+                    st.markdown("""
+                    ### 🎯 獎金分配核心機制（模型 B：純點數積分制）
+                    本系統採用**「純點數積分制」**，依據每位同仁的**職位職階**、**年資累積**以及**本期績效考核分數**進行公平、透明的加權分配，並嚴格控管總發放金額不超過預算上限。
                 
-                final_df = st.data_editor(
-                    final_edit_df, 
-                    disabled=['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'bonus_salary_ratio'],
-                    column_config={
-                        "employee_id": st.column_config.TextColumn("員工編號"),
-                        "name": st.column_config.TextColumn("姓名"),
-                        "salary": st.column_config.NumberColumn("月薪 (NT$)", format="NT$ %d"),
-                        "total_points": st.column_config.NumberColumn("總點數", format="%.2f 點"),
-                        "suggested_bonus": st.column_config.NumberColumn("建議獎金", format="NT$ %d"),
-                        "actual_bonus": st.column_config.NumberColumn("實際發放金額 (可微調)", format="NT$ %d"),
-                        "bonus_salary_ratio": st.column_config.TextColumn("獎金薪資比 (%)")
-                    }
-                )
+                    ---
+                    #### 1️⃣ 基本資格條件
+                    * **任職門檻**：依據年資截止日，**任職滿 6 個月 (180 天)** 方具備本期獎金分配資格。
+                    * **排除機制**：已離職員工或特定不列入名單人員不參與分配。
+                    * **名單鎖定**：點擊「儲存本次發放名單與考核分數」後，系統即固定保存此名單與分數，重整頁面時自動載入。
+
+                    ---
+                    #### 2️⃣ 點數加權規則
+                    """)
                 
-                total_actual_bonus = final_df['actual_bonus'].sum()
+                    col_r1, col_r2 = st.columns(2)
+                    with col_r1:
+                        st.markdown("""
+                        **📌 職位基準點數 (A)**
+                        * **18 點**：組長、大廳經理
+                        * **15 點**：副組長、外場副組長
+                        * **13 點**：職代、內場、工務
+                        * **10 點**：房務員、公清、櫃台員、館助、夜櫃及其他同仁
+                        """)
+                    with col_r2:
+                        st.markdown("""
+                        **⏳ 年資點數 (B)**
+                        * **計算方式**：年資（年數）精確採計至小數點後兩位。
+                        * **上限規範**：年資點數最高上限為 **10 點**（年資滿 10 年者最高計 10 點）。
+                        * **試算範例**：滿 1.5 年 = 1.5 點；滿 4 年 2 個月 ≈ 4.17 點。
+                        """)
+
+                    st.markdown("""
+                    ---
+                    #### 3️⃣ 核心計算公式
+                    """)
                 
-                st.write(f"**本期總獎金池:** NT$ {total_bonus_pool:,}")
-                st.write(f"**總發放金額:** NT$ {total_actual_bonus:,}")
+                    st.latex(r"\text{個人總點數} = (\text{職位點數} + \text{年資點數}) \times \left( \frac{\text{績效評核分數}}{100} \right)")
+                    st.latex(r"\text{每點價值 (NT\$)} = \frac{\text{本期總獎金池額度}}{\sum \text{所有合格同仁的總點數}}")
+                    st.latex(r"\text{建議分配獎金} = \left\lfloor \frac{\text{個人總點數} \times \text{每點價值}}{100} \right\rfloor \times 100 \quad \text{(無條件捨去至百位數)}")
                 
-                if total_actual_bonus > total_bonus_pool:
-                    st.error("❌ 警告：總發放金額超過總獎金池！")
-                else:
-                    st.success("✅ 預算控管正常。")
+                    st.info("💡 **無條件捨去規則**：為確保總發放金額絕對不超過設定的總獎金池上限，每位同仁的建議金額均自動無條件捨去至百位數（如 NT$ 12,385 → NT$ 12,300），剩餘零頭保留於公司預算中。")
+            
+                # 全局設定區
+                with st.container():
+                    st.subheader("1. 全局設定")
+                    col_settings1, col_settings2, col_settings3 = st.columns(3)
+                    bonus_period = col_settings1.text_input("發放期別", value="2026年中績效獎金")
+                    total_bonus_pool = col_settings2.number_input("本期總獎金池額度 (NT$)", min_value=0, step=10000, value=450000)
+                    import datetime
+                    tenure_cutoff = col_settings3.date_input("年資計算截止日", value=datetime.date.today())
+                
+                # ✨ 智慧化 PDF 自動匯入功能
+                st.subheader("2. 上傳本期評核表 (PDF)")
+                uploaded_pdf = st.file_uploader("上傳 PDF 檔案", type=['pdf'])
+            
+                pdf_data = {}
+                if uploaded_pdf is not None:
+                    try:
+                        import PyPDF2
+                        import re
+                        pdf_reader = PyPDF2.PdfReader(uploaded_pdf)
+                        text = ""
+                        for page in pdf_reader.pages:
+                            text += page.extract_text() + "\n"
                     
-                if st.button("💾 儲存並匯出 CSV"):
-                    if total_actual_bonus > total_bonus_pool:
-                        st.error("發放金額超過預算，無法儲存！")
+                        matches = re.findall(r'([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*(\d{1,3}(?:\.\d{1,2})?)', text)
+                        for name, score in matches:
+                            pdf_data[name] = float(score)
+                        
+                        st.success(f"成功解析 PDF，共讀取 {len(pdf_data)} 筆成績資料。")
+                    except Exception as e:
+                        st.error(f"PDF 解析失敗：{e}")
+                    
+                # 試算與輸入看板
+                st.subheader("3. 試算與輸入看板 (Data Editor)")
+            
+                if not df_emp.empty:
+                    bonus_df = df_emp[df_emp['name'] != '余冠傑'].copy()
+                
+                    if 'start_date' not in bonus_df.columns:
+                        bonus_df['start_date'] = pd.NaT
                     else:
+                        def _parse_bonus_date(x):
+                            import pandas as pd
+                            s = str(x).replace('.0', '').strip()
+                            if len(s) == 8 and s.isdigit():
+                                return pd.to_datetime(f"{s[:4]}-{s[4:6]}-{s[6:]}", errors='coerce')
+                            return pd.to_datetime(x, errors='coerce')
+                        bonus_df['start_date'] = bonus_df['start_date'].apply(_parse_bonus_date)
+                    
+                    bonus_df['tenure_days'] = (pd.to_datetime(tenure_cutoff) - bonus_df['start_date']).dt.days
+                    bonus_df['tenure_days'] = bonus_df['tenure_days'].fillna(365)
+                    bonus_df['tenure_years'] = bonus_df['tenure_days'] / 365.25
+                    bonus_df['tenure_years'] = bonus_df['tenure_years'].fillna(1.0)
+                
+                    # 讀取已儲存的名單與分數設定 (bonus_config)
+                    saved_scores = {}
+                    saved_eids = []
+                    try:
+                        emp_conn = get_hotel_conn("站前館")
+                        cfg_df = emp_conn.read(worksheet="bonus_config", ttl="0")
+                        if cfg_df is not None and not cfg_df.empty:
+                            for _, r in cfg_df.iterrows():
+                                eid = str(r.get('employee_id', '')).replace('.0', '').strip()
+                                if eid:
+                                    saved_eids.append(eid)
+                                    if 'perf_score' in r and pd.notna(r['perf_score']):
+                                        try:
+                                            saved_scores[eid] = float(r['perf_score'])
+                                        except:
+                                            pass
+                    except Exception:
+                        pass
+
+                    # 若 bonus_config 已有固定名單則直接帶入該名單；若尚無儲存紀錄，預設以滿 180 天為發放名單
+                    if saved_eids:
+                        bonus_df['eid_clean'] = bonus_df['employee_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        bonus_df = bonus_df[bonus_df['eid_clean'].isin(saved_eids)].copy()
+                    else:
+                        bonus_df = bonus_df[bonus_df['tenure_days'] >= 180].copy()
+                
+                    def get_position_points(pos):
+                        pos = str(pos)
+                        if any(x in pos for x in ['組長', '大廳經理']) and '副' not in pos:
+                            return 18
+                        elif '副組長' in pos:
+                            return 15
+                        elif any(x in pos for x in ['職代', '內場', '工務']):
+                            return 13
+                        else:
+                            return 10
+                        
+                    bonus_df['pos_points'] = bonus_df['position'].apply(get_position_points)
+                    bonus_df['tenure_points'] = bonus_df['tenure_years'].apply(lambda x: min(round(x, 2), 10.0))
+
+                    def get_initial_score(row):
+                        name = str(row.get('name', '')).strip()
+                        eid = str(row.get('employee_id', '')).replace('.0', '').strip()
+                        if pdf_data and name in pdf_data:
+                            return float(pdf_data[name])
+                        if eid in saved_scores:
+                            return float(saved_scores[eid])
+                        return 80.0
+
+                    bonus_df['perf_score'] = bonus_df.apply(get_initial_score, axis=1)
+                
+                    edit_df = bonus_df[['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points', 'perf_score']].copy()
+                    edit_df['start_date'] = edit_df['start_date'].dt.strftime('%Y-%m-%d').fillna('')
+                
+                    st.markdown("請確認並微調以下考核分數 (可隨時點擊下方儲存按鈕將名單與分數固定保存)：")
+                    edited_df = st.data_editor(edit_df, disabled=['employee_id', 'name', 'position', 'start_date', 'pos_points', 'tenure_points'], num_rows="dynamic")
+                
+                    col_save_cfg, _ = st.columns([3, 7])
+                    if col_save_cfg.button("💾 儲存本次發放名單與考核分數 (重整時固定載入)", help="將目前表格中的發放名單與考核分數固定儲存至資料庫"):
                         try:
-                            br_df = conn.read(worksheet="bonus_records", ttl="0")
-                            if br_df is None or br_df.empty:
-                                br_df = pd.DataFrame(columns=["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"])
-                            
-                            new_records = final_df.copy()
-                            new_records['bonus_salary_ratio'] = new_records.apply(
-                                lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r.get('salary', 0) > 0 else "0.0%", axis=1
-                            )
-                            new_records['period'] = bonus_period
-                            new_records = pd.merge(new_records, edited_df[['employee_id', 'perf_score']], on='employee_id', how='left')
-                            new_records = new_records[["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"]]
-                            
-                            br_df = pd.concat([br_df, new_records], ignore_index=True)
-                            conn.update(worksheet="bonus_records", data=br_df.fillna(""))
-                            st.success("✅ 成功儲存至資料庫！")
-                            
-                            csv = new_records.to_csv(index=False).encode('utf-8-sig')
-                            st.download_button(
-                                label="📥 下載 CSV 簽收單",
-                                data=csv,
-                                file_name=f"{bonus_period}_bonus.csv",
-                                mime="text/csv",
-                            )
+                            emp_conn = get_hotel_conn("站前館")
+                            save_cfg = edited_df[['employee_id', 'name', 'perf_score']].copy()
+                            save_cfg['employee_id'] = save_cfg['employee_id'].astype(str)
+                            emp_conn.update(worksheet="bonus_config", data=save_cfg.fillna(""))
+                            st.success("✅ 成功儲存發放名單與分數！下次重新整理網頁時將自動鎖定此名單。")
+                            time.sleep(1)
+                            st.rerun()
                         except Exception as e:
-                            st.error(f"儲存失敗：{e}")
+                            st.error(f"儲存失敗（若尚未建立工作表，請先在 Google Sheets 新增名為 bonus_config 的頁籤）：{e}")
+                
+                    edited_df['total_points'] = (edited_df['pos_points'] + edited_df['tenure_points']) * (edited_df['perf_score'] / 100)
+                
+                    total_valid_points = edited_df['total_points'].sum()
+                    point_value = total_bonus_pool / total_valid_points if total_valid_points > 0 else 0
+                
+                    edited_df['suggested_bonus'] = (edited_df['total_points'] * point_value).fillna(0)
+                    edited_df['suggested_bonus'] = edited_df['suggested_bonus'].apply(lambda x: int(x / 100) * 100)
+                
+                    # 建立薪資對照字典
+                    bonus_df['salary_num'] = pd.to_numeric(bonus_df['salary'].astype(str).str.replace(',', ''), errors='coerce').fillna(0).astype(int)
+                    salary_dict = bonus_df.set_index('employee_id')['salary_num'].to_dict()
+
+                    st.markdown("微調實際發放金額：")
+                    final_edit_df = edited_df[['employee_id', 'name', 'total_points', 'suggested_bonus']].copy()
+                    final_edit_df['salary'] = final_edit_df['employee_id'].map(salary_dict).fillna(0).astype(int)
+                    final_edit_df['actual_bonus'] = final_edit_df['suggested_bonus']
+                    final_edit_df['bonus_salary_ratio'] = final_edit_df.apply(
+                        lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r['salary'] > 0 else "0.0%", axis=1
+                    )
+                    final_edit_df = final_edit_df[['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'actual_bonus', 'bonus_salary_ratio']]
+                
+                    final_df = st.data_editor(
+                        final_edit_df, 
+                        disabled=['employee_id', 'name', 'salary', 'total_points', 'suggested_bonus', 'bonus_salary_ratio'],
+                        column_config={
+                            "employee_id": st.column_config.TextColumn("員工編號"),
+                            "name": st.column_config.TextColumn("姓名"),
+                            "salary": st.column_config.NumberColumn("月薪 (NT$)", format="NT$ %d"),
+                            "total_points": st.column_config.NumberColumn("總點數", format="%.2f 點"),
+                            "suggested_bonus": st.column_config.NumberColumn("建議獎金", format="NT$ %d"),
+                            "actual_bonus": st.column_config.NumberColumn("實際發放金額 (可微調)", format="NT$ %d"),
+                            "bonus_salary_ratio": st.column_config.TextColumn("獎金薪資比 (%)")
+                        }
+                    )
+                
+                    total_actual_bonus = final_df['actual_bonus'].sum()
+                
+                    st.write(f"**本期總獎金池:** NT$ {total_bonus_pool:,}")
+                    st.write(f"**總發放金額:** NT$ {total_actual_bonus:,}")
+                
+                    if total_actual_bonus > total_bonus_pool:
+                        st.error("❌ 警告：總發放金額超過總獎金池！")
+                    else:
+                        st.success("✅ 預算控管正常。")
+                    
+                    if st.button("💾 儲存並匯出 CSV"):
+                        if total_actual_bonus > total_bonus_pool:
+                            st.error("發放金額超過預算，無法儲存！")
+                        else:
+                            try:
+                                emp_conn = get_hotel_conn("站前館")
+                                br_df = emp_conn.read(worksheet="bonus_records", ttl="0")
+                                if br_df is None or br_df.empty:
+                                    br_df = pd.DataFrame(columns=["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"])
+                            
+                                new_records = final_df.copy()
+                                new_records['bonus_salary_ratio'] = new_records.apply(
+                                    lambda r: f"{(r['actual_bonus'] / r['salary'] * 100):.1f}%" if r.get('salary', 0) > 0 else "0.0%", axis=1
+                                )
+                                new_records['period'] = bonus_period
+                                new_records = pd.merge(new_records, edited_df[['employee_id', 'perf_score']], on='employee_id', how='left')
+                                new_records = new_records[["period", "employee_id", "name", "salary", "perf_score", "total_points", "actual_bonus", "bonus_salary_ratio"]]
+                            
+                                br_df = pd.concat([br_df, new_records], ignore_index=True)
+                                emp_conn.update(worksheet="bonus_records", data=br_df.fillna(""))
+                                st.success("✅ 成功儲存至資料庫！")
+                            
+                                csv = new_records.to_csv(index=False).encode('utf-8-sig')
+                                st.download_button(
+                                    label="📥 下載 CSV 簽收單",
+                                    data=csv,
+                                    file_name=f"{bonus_period}_bonus.csv",
+                                    mime="text/csv",
+                                )
+                            except Exception as e:
+                                st.error(f"儲存失敗：{e}")
 
 
 def clean_nation_name(nation_str):
@@ -10394,7 +10611,7 @@ def render_report_tab():
         ly_summary = fetch_month_summary(last_year_date.year, last_year_date.month)
         lm_summary = fetch_month_summary(last_month_date.year, last_month_date.month)
         m2_summary = fetch_month_summary(m2_date.year, m2_date.month)
-        y_adr, y_pure_adr = fetch_yearly_metrics(year)
+        y_adr, y_pure_adr = fetch_yearly_metrics(year, hotel_type=current_hotel)
         
         # 2. Budget / CPG
         import calendar
@@ -10472,8 +10689,8 @@ def render_report_tab():
                     af_est_sum += r.get('af_est', 0)
                     
                     hh_sum += r['hh_act']
-                    fb_rev += r['revenue']
                     if 'total_guests' in r: total_hotel_guests += r['total_guests']
+                fb_rev = (bf_est_sum + af_est_sum) * 300 if (bf_est_sum + af_est_sum) > 0 else g * 300
                     
             return {
                 'total_fb_guests': g,
@@ -10531,13 +10748,13 @@ def render_report_tab():
                 def robust_date_parse(val):
                     if pd.isna(val):
                         return None
-                    s = str(val).strip().replace('.0', '')
+                    import re as _re_dp
+                    s = _re_dp.sub(r'\.0$', '', str(val).strip())
                     if not s or s in ('nan', 'None', 'NaT'):
                         return None
                     if '/' in s:
                         res = minguo_to_western(s)
                         if res: return res
-                    import re as _re_dp
                     if _re_dp.match(r'^\d{6}$', s):
                         try: return pd.to_datetime(s, format='%Y%m').date()
                         except: pass
@@ -10618,12 +10835,6 @@ def render_report_tab():
                     append_hh_df['_dept_ym'] = list(zip(append_hh_df[dept_col].astype(str), append_hh_df['ym'].fillna('')))
                     append_hh_df = append_hh_df[~append_hh_df['_dept_ym'].isin(official_dept_ym_rep)].drop(columns=['ym', '_dept_ym'])
 
-                    st.info(
-                        "💡 如何修正比對結果：\n\n"
-                        "若某品項顯示「未比對到」，請告知我該品項在 purchase_data 中的實際名稱，"
-                        "我將協助您更新關鍵字清單，確保系統可正確抓取真實採購金額。"
-                    )
-
                     if not append_hh_df.empty:
                         item_desc_col = next((c for c in df_purchase.columns if '品名' in c or '項次說明' in c or '明細' in c or '項目' in c), None)
                         if '品項名稱' in df_hh_report.columns:
@@ -10691,14 +10902,27 @@ def render_report_tab():
             if not df_future.empty and 'date' in df_future.columns:
                 today_d = datetime.date.today()
                 df_future['_d'] = pd.to_datetime(df_future['date'], errors='coerce').dt.date
-                df_f_m = df_future[(df_future['_d'] >= today_d) & (df_future['_d'] <= datetime.date(year, month, last_day))]
+                fut_start_d = max(today_d, datetime.date(year, month, 1))
+                df_f_m = df_future[(df_future['_d'] >= fut_start_d) & (df_future['_d'] <= datetime.date(year, month, last_day))]
                 if not df_f_m.empty:
                     bf_rate = st.session_state.get('tab_p_bf_rate', 0.6)
                     af_rate = st.session_state.get('tab_p_af_rate', 0.2)
-                    for _, r in df_f_m.iterrows():
-                        raw_g = pd.to_numeric(str(r.get('有效預估人數', 0)).replace(',',''), errors='coerce')
-                        if pd.isna(raw_g): raw_g = 0
-                        future_guests_est += int(raw_g * bf_rate) + int(raw_g * af_rate)
+                    _g_col_f = '數量' if '數量' in df_f_m.columns else ('有效預估人數' if '有效預估人數' in df_f_m.columns else None)
+                    _m_col_f = next((c for c in df_f_m.columns if any(k in c for k in ['餐別', '類型', '服務', 'meal', 'type'])), None)
+                    if _g_col_f:
+                        for _, r in df_f_m.iterrows():
+                            raw_g = pd.to_numeric(str(r.get(_g_col_f, 0)).replace(',', ''), errors='coerce')
+                            if pd.isna(raw_g): raw_g = 0
+                            if _m_col_f:
+                                _mv = str(r.get(_m_col_f, '')).lower()
+                                if any(k in _mv for k in ['早', 'breakfast', 'bf']):
+                                    future_guests_est += int(raw_g * bf_rate)
+                                elif any(k in _mv for k in ['下午', 'afternoon', 'tea', 'af']):
+                                    future_guests_est += int(raw_g * af_rate)
+                                else:
+                                    future_guests_est += int(raw_g * bf_rate)
+                            else:
+                                future_guests_est += int(raw_g * bf_rate) + int(raw_g * af_rate)
         except:
             pass
             
@@ -10849,14 +11073,15 @@ def render_report_tab():
     adr_ly = ly_summary.get('avg_adr', 0.0)
     has_ly_data = bool(ly_summary.get('revpar', 0.0) > 0 and adr_ly > 0 and occ_ly > 0)
     
+    adr_vs_year_diff = adr_val - y_adr
     if has_ly_data and adr_ly > 0:
         adr_diff = adr_val - adr_ly
         adr_delta_label = f"{int(adr_diff):+} vs 去年"
         adr_status = "🟢 優" if adr_diff >= 0 else ("🟡 平" if adr_diff >= -100 else "🔴 差")
         rev_delta_label = f"{_fmt_compact(rev_diff, show_sign=True)} vs 去年"
     else:
-        adr_diff = adr_val - y_adr
-        adr_delta_label = f"{int(adr_diff):+} vs 年度均價"
+        adr_diff = adr_vs_year_diff
+        adr_delta_label = f"{int(adr_vs_year_diff):+} vs 年度均價"
         adr_status = "🟢 優" if adr_val >= y_adr else ("🟡 平" if adr_val >= y_adr*0.9 else "🔴 差")
         rev_delta_label = "無歷史數據"
     
@@ -10864,6 +11089,8 @@ def render_report_tab():
     revpar_ly = ly_summary['revpar']
     revpar_diff = revpar_val - revpar_ly
     revpar_status = "🟢 優" if revpar_diff > 0 else "🔴 差"
+    occ_delta_label = f"{occ_diff:+.1f}% vs 去年" if has_ly_data else "無歷史數據"
+    revpar_delta_label = f"{int(revpar_diff):+} vs 去年" if has_ly_data else "無歷史數據"
     
     # removed cpg_actual
     cpg_status = "🟢 佳 (未超標)" if cpg_actual <= cpg_target else "🔴 警告 (超標)"
@@ -10875,11 +11102,11 @@ def render_report_tab():
     with col1:
         st.metric("本月 Revenue", f"NT$ {_fmt_compact(rev_val)}", rev_delta_label, help=f"狀態: {rev_status}")
     with col2:
-        st.metric("本月 OCC", f"{occ_val:.1f}%", f"{occ_diff:+.1f}% vs 去年", help=f"狀態: {occ_status}")
+        st.metric("本月 OCC", f"{occ_val:.1f}%", occ_delta_label, help=f"狀態: {occ_status}")
     with col3:
         st.metric("本月 ADR", f"NT$ {int(adr_val):,}", adr_delta_label, help=f"狀態: {adr_status}")
     with col4:
-        st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", f"{int(revpar_diff):+} vs 去年", help=f"狀態: {revpar_status}")
+        st.metric("本月 RevPAR", f"NT$ {int(revpar_val):,}", revpar_delta_label, help=f"狀態: {revpar_status}")
     with col5:
         st.metric("食材 CPG", f"NT$ {int(cpg_actual):,}", f"{int(cpg_actual - cpg_target):+} vs 目標", help=f"狀態: {cpg_status}")
     with col6:
@@ -11080,16 +11307,31 @@ def render_report_tab():
         
         st.markdown("<br>**▍ The Peak 綜合營收效益 (Efficiency)**", unsafe_allow_html=True)
         
-        # Calculations for The Peak
+        # Calculations for The Peak (雙館合計對齊雙館餐飲)
+        def _dual_room_totals(yy, mm, fallback_summ):
+            sz = fetch_month_summary_by_hotel(yy, mm, "站前館")
+            st_h = fetch_month_summary_by_hotel(yy, mm, "主題館")
+            d_rev = sz.get('rev', 0) + st_h.get('rev', 0)
+            d_sold = sz.get('sold_rooms', 0) + st_h.get('sold_rooms', 0)
+            if d_rev == 0:
+                d_rev = fallback_summ.get('rev', 0)
+            if d_sold == 0:
+                d_sold = fallback_summ.get('sold_rooms', 0)
+            return d_rev, d_sold
+
         def _calc_eff(spent, f_rev, r_rev, sold):
             r_ratio = (spent / r_rev * 100) if r_rev > 0 else 0
             fb_ratio = (spent / f_rev * 100) if f_rev > 0 else 0
             trevpor = ((r_rev + f_rev) / sold) if sold > 0 else 0
             return r_ratio, fb_ratio, trevpor
             
-        m_r_ratio, m_fb_ratio, m_trev = _calc_eff(peak_spent, m_fb_data['fb_rev'], curr_summary['rev'], curr_summary['sold_rooms'])
-        lm_r_ratio, lm_fb_ratio, lm_trev = _calc_eff(lm_peak_spent, lm_fb_data['fb_rev'], lm_summary['rev'], lm_summary['sold_rooms'])
-        m2_r_ratio, m2_fb_ratio, m2_trev = _calc_eff(m2_p_spent, m2_fb_data['fb_rev'], m2_summary['rev'], m2_summary['sold_rooms'])
+        m_d_rev, m_d_sold = _dual_room_totals(year, month, curr_summary)
+        lm_d_rev, lm_d_sold = _dual_room_totals(last_month_date.year, last_month_date.month, lm_summary)
+        m2_d_rev, m2_d_sold = _dual_room_totals(m2_date.year, m2_date.month, m2_summary)
+
+        m_r_ratio, m_fb_ratio, m_trev = _calc_eff(peak_spent, m_fb_data['fb_rev'], m_d_rev, m_d_sold)
+        lm_r_ratio, lm_fb_ratio, lm_trev = _calc_eff(lm_peak_spent, lm_fb_data['fb_rev'], lm_d_rev, lm_d_sold)
+        m2_r_ratio, m2_fb_ratio, m2_trev = _calc_eff(m2_p_spent, m2_fb_data['fb_rev'], m2_d_rev, m2_d_sold)
         
         eff_data = [
             {"月份": f"{year}-{month:02d}", "TRevPOR (每房總創收)": f"NT$ {int(m_trev):,}", "成本佔房費比": f"{m_r_ratio:.1f}%", "餐飲收支比": f"{m_fb_ratio:.1f}%" if m_fb_data['fb_rev']>0 else "N/A"},
@@ -11177,20 +11419,26 @@ def render_report_tab():
     bad_pts = []
     
     # (A) OCC 智慧判讀
-    if abs(occ_diff) <= 0.5 or (occ_val >= 85.0 and occ_diff >= -1.5):
-        good_pts.append(f"住房率 (OCC) 穩居高檔：全月達 {occ_val:.1f}% (去年同期 {occ_ly:.1f}%)，{f'微幅波動 {occ_diff:+.1f}% 屬良性客群篩選與正常統計雜訊' if occ_diff < 0 else f'較去年同期微幅成長 +{occ_diff:.1f}%'}，客房稼動效率極佳。")
-    elif occ_diff > 0.5:
-        good_pts.append(f"住房率 (OCC) 突破成長：達 {occ_val:.1f}%，較去年同期顯著躍升 +{occ_diff:.1f}%，市場需求與集客轉換強勁。")
+    if has_ly_data:
+        if abs(occ_diff) <= 0.5 or (occ_val >= 85.0 and occ_diff >= -1.5):
+            good_pts.append(f"住房率 (OCC) 穩居高檔：全月達 {occ_val:.1f}% (去年同期 {occ_ly:.1f}%)，{f'微幅波動 {occ_diff:+.1f}% 屬良性客群篩選與正常統計雜訊' if occ_diff < 0 else f'較去年同期微幅成長 +{occ_diff:.1f}%'}，客房稼動效率極佳。")
+        elif occ_diff > 0.5:
+            good_pts.append(f"住房率 (OCC) 突破成長：達 {occ_val:.1f}%，較去年同期顯著躍升 +{occ_diff:.1f}%，市場需求與集客轉換強勁。")
+        else:
+            bad_pts.append(f"住房率 (OCC) 顯著承壓：本月跌至 {occ_val:.1f}% (衰退 {occ_diff:.1f}%)，平日住房需求與集客轉化動能需加強關注。")
     else:
-        bad_pts.append(f"住房率 (OCC) 顯著承壓：本月跌至 {occ_val:.1f}% (衰退 {occ_diff:.1f}%)，平日住房需求與集客轉化動能需加強關注。")
+        if occ_val >= 85.0:
+            good_pts.append(f"住房率 (OCC) 穩居高檔：全月達 {occ_val:.1f}%，客房稼動效率極佳（尚無去年同期數據可比對）。")
+        elif occ_val < 70.0:
+            bad_pts.append(f"住房率 (OCC) 偏低：本月僅 {occ_val:.1f}%，平日住房需求與集客轉化動能需加強關注。")
         
     # (B) ADR 智慧判讀
     if has_ly_data and adr_yoy_diff >= 0:
-        good_pts.append(f"平均房價 (ADR) 創價能力亮眼：本月達 NT$ {int(adr_val):,} (較去年同期增加 +NT$ {int(adr_yoy_diff):,}，高於年度平均基準 +NT$ {int(adr_diff):,})，定價護城河穩固。")
-    elif adr_diff >= 0:
-        good_pts.append(f"平均房價 (ADR) 表現穩健：本月達 NT$ {int(adr_val):,}，高於年度平均基準 (+NT$ {int(adr_diff):,})。")
+        good_pts.append(f"平均房價 (ADR) 創價能力亮眼：本月達 NT$ {int(adr_val):,} (較去年同期增加 +NT$ {int(adr_yoy_diff):,}，{'高於' if adr_vs_year_diff >= 0 else '低於'}年度平均基準 {'+' if adr_vs_year_diff >= 0 else '-'}NT$ {abs(int(adr_vs_year_diff)):,})，定價護城河穩固。")
+    elif adr_vs_year_diff >= 0:
+        good_pts.append(f"平均房價 (ADR) 表現穩健：本月達 NT$ {int(adr_val):,}，高於年度平均基準 (+NT$ {int(adr_vs_year_diff):,})。")
     else:
-        bad_pts.append(f"平均房價 (ADR) 承受折價壓力：本月 NT$ {int(adr_val):,} 低於年度基準 (-NT$ {abs(int(adr_diff)):,}){f'，較去年同期下滑 -NT$ {abs(int(adr_yoy_diff)):,}' if has_ly_data else ''}，需檢視促銷專案是否過度稀釋價格。")
+        bad_pts.append(f"平均房價 (ADR) 承受折價壓力：本月 NT$ {int(adr_val):,} 低於年度基準 (-NT$ {abs(int(adr_vs_year_diff)):,}){f'，較去年同期下滑 -NT$ {abs(int(adr_yoy_diff)):,}' if has_ly_data else ''}，需檢視促銷專案是否過度稀釋價格。")
         
     # (C) 餐飲與成本端 (連動防呆)
     if cpg_over:
@@ -11623,8 +11871,14 @@ def render_store_meeting_tab():
                 df = pd.read_csv(csv_path)
             else:
                 df = pd.DataFrame(columns=['year_month', 'rooms', 'occ_pct', 'adr', 'revenue', 'source_file'])
+            import calendar as _cal_rest
             df['year_month'] = df['year_month'].astype(str).str.strip().str.replace('.0', '', regex=False)
-            total_avail = 3472 if h_tag == "theme" else 3968
+            try:
+                _y_r, _m_r = int(ym_clean[:4]), int(ym_clean[4:6])
+                _days_r = _cal_rest.monthrange(_y_r, _m_r)[1]
+            except Exception:
+                _days_r = 30
+            total_avail = (112 if h_tag == "theme" else 128) * _days_r
             rooms = int(round((float(occ_pct) / 100.0) * total_avail)) if float(occ_pct) > 0 else 0
             if revenue == 0 and float(adr) > 0 and rooms > 0:
                 revenue = int(round(float(adr) * rooms))
@@ -11702,11 +11956,101 @@ def render_store_meeting_tab():
                             return {'occ': st_rest_occ, 'adr': st_rest_adr, 'revenue': st_rest_rev}
                     return get_rest_metrics(ym, hotel_type=hotel_type)
 
+                def _get_nationality_rows_for_pptx(target_y, target_m, target_hotel):
+                    """從 nationality_report 提取當月與上月前五名國籍排行與總人數，供 Slide 5 / Slide 10 使用。"""
+                    empty_res = {
+                        'cur_rows': [["尚無該月數據", 0, "0%"]],
+                        'prev_rows': [["尚無該月數據", 0, "0%"]],
+                        'cur_total': 0,
+                        'prev_total': 0,
+                    }
+                    try:
+                        df_nat_raw = _get_cached_sheet_v3("nationality_report", hotel_type=target_hotel)
+                        if df_nat_raw is None or df_nat_raw.empty:
+                            return empty_res
+                        df_n = df_nat_raw.copy()
+                        df_n.columns = [str(c).strip().lower() for c in df_n.columns]
+
+                        def _norm_nat_ym(v):
+                            s = str(v).strip().replace('.0', '')
+                            if not s or s in ('nan', 'None', 'NaT', ''):
+                                return ''
+                            if re.match(r'^\d{6}$', s):
+                                return s
+                            m2 = re.match(r'^(\d{4})[-/](\d{1,2})', s)
+                            if m2:
+                                return f"{m2.group(1)}{int(m2.group(2)):02d}"
+                            if re.match(r'^\d{8}$', s):
+                                return s[:6]
+                            return ''
+
+                        if 'date' in df_n.columns and 'month' not in df_n.columns:
+                            d_col = df_n['date'].apply(_norm_nat_ym).replace('', pd.NA).ffill().fillna('')
+                            df_n['month'] = d_col.astype(str).str.strip()
+                        elif 'month' in df_n.columns:
+                            df_n['month'] = df_n['month'].apply(_norm_nat_ym).replace('', pd.NA).ffill().fillna('')
+
+                        if not set(['month', 'nation', 'person']).issubset(set(df_n.columns)):
+                            return empty_res
+
+                        df_n = df_n.dropna(subset=['nation'])
+                        df_n = df_n[df_n['nation'].astype(str).str.strip() != '']
+
+                        def _agg_top5(ym_target):
+                            df_t = df_n[df_n['month'].astype(str).str.strip() == ym_target].copy()
+                            if df_t.empty:
+                                return [["尚無該月數據", 0, "0%"]], 0
+                            df_t['person'] = pd.to_numeric(
+                                df_t['person'].astype(str).str.replace(',', '', regex=False),
+                                errors='coerce'
+                            ).fillna(0)
+                            df_t = df_t[df_t['person'] > 0]
+                            df_t = df_t[~df_t['nation'].astype(str).str.contains('合計|總計|小計|Total', na=False, case=False)]
+                            if df_t.empty:
+                                return [["尚無該月數據", 0, "0%"]], 0
+
+                            def _disp_nation(raw_v):
+                                raw_s = str(raw_v).strip()
+                                clean_cn = clean_nation_name(raw_s)
+                                m_code = re.match(r'^([A-Z]{2,4})', raw_s)
+                                if m_code and clean_cn and not clean_cn.startswith(m_code.group(1)):
+                                    return f"{m_code.group(1)}{clean_cn}"
+                                return clean_cn or raw_s
+
+                            df_t['nation_disp'] = df_t['nation'].apply(_disp_nation)
+                            df_g = df_t.groupby('nation_disp', as_index=False)['person'].sum()
+                            tot_p = int(round(df_g['person'].sum()))
+                            top5 = df_g.sort_values('person', ascending=False).head(5)
+                            out_rows = []
+                            for _, r_n in top5.iterrows():
+                                cnt_val = int(round(r_n['person']))
+                                pct_val = (cnt_val / tot_p * 100.0) if tot_p > 0 else 0.0
+                                pct_str = f"{pct_val:.1f}%" if 0 < pct_val < 0.5 else f"{pct_val:.0f}%"
+                                out_rows.append([str(r_n['nation_disp']), cnt_val, pct_str])
+                            return (out_rows or [["尚無該月數據", 0, "0%"]]), tot_p
+
+                        cur_ym = f"{int(target_y):04d}{int(target_m):02d}"
+                        prev_m_n = 12 if int(target_m) == 1 else int(target_m) - 1
+                        prev_y_n = int(target_y) - 1 if int(target_m) == 1 else int(target_y)
+                        prev_ym = f"{prev_y_n:04d}{prev_m_n:02d}"
+
+                        cur_rows, cur_tot = _agg_top5(cur_ym)
+                        prev_rows, prev_tot = _agg_top5(prev_ym)
+                        return {
+                            'cur_rows': cur_rows,
+                            'prev_rows': prev_rows,
+                            'cur_total': cur_tot,
+                            'prev_total': prev_tot,
+                        }
+                    except Exception:
+                        return empty_res
+
                 live_helpers = {
                     'fetch_month_summary': lambda y, m, h: fetch_month_summary_by_hotel(y, m, h),
                     'get_other_revenue': lambda ym, hotel_type: get_other_revenue(ym, hotel_type=hotel_type),
                     'get_rest_metrics': custom_get_rest,
-                    'get_daily_occ_df': lambda y, m, h: fetch_month_summary_by_hotel(y, m, h).get('df', pd.DataFrame())
+                    'get_daily_occ_df': lambda y, m, h: fetch_month_summary_by_hotel(y, m, h).get('df', pd.DataFrame()),
+                    'get_nationality_rows': _get_nationality_rows_for_pptx,
                 }
 
                 pptx_bytes, backup_path = smg.build_store_meeting_pptx(
@@ -11751,7 +12095,18 @@ if selected_page == "📑 店務會議專區":
 # 💡 專案：免費服務成本優化 (站前館專屬分析 2026/01~2026/07)
 # ─────────────────────────────────────────────────────────────
 def render_free_services_optimization_tab():
-    st.markdown("## 💡 免費服務採購品項成本優化專案 (站前館)")
+    st.markdown("## 💡 免費服務採購品項成本優化專案")
+    if current_hotel == "主題館":
+        _render_theme_unavailable_notice(
+            "💡 專案：免費服務成本優化",
+            "針對飯店免費提供給房客之迎賓禮、備品與茶水進行金額、採購頻率與單房耗用成本 (CPOR) 分析，排出精準瘦身與替代優先序。",
+            [
+                "逐項拆解免費服務品項的月均花費與單房耗用成本 (CPOR)",
+                "建立「顧客感知價值 vs. 成本壓力」四象限評估矩陣",
+                "動態模擬「直接刪除／改為被動索取／平價替代」之月度與年度節流效益",
+            ],
+        )
+        return
     st.caption("📅 分析資料時間範圍：鎖定 **2026/01/01 ~ 2026/06/30 (共 6 個月)** 之 `purchase_data` 與營運數據")
 
     st.info(
@@ -11812,7 +12167,7 @@ def render_free_services_optimization_tab():
         if pd.isna(val):
             return None
         import re as _re
-        s = str(val).strip().replace('.0', '')
+        s = _re.sub(r'\.0$', '', str(val).strip())
         if not s or s in ('nan', 'None', 'NaT'):
             return None
         if '/' in s:
@@ -12493,8 +12848,11 @@ if selected_page == "🏔️ The Peak 專案總評":
         return calc_key_metrics(md).get('dual_match_dates', [])
 
     def _tp_hotel_rev(y, m):
-        md = fetch_month_summary(y, m)
-        return md.get('rev', 0)
+        _sz = fetch_month_summary_by_hotel(y, m, "站前館").get('rev', 0)
+        _st = fetch_month_summary_by_hotel(y, m, "主題館").get('rev', 0)
+        if _sz + _st > 0:
+            return _sz + _st
+        return fetch_month_summary(y, m).get('rev', 0)
         
     def _tp_get_cart_bucket_name(d):
         d_upper = str(d).upper()
@@ -12522,12 +12880,12 @@ if selected_page == "🏔️ The Peak 專案總評":
         if _tp_date_col:
             def _tp_robust_date(val):
                 if pd.isna(val): return None
-                s = str(val).strip().replace('.0', '')
+                import re as _re_dp
+                s = _re_dp.sub(r'\.0$', '', str(val).strip())
                 if not s or s in ('nan', 'None', 'NaT'): return None
                 if '/' in s:
                     res = minguo_to_western(s)
                     if res: return res
-                import re as _re_dp
                 if _re_dp.match(r'^\d{6}$', s):
                     try: return pd.to_datetime(s, format='%Y%m').date()
                     except: pass
@@ -12606,12 +12964,14 @@ if selected_page == "🏔️ The Peak 專案總評":
             else:
                 dual_peak_g = dual_hh_g = norm_peak_g = norm_hh_g = 0
 
-            # 雙冠日成本 (月均攤) → 雙冠日天數 × (月成本 ÷ 有客天數)
+            # 雙冠日成本 (月均攤) → 雙冠且有客日數 × (月成本 ÷ 有客天數)
             _days_with_peak = int(df_fb_month[df_fb_month['peak_guests'] > 0]['peak_guests'].count()) if not df_fb_month.empty else 0
             _days_with_hh   = int(df_fb_month[df_fb_month['hh_act'] > 0]['hh_act'].count()) if not df_fb_month.empty else 0
             n_dual = len(dual_dates)
-            dual_peak_cost = peak_cost / _days_with_peak * n_dual if _days_with_peak > 0 else 0
-            dual_hh_cost   = hh_cost   / _days_with_hh   * n_dual if _days_with_hh > 0 else 0
+            n_dual_peak = int((df_fb_month[df_fb_month['date'].isin(dual_dates)]['peak_guests'] > 0).sum()) if not df_fb_month.empty else 0
+            n_dual_hh   = int((df_fb_month[df_fb_month['date'].isin(dual_dates)]['hh_act'] > 0).sum()) if not df_fb_month.empty else 0
+            dual_peak_cost = peak_cost / _days_with_peak * n_dual_peak if _days_with_peak > 0 else 0
+            dual_hh_cost   = hh_cost   / _days_with_hh   * n_dual_hh   if _days_with_hh   > 0 else 0
             norm_peak_cost = peak_cost - dual_peak_cost
             norm_hh_cost   = hh_cost   - dual_hh_cost
 
@@ -12666,6 +13026,7 @@ if selected_page == "🏔️ The Peak 專案總評":
                 df_fb_t['peak_guests'] = pd.to_numeric(df_fb_t['peak_guests'].astype(str).str.replace(',',''), errors='coerce').fillna(0)
             _total_op_days_actual += int((df_fb_t['peak_guests'] > 0).sum())
     total_op_days_actual = max(_total_op_days_actual, 1)
+    _n_months = max(len(df_valid), 1)
 
     # ══════════════════════════════════════════════════════════
     # ── 區塊 8 (頁首)：頂部 KPI Cards ─────────────────────────
@@ -12692,10 +13053,10 @@ if selected_page == "🏔️ The Peak 專案總評":
     kpi_c = st.columns(7)
     kpi_data = [
         ("👥 總人次", f"{total_peak_g:,} 人", f"有效月份 {len(df_valid)} 個月", "tp-card-blue"),
-        ("💰 總成本", f"NT${total_peak_cost:,.0f}", f"月均 NT${total_peak_cost/max(len(df_valid),1):,.0f}", "tp-card-red"),
+        ("💰 總成本", f"NT${total_peak_cost:,.0f}", f"月均 NT${total_peak_cost/_n_months:,.0f}", "tp-card-red"),
         ("📊 整體 CPG", f"NT${overall_cpg:,.0f}", "目標 NT$150", "tp-card"),
-        ("🏆 雙冠日", f"{total_dual_d} 天", f"月均 {total_dual_d/7:.1f} 天", "tp-card-purple"),
-        ("🎯 估算總營收", f"NT${total_est_rev:,.0f}", f"月均 NT${total_est_rev/7:,.0f}", "tp-card-green"),
+        ("🏆 雙冠日", f"{total_dual_d} 天", f"月均 {total_dual_d/_n_months:.1f} 天", "tp-card-purple"),
+        ("🎯 估算總營收", f"NT${total_est_rev:,.0f}", f"月均 NT${total_est_rev/_n_months:,.0f}", "tp-card-green"),
         ("📈 整體達成率", f"{overall_acc:.1f}%", f"估算 {total_est:,} vs 實際 {total_peak_g:,}", "tp-card-teal"),
         ("💡 ROI", f"{overall_roi:.1f}%", f"估算營收/成本 - 1", "tp-card"),
     ]
@@ -12773,15 +13134,15 @@ if selected_page == "🏔️ The Peak 專案總評":
     # ══════════════════════════════════════════════════════════
     with st.expander("💰 區塊 2：成本統計分析", expanded=True):
         st.markdown("#### 💰 The Peak 成本統計分析（2026/01–07）")
-        total_weeks = 30   # 7個月 ≈ 30 週
-        avg_m_cost = total_peak_cost / max(len(df_valid), 1)
+        total_weeks = max(round(total_op_days / 7.0), 1)
+        avg_m_cost = total_peak_cost / _n_months
         avg_w_cost = total_peak_cost / total_weeks
         avg_d_cost = total_peak_cost / total_op_days_actual
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("7個月總成本", f"NT${total_peak_cost:,.0f}")
         c2.metric("月平均成本", f"NT${avg_m_cost:,.0f}", help="總成本 ÷ 有效月數（母數）")
-        c3.metric("週平均成本", f"NT${avg_w_cost:,.0f}", help="總成本 ÷ 30週（月曆週數）")
+        c3.metric("週平均成本", f"NT${avg_w_cost:,.0f}", help=f"總成本 ÷ {total_weeks}週（月曆週數）")
         c4.metric("日平均成本", f"NT${avg_d_cost:,.0f}", help="總成本 ÷ 有效天數（母數）")
 
         c5, c6, c7 = st.columns(3)
@@ -12839,7 +13200,7 @@ if selected_page == "🏔️ The Peak 專案總評":
 
         d1, d2, d3, d4 = st.columns(4)
         d1.metric("7個月雙冠日總天數", f"{total_dual_d} 天")
-        d2.metric("月均雙冠日天數", f"{total_dual_d/7:.1f} 天")
+        d2.metric("月均雙冠日天數", f"{total_dual_d/_n_months:.1f} 天")
         d3.metric("雙冠日人次占比", f"{dual_pct:.1f}%", help="雙冠日人次 ÷ 全期總人次 × 100%")
         d4.metric("雙冠日整體 CPG", f"NT${dual_cpg:,.0f}", help="雙冠日總成本 ÷ 雙冠日總人次（母數法）")
 
@@ -12948,7 +13309,7 @@ if selected_page == "🏔️ The Peak 專案總評":
 
         r1, r2, r3, r4 = st.columns(4)
         r1.metric("7個月估算總營收", f"NT${total_est_rev:,.0f}")
-        r2.metric("月均估算營收", f"NT${total_est_rev/7:,.0f}")
+        r2.metric("月均估算營收", f"NT${total_est_rev/_n_months:,.0f}")
         r3.metric("日均估算營收", f"NT${total_est_rev/total_op_days_actual:,.0f}")
         r4.metric("7個月整體預算人均效益", f"NT${overall_ppa:,.0f}",
                   help=f"7個月總估算營收（NT${total_est_rev:,}）÷ 7個月總實際來客（{total_peak_g:,}人）\n⚠️ 非7個月各月值相加除以7",
@@ -13209,22 +13570,23 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
         # 2. 抓取採購成本 (與採購分析一致的 fallback 邏輯)
         peak_spent = 0
         hh_spent = 0
-        df_purchase = get_purchase_data_cached()
+        df_purchase_raw = get_purchase_data_cached()
+        df_purchase = df_purchase_raw.copy() if df_purchase_raw is not None else pd.DataFrame()
         month_str = f"{y}-{m:02d}"
         
-        if df_purchase is not None and not df_purchase.empty:
+        if not df_purchase.empty:
             date_col = next((c for c in df_purchase.columns if '日期' in c or 'Date' in c), None)
-            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '類別' in c or '工作地點' in c), None)
+            dept_col = next((c for c in df_purchase.columns if '部門' in c or 'Dept' in c or '類別' in c or '工作地點' in c or '工地' in c), None)
             total_col = next((c for c in df_purchase.columns if '小計' in c or '總計' in c or '金額' in c or 'Total' in c), None)
             
             def r_date(val):
                 if pd.isna(val): return None
-                s = str(val).strip().replace('.0', '')
+                import re as _re_dp
+                s = _re_dp.sub(r'\.0$', '', str(val).strip())
                 if not s or s in ('nan', 'None', 'NaT'): return None
                 if '/' in s:
                     res = minguo_to_western(s)
                     if res: return pd.to_datetime(res).strftime('%Y-%m')
-                import re as _re_dp
                 if _re_dp.match(r'^\d{6}$', s):
                     try: return pd.to_datetime(s, format='%Y%m').strftime('%Y-%m')
                     except: pass
@@ -13234,37 +13596,41 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
                 try: return pd.to_datetime(val).strftime('%Y-%m')
                 except: return None
             
-            df_purchase['_ym'] = df_purchase[date_col].apply(r_date)
-            df_t = df_purchase[df_purchase['_ym'] == month_str].copy()
-            
-            if df_t.empty:
-                # Fallback to daily reports if current month is missing
-                df_daily = _get_cached_sheet_v3("thepeak_daily_purchase_report")
-                if not df_daily.empty:
-                    d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
-                    p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '總計', '小計'])), None)
-                    if d_col and p_col:
-                        df_daily['_ym'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.strftime('%Y-%m')
-                        df_daily_m = df_daily[df_daily['_ym'] == month_str]
-                        if not df_daily_m.empty:
-                            peak_spent = pd.to_numeric(df_daily_m[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
-                
-                df_hh = fetch_4fhh_daily_purchase_report()
-                if not df_hh.empty:
-                    d_col_hh = next((c for c in df_hh.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
-                    p_col_hh = next((c for c in df_hh.columns if any(k in c for k in ['總價', '總計', '小計'])), None)
-                    if d_col_hh and p_col_hh:
-                        df_hh['_ym'] = pd.to_datetime(df_hh[d_col_hh], errors='coerce').dt.strftime('%Y-%m')
-                        df_hh_m = df_hh[df_hh['_ym'] == month_str]
-                        if not df_hh_m.empty:
-                            hh_spent = pd.to_numeric(df_hh_m[p_col_hh].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
-            else:
-                df_t['_amt'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                all_depts = df_t[dept_col].astype(str).unique().tolist()
-                t_hh = [d for d in all_depts if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡飲時刻'])]
-                t_peak = [d for d in all_depts if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
-                peak_spent = df_t[df_t[dept_col].isin(t_peak)]['_amt'].sum()
-                hh_spent = df_t[df_t[dept_col].isin(t_hh)]['_amt'].sum()
+            if date_col and total_col and dept_col:
+                df_purchase['_ym'] = df_purchase[date_col].apply(r_date)
+                df_t = df_purchase[df_purchase['_ym'] == month_str].copy()
+                if not df_t.empty:
+                    df_t['_amt'] = pd.to_numeric(df_t[total_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    all_depts = df_t[dept_col].astype(str).unique().tolist()
+                    t_hh = [d for d in all_depts if '4' in str(d) or any(k in str(d).upper() for k in ['HH', 'HAPPY', '歡飲時刻'])]
+                    t_peak = [d for d in all_depts if any(k in str(d).upper() for k in ['PEAK', '餐廳', 'THEPEAK', '餐飲']) and d not in t_hh]
+                    peak_spent = df_t[df_t[dept_col].isin(t_peak)]['_amt'].sum()
+                    hh_spent = df_t[df_t[dept_col].isin(t_hh)]['_amt'].sum()
+
+        # 若當月尚無官方採購成本，各自獨立退回即時日報表
+        if peak_spent == 0:
+            df_daily = fetch_thepeak_daily_purchase_report()
+            if df_daily is not None and not df_daily.empty:
+                d_col = next((c for c in df_daily.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
+                p_col = next((c for c in df_daily.columns if any(k in c for k in ['總價', '總計', '小計', '金額'])), None)
+                if d_col and p_col:
+                    df_daily = df_daily.copy()
+                    df_daily['_ym'] = pd.to_datetime(df_daily[d_col], errors='coerce').dt.strftime('%Y-%m')
+                    df_daily_m = df_daily[df_daily['_ym'] == month_str]
+                    if not df_daily_m.empty:
+                        peak_spent = pd.to_numeric(df_daily_m[p_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
+
+        if hh_spent == 0:
+            df_hh = fetch_4fhh_daily_purchase_report()
+            if df_hh is not None and not df_hh.empty:
+                d_col_hh = next((c for c in df_hh.columns if '日期' in c or '請購日期' in c or '進貨日' in c), None)
+                p_col_hh = next((c for c in df_hh.columns if any(k in c for k in ['總價', '總計', '小計', '金額'])), None)
+                if d_col_hh and p_col_hh:
+                    df_hh = df_hh.copy()
+                    df_hh['_ym'] = pd.to_datetime(df_hh[d_col_hh], errors='coerce').dt.strftime('%Y-%m')
+                    df_hh_m = df_hh[df_hh['_ym'] == month_str]
+                    if not df_hh_m.empty:
+                        hh_spent = pd.to_numeric(df_hh_m[p_col_hh].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0).sum()
                 
         return {
             'bf_theme': bf_theme, 'bf_zq': bf_zq, 'af_theme': af_theme, 'af_zq': af_zq, 'hh_act': hh_act,
@@ -13285,6 +13651,7 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
     
     # 雙軌法拆解 The Peak 總成本
     peak_spent = m_data['peak_spent']
+    cb = 0.0
     total_bf_cost = 0
     total_af_cost = 0
     if (B_total + k_val * A_total) > 0:
@@ -13338,6 +13705,7 @@ if selected_page == "⚖️ 雙館餐飲成本攤提":
             _B_tot = _B_zq + _B_th
             _A_tot = _A_zq + _A_th
             
+            _cb = 0.0
             _t_bf_cost = 0
             _t_af_cost = 0
             if (_B_tot + k_val * _A_tot) > 0:

@@ -16,6 +16,7 @@
 
 import os
 import sys
+import re
 import datetime
 import logging
 import pyodbc
@@ -25,27 +26,46 @@ import gspread
 
 logger = logging.getLogger("pms_sync")
 
-# 金旭 SQL Server 連線設定 (雙館)
-HOTEL_SQL_CONFIGS = {
-    "站前館": {
-        "driver": "{SQL Server}",
-        "server": r"192.168.10.160\SQL2019,1999",
-        "database": "HT2000",
-        "uid": "guisa",
-        "pwd": "7669588",
-        "timeout": 10,
-        "gsheet_conn": "gsheets_station"
-    },
-    "主題館": {
-        "driver": "{SQL Server}",
-        "server": "192.168.10.160",
-        "database": "HT2000",
-        "uid": "guisa",
-        "pwd": "7669588",
-        "timeout": 10,
-        "gsheet_conn": "gsheets_theme"
+def _load_hotel_sql_configs():
+    """從環境變數或 .streamlit/secrets.toml 讀取雙館金旭 SQL Server 連線設定。"""
+    sec_sql = {}
+    sec_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit", "secrets.toml")
+    if os.path.exists(sec_path):
+        try:
+            with open(sec_path, encoding="utf-8") as f:
+                sec = toml.load(f)
+            sec_sql = sec.get("sql_server", {})
+        except Exception as e:
+            logger.warning(f"讀取 secrets.toml [sql_server] 失敗: {e}")
+
+    db = os.environ.get("PMS_SQL_DB") or sec_sql.get("database", "HT2000")
+    uid = os.environ.get("PMS_SQL_UID") or sec_sql.get("uid", "")
+    pwd = os.environ.get("PMS_SQL_PWD") or sec_sql.get("pwd", "")
+    station_server = os.environ.get("PMS_SQL_SERVER_STATION") or sec_sql.get("station_server", "")
+    theme_server = os.environ.get("PMS_SQL_SERVER_THEME") or sec_sql.get("theme_server", "")
+
+    return {
+        "站前館": {
+            "driver": "{SQL Server}",
+            "server": station_server,
+            "database": db,
+            "uid": uid,
+            "pwd": pwd,
+            "timeout": 10,
+            "gsheet_conn": "gsheets_station",
+        },
+        "主題館": {
+            "driver": "{SQL Server}",
+            "server": theme_server,
+            "database": db,
+            "uid": uid,
+            "pwd": pwd,
+            "timeout": 10,
+            "gsheet_conn": "gsheets_theme",
+        },
     }
-}
+
+HOTEL_SQL_CONFIGS = _load_hotel_sql_configs()
 
 # 渠道代碼美化對照表
 CHANNEL_NAME_MAP = {
@@ -66,6 +86,10 @@ def get_sql_connection(hotel_name: str):
     cfg = HOTEL_SQL_CONFIGS.get(hotel_name)
     if not cfg:
         raise ValueError(f"未知的館別: {hotel_name}")
+    if not (cfg.get("server") and cfg.get("uid") and cfg.get("pwd")):
+        raise RuntimeError(
+            f"找不到 {hotel_name} 金旭 SQL Server 連線帳密，請於 .streamlit/secrets.toml [sql_server] 或環境變數設定 PMS_SQL_UID / PMS_SQL_PWD。"
+        )
     conn_str = (
         f"DRIVER={cfg['driver']};"
         f"SERVER={cfg['server']};"
@@ -267,9 +291,15 @@ def sync_hotel_fnb_data(hotel_name: str, cutoff_days: int = 14) -> pd.DataFrame:
     else:
         final_rows = [headers]
 
-    # 4. 寫回 Google Sheet
-    ws.clear()
+    # 4. 安全寫回 Google Sheet (先確保列數並覆寫 A1 起資料，再裁切多餘尾列，避免 clear 後寫入失敗清空全表)
+    target_rows = max(len(final_rows), 2)
+    if target_rows > ws.row_count:
+        ws.resize(rows=target_rows, cols=12)
     ws.update(values=final_rows, range_name="A1")
+    if ws.row_count > target_rows:
+        ws.resize(rows=target_rows, cols=12)
+    if len(final_rows) == 1:
+        ws.batch_clear(["A2:L2"])
     logger.info(f"[SUCCESS] [{hotel_name}] [f&b_data] Google Sheets 同步成功！總筆數: {len(final_rows) - 1} 筆 (嚴格按服務日期遞增排序，已消除錯亂與重複)")
 
     return df_new
@@ -316,10 +346,13 @@ def sync_fb_forecast_to_report(df_st_fnb: pd.DataFrame, df_th_fnb: pd.DataFrame,
     date_to_row_idx = {}
     for i, r in enumerate(all_rows):
         if r and len(r) > 0:
-            d_val = r[0].strip().replace('/', '-')
-            if len(d_val) == 10 and d_val[4] == '-' and d_val[7] == '-':
+            raw_cell = str(r[0]).strip()
+            m_d = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', raw_cell)
+            if m_d:
+                d_val = f"{int(m_d.group(1)):04d}-{int(m_d.group(2)):02d}-{int(m_d.group(3)):02d}"
                 date_to_row_idx[d_val] = i + 1  # 1-indexed
 
+    today_iso = today.strftime("%Y-%m-%d")
     updates = []
     for d_iso in target_dates:
         row_num = date_to_row_idx.get(d_iso)
@@ -342,10 +375,17 @@ def sync_fb_forecast_to_report(df_st_fnb: pd.DataFrame, df_th_fnb: pd.DataFrame,
         orig_th_af = curr_row[5] if len(curr_row) > 5 else ''
         orig_st_af = curr_row[7] if len(curr_row) > 7 else ''
 
-        val_th_bf = str(th_bf) if th_bf > 0 else (orig_th_bf if orig_th_bf else '0')
-        val_st_bf = str(st_bf) if st_bf > 0 else (orig_st_bf if orig_st_bf else '0')
-        val_th_af = str(th_af) if th_af > 0 else (orig_th_af if orig_th_af else '0')
-        val_st_af = str(st_af) if st_af > 0 else (orig_st_af if orig_st_af else '0')
+        if d_iso >= today_iso:
+            # 今日與未來日期：若訂單全數取消，應精確將預估重設為 '0'
+            val_th_bf = str(th_bf)
+            val_st_bf = str(st_bf)
+            val_th_af = str(th_af)
+            val_st_af = str(st_af)
+        else:
+            val_th_bf = str(th_bf) if th_bf > 0 else (orig_th_bf if orig_th_bf else '0')
+            val_st_bf = str(st_bf) if st_bf > 0 else (orig_st_bf if orig_st_bf else '0')
+            val_th_af = str(th_af) if th_af > 0 else (orig_th_af if orig_th_af else '0')
+            val_st_af = str(st_af) if st_af > 0 else (orig_st_af if orig_st_af else '0')
 
         updates.append({'range': f'B{row_num}', 'values': [[val_th_bf]]})
         updates.append({'range': f'D{row_num}', 'values': [[val_st_bf]]})

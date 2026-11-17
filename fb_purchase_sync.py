@@ -14,11 +14,21 @@ r"""
 
 import os
 import sys
+import re
 import tomllib
 import datetime
 import logging
 import pandas as pd
 import gspread
+
+
+def _norm_date_str(val) -> str:
+    """將各類日期格式標準化為 YYYY-MM-DD，無法解析時回傳去空白字串。"""
+    s = str(val).strip()
+    m = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+    if m:
+        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return s
 
 # 確保輸出編碼正確
 try:
@@ -75,16 +85,20 @@ def sync_department_purchases(sh, ws_name: str, df_excel: pd.DataFrame, dept_nam
             name_col = next((c for c in df_existing.columns if any(k in str(c) for k in ['品名', '品項', '品項名稱'])), df_existing.columns[1])
             
             for _, r in df_existing.iterrows():
-                d_val = str(r[date_col]).strip()
+                d_val = _norm_date_str(r[date_col])
                 n_val = str(r[name_col]).strip().replace(' ', '').replace('　', '')
                 existing_pairs.add((d_val, n_val))
-                # 智慧相鄰日容許差：10-14 請購常規品項若已在 10-15 登錄，建立映射防止重複追加
-                if d_val == '2026-10-15':
-                    existing_pairs.add(('2026-10-14', n_val))
+                # 智慧相鄰日容許差：若填單日與到貨登錄日差 1 天，建立前一日映射防止重複追加
+                try:
+                    d_obj = datetime.date.fromisoformat(d_val)
+                    prev_d = (d_obj - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                    existing_pairs.add((prev_d, n_val))
+                except Exception:
+                    pass
 
         missing_rows = []
         for _, row in df_excel.iterrows():
-            d_val = str(row['date']).strip()
+            d_val = _norm_date_str(row['date'])
             n_val = str(row['item_name']).strip().replace(' ', '').replace('　', '')
             
             # 若 (日期, 品項) 在線上尚不存在，且總金額或數量有效
@@ -142,23 +156,22 @@ def run_fb_purchase_sync(target_date: datetime.date = None):
         logger.error("[FB_SYNC] 無法連接 Google Sheets，終止餐飲採購同步。")
         return False
 
-    months_to_scan = [target_date.month]
+    periods_to_scan = [(target_date.year, target_date.month)]
     if target_date.day <= 7:
-        prev_month = (target_date.replace(day=1) - datetime.timedelta(days=1)).month
-        if prev_month not in months_to_scan:
-            months_to_scan.append(prev_month)
-
-    year = target_date.year
+        prev_dt = target_date.replace(day=1) - datetime.timedelta(days=1)
+        prev_period = (prev_dt.year, prev_dt.month)
+        if prev_period not in periods_to_scan:
+            periods_to_scan.append(prev_period)
 
     all_4f = []
     all_peak = []
-    for m in months_to_scan:
-        logger.info(f"[FB_SYNC] 正在解析網路磁碟 {year} 年 {m} 月叫貨單...")
-        df_4f_m = extract_4f_purchases(target_year=year, target_month=m)
+    for scan_y, scan_m in periods_to_scan:
+        logger.info(f"[FB_SYNC] 正在解析網路磁碟 {scan_y} 年 {scan_m} 月叫貨單...")
+        df_4f_m = extract_4f_purchases(target_year=scan_y, target_month=scan_m)
         if not df_4f_m.empty:
             all_4f.append(df_4f_m)
 
-        df_peak_m = extract_thepeak_purchases(target_year=year, target_month=m)
+        df_peak_m = extract_thepeak_purchases(target_year=scan_y, target_month=scan_m)
         if not df_peak_m.empty:
             all_peak.append(df_peak_m)
 
@@ -172,7 +185,7 @@ def run_fb_purchase_sync(target_date: datetime.date = None):
     # 執行菜商報價 (supplier_prices) 動態價格校準
     try:
         from sync_supplier_prices import sync_veg_prices
-        sync_veg_prices(target_year=year, target_month=target_date.month, auto_git_push=False)
+        sync_veg_prices(target_year=target_date.year, target_month=target_date.month, auto_git_push=False)
     except Exception as e_sp:
         logger.warning(f"[FB_SYNC] 菜商報價動態校準跳過或發生異常: {e_sp}")
 

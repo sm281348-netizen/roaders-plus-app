@@ -12,6 +12,7 @@ r"""
 
 import os
 import sys
+import re
 import glob
 import openpyxl
 import pandas as pd
@@ -188,7 +189,7 @@ def load_hk_bonus_data():
         valid_files = [f for f in files if not os.path.basename(f).startswith("~$")]
         if not valid_files:
             return pd.DataFrame(), ""
-        latest_file = sorted(valid_files)[-1]
+        latest_file = sorted(valid_files, key=lambda x: (int(re.search(r'(\d+)月份', x).group(1)) if re.search(r'(\d+)月份', x) else 0, x))[-1]
         period_name = os.path.basename(latest_file).replace("4@", "").replace("5@", "").replace(".xlsx", "")
         
         wb = openpyxl.load_workbook(latest_file, read_only=True, data_only=True)
@@ -220,7 +221,7 @@ def load_hk_ppm_data():
         valid_files = [f for f in files if not os.path.basename(f).startswith("~$")]
         if not valid_files:
             return {}
-        latest_file = sorted(valid_files)[-1]
+        latest_file = sorted(valid_files, key=lambda x: (int(re.search(r'(\d+)月份', x).group(1)) if re.search(r'(\d+)月份', x) else 0, x))[-1]
         wb = openpyxl.load_workbook(latest_file, read_only=True, data_only=True)
         
         results = {}
@@ -277,7 +278,7 @@ def render_hk_dashboard(hotel_name="站前館", occ_df=None, date_str=None):
         occ_df['ym'] = pd.to_datetime(occ_df['date'], errors='coerce').dt.strftime('%Y-%m')
         m_occ = occ_df[occ_df['ym'] == cur_year_month]
         if not m_occ.empty:
-            m_occupied_rooms = max(1, m_occ['sold_rooms'].sum())
+            m_occupied_rooms = max(1, pd.to_numeric(m_occ['sold_rooms'].astype(str).str.replace(',', ''), errors='coerce').fillna(0).sum())
 
     # 計算 CPOR
     cpor_val = m_opex / m_occupied_rooms if m_occupied_rooms > 0 else 0

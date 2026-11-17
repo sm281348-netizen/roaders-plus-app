@@ -11,6 +11,7 @@
    ['date', 'sold_rooms', 'total_rooms', 'occ_rate', 'revenue', 'adr']
 """
 
+import os
 import datetime
 import logging
 import pyodbc
@@ -18,26 +19,50 @@ import pandas as pd
 
 logger = logging.getLogger("pms_sync")
 
-# 金旭 SQL Server 連線設定 (站前館)
-SQL_SERVER_CONFIG = {
-    "DRIVER": "{SQL Server}",
-    "SERVER": r"192.168.10.160\SQL2019,1999",
-    "DATABASE": "HT2000",
-    "UID": "guisa",
-    "PWD": "7669588",
-    "TIMEOUT": 10
-}
+def _load_sql_server_config():
+    """從環境變數或 .streamlit/secrets.toml 讀取金旭 SQL Server 連線設定（站前館）。"""
+    cfg = {
+        "DRIVER": "{SQL Server}",
+        "SERVER": os.environ.get("PMS_SQL_SERVER_STATION", ""),
+        "DATABASE": os.environ.get("PMS_SQL_DB", "HT2000"),
+        "UID": os.environ.get("PMS_SQL_UID", ""),
+        "PWD": os.environ.get("PMS_SQL_PWD", ""),
+        "TIMEOUT": 10,
+    }
+    sec_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit", "secrets.toml")
+    if os.path.exists(sec_path):
+        try:
+            try:
+                import tomllib
+                with open(sec_path, "rb") as f:
+                    sec = tomllib.load(f)
+            except ImportError:
+                import toml
+                sec = toml.load(sec_path)
+            sql_sec = sec.get("sql_server", {})
+            cfg["SERVER"] = cfg["SERVER"] or sql_sec.get("station_server", "")
+            cfg["DATABASE"] = sql_sec.get("database", cfg["DATABASE"])
+            cfg["UID"] = cfg["UID"] or sql_sec.get("uid", "")
+            cfg["PWD"] = cfg["PWD"] or sql_sec.get("pwd", "")
+        except Exception as e:
+            logger.warning(f"讀取 secrets.toml [sql_server] 失敗: {e}")
+    return cfg
 
 def get_sql_connection():
     """建立金旭 PMS SQL Server 資料庫連線"""
+    sql_cfg = _load_sql_server_config()
+    if not (sql_cfg["SERVER"] and sql_cfg["UID"] and sql_cfg["PWD"]):
+        raise RuntimeError(
+            "找不到金旭 SQL Server 連線帳密，請於 .streamlit/secrets.toml [sql_server] 或環境變數設定 PMS_SQL_UID / PMS_SQL_PWD。"
+        )
     conn_str = (
-        f"DRIVER={SQL_SERVER_CONFIG['DRIVER']};"
-        f"SERVER={SQL_SERVER_CONFIG['SERVER']};"
-        f"DATABASE={SQL_SERVER_CONFIG['DATABASE']};"
-        f"UID={SQL_SERVER_CONFIG['UID']};"
-        f"PWD={SQL_SERVER_CONFIG['PWD']};"
+        f"DRIVER={sql_cfg['DRIVER']};"
+        f"SERVER={sql_cfg['SERVER']};"
+        f"DATABASE={sql_cfg['DATABASE']};"
+        f"UID={sql_cfg['UID']};"
+        f"PWD={sql_cfg['PWD']};"
     )
-    return pyodbc.connect(conn_str, timeout=SQL_SERVER_CONFIG["TIMEOUT"])
+    return pyodbc.connect(conn_str, timeout=sql_cfg["TIMEOUT"])
 
 def extract_future_pms_occ(
     hotel_name: str = "站前館",
