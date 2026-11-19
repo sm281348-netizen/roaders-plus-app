@@ -1238,8 +1238,22 @@ def fetch_upcoming_holidays(start_date, days=30):
     return result
 
 
+# 偵測行動版參數 (?view=mobile)
+try:
+    _qp_view = str(st.query_params.get("view", "")).strip().lower()
+except Exception:
+    _qp_view = ""
+if "ui_mode" not in st.session_state:
+    st.session_state["ui_mode"] = "mobile" if _qp_view == "mobile" else "desktop"
+elif _qp_view == "mobile":
+    st.session_state["ui_mode"] = "mobile"
+
 # 設定頁面資訊
-st.set_page_config(page_title="路徒Plus行旅站前館營運日誌", layout="wide")
+st.set_page_config(
+    page_title="路徒Plus行旅站前館營運日誌",
+    layout="wide",
+    initial_sidebar_state="collapsed" if st.session_state.get("ui_mode") == "mobile" else "auto",
+)
 
 password_station = st.secrets.get("admin_password", "roaders123")
 password_theme = st.secrets.get("theme_password", "theme456")
@@ -1250,19 +1264,28 @@ if "authenticated" not in st.session_state:
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        _use_mobile_login = st.checkbox(
+            "📱 登入後直接進入手機精簡版",
+            value=(st.session_state.get("ui_mode") == "mobile"),
+            key="login_mobile_checkbox",
+        )
+        st.session_state["ui_mode"] = "mobile" if _use_mobile_login else "desktop"
         pwd = st.text_input("管理員通行碼", type="password")
         if pwd:
             if pwd == password_station:
                 st.session_state["authenticated"] = True
                 st.session_state["hotel_type"] = "站前館"
+                st.session_state["login_role"] = "站前館"
                 st.rerun()
             elif pwd == password_theme:
                 st.session_state["authenticated"] = True
                 st.session_state["hotel_type"] = "主題館"
+                st.session_state["login_role"] = "主題館"
                 st.rerun()
             elif pwd == password_purchase:
                 st.session_state["authenticated"] = True
                 st.session_state["hotel_type"] = "採購"
+                st.session_state["login_role"] = "採購"
                 st.rerun()
             else:
                 st.error("❌ 密碼錯誤，請重新輸入")
@@ -3064,7 +3087,46 @@ def fetch_yearly_metrics(year, hotel_type=None):
         return 0.0, 0.0
 
 
+# ══════════════════════════════════════════════════════════
+# 📱 專屬手機版介面分流（修正版方案 A：獨立 mobile_ui.py 模組）
+# ══════════════════════════════════════════════════════════
+if st.session_state.get("ui_mode") == "mobile":
+    import mobile_ui
+    _mobile_ctx = {
+        "current_hotel": current_hotel,
+        "login_role": st.session_state.get("login_role", current_hotel),
+        "get_daily_data": get_daily_data,
+        "get_daily_log": get_daily_log,
+        "save_daily_log": save_daily_log,
+        "fetch_month_summary_by_hotel": fetch_month_summary_by_hotel,
+        "compute_fb_mtd": compute_fb_mtd,
+        "get_combined_fb_daily_df": get_combined_fb_daily_df,
+        "fetch_fb_report_raw_dict": fetch_fb_report_raw_dict,
+        "_get_all_purchase_clean": _get_all_purchase_clean,
+        "_get_occ_data_cached_v2": _get_occ_data_cached_v2,
+        "_get_cached_sheet_v3": _get_cached_sheet_v3,
+        "get_purchase_data_cached": get_purchase_data_cached,
+        "compute_dept_cpr_metrics": compute_dept_cpr_metrics,
+        "fetch_thepeak_daily_purchase_report": fetch_thepeak_daily_purchase_report,
+        "fetch_4fhh_daily_purchase_report": fetch_4fhh_daily_purchase_report,
+        "fetch_hk_daily_purchase_report": fetch_hk_daily_purchase_report,
+        "fetch_fd_daily_purchase_report": fetch_fd_daily_purchase_report,
+        "fetch_cs_daily_purchase_report": fetch_cs_daily_purchase_report,
+        "fetch_supplier_prices": fetch_supplier_prices,
+        "generate_monthly_export": generate_monthly_export,
+    }
+    mobile_ui.render_mobile_app(_mobile_ctx)
+    st.stop()
+
 # -- 側邊欄：進階日期選擇器 --
+if st.sidebar.button("📱 切換手機精簡版", use_container_width=True, type="primary"):
+    st.session_state["ui_mode"] = "mobile"
+    try:
+        st.query_params["view"] = "mobile"
+    except Exception:
+        pass
+    st.rerun()
+
 st.sidebar.caption(
     f"🚀 最後更新時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 st.sidebar.header("📅 日期選擇")
