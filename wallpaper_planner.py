@@ -16,6 +16,8 @@ import os
 import io
 import json
 import math
+import base64
+import zipfile
 import datetime
 from collections import defaultdict
 
@@ -24,9 +26,11 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from PIL import Image
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 INV_JSON_PATH = os.path.join(APP_DIR, "data", "pms_backup", "wallpaper_roomtype_inventory.json")
+PHOTO_DIR = os.path.join(APP_DIR, "data", "wallpaper_photos")
 
 # ==============================================================================
 # 1. 經逐張照片驗證之 55 面有效待修牆面主檔（44 間房，已剔除重複照 3109-3.jpg）
@@ -508,6 +512,84 @@ def split_tv_rooms(rooms, df_rooms):
     return (", ".join(tv_list) if tv_list else "無"), (", ".join(no_tv_list) if no_tv_list else "無")
 
 
+@st.cache_data(ttl=3600)
+def get_photo_thumb_uri(filename, max_px=180):
+    """將指定照片轉為輕量 Base64 Data URI 縮圖，供 Streamlit ImageColumn 直接嵌入表格"""
+    p = os.path.join(PHOTO_DIR, filename)
+    if not os.path.exists(p):
+        return ""
+    try:
+        im = Image.open(p).convert("RGB")
+        im.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=72, optimize=True)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        return ""
+
+
+def _build_subset_excel_bytes(rooms, df_walls, df_rooms):
+    """產生單一批次之 Excel 估價與拆裝明細表（放進 ZIP 資料夾內一併給廠商）"""
+    sub_w = df_walls[df_walls["room"].isin(rooms)].copy()
+    sub_r = df_rooms[df_rooms["room"].isin(rooms)].copy()
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        s1 = sub_r[["priority", "sev_label", "room", "floor", "rt_label", "wall_count", "tv_status", "area_m2", "area_ping", "strips", "lin_m", "notes"]].copy()
+        s1.columns = ["優先順位", "嚴重度", "房號", "樓層", "PMS房型", "換牆數", "電視拆裝", "面積(m²)", "坪數", "條數", "下料總長(m)", "拆裝與破損備註"]
+        s1.to_excel(writer, sheet_name="本批客房總表", index=False)
+
+        s2 = sub_w[["floor", "room", "rt", "file", "raw", "h", "w", "area_m2", "area_ping", "strips", "lin_m", "loc", "note"]].copy()
+        s2.columns = ["樓層", "房號", "房型", "照片檔名", "照片原始標註", "校正高(cm)", "校正寬(cm)", "淨面積(m²)", "坪數", "條數", "下料總長(m)", "牆面區域", "施工備註"]
+        s2.to_excel(writer, sheet_name="本批逐牆尺寸明細", index=False)
+    return buf.getvalue()
+
+
+def build_batch_zip_bytes(rooms, df_walls, df_rooms, folder_name):
+    """將指定房號之全部現場照片＋Excel 明細打包為可直接寄給廠商的 ZIP 資料夾"""
+    sub_w = df_walls[df_walls["room"].isin(rooms)].sort_values(by=["room", "file"])
+    rm_map = df_rooms.set_index("room").to_dict("index")
+    buf = io.BytesIO()
+    safe_folder = folder_name.replace("/", "-").replace("\\", "-").replace(":", "").replace(" ", "_")
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for _, row in sub_w.iterrows():
+            fname = row["file"]
+            src = os.path.join(PHOTO_DIR, fname)
+            if os.path.exists(src):
+                rm = row["room"]
+                info = rm_map.get(rm, {})
+                tv_tag = "拆電視" if info.get("has_tv") else "免拆電視"
+                arcname = f"{safe_folder}/{rm}_{row['rt']}_{tv_tag}_{fname}"
+                zf.write(src, arcname=arcname)
+        xlsx_bytes = _build_subset_excel_bytes(rooms, df_walls, df_rooms)
+        zf.writestr(f"{safe_folder}/本批報價與拆裝明細.xlsx", xlsx_bytes)
+    return buf.getvalue()
+
+
+def build_all_batches_zip_bytes(plan_batches, df_walls, df_rooms):
+    """將整個藍圖的所有批次一次打包成『已按批次分類好子資料夾』的總包 ZIP"""
+    rm_map = df_rooms.set_index("room").to_dict("index")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for idx, b in enumerate(plan_batches, 1):
+            d1_s = b["d1"][5:].replace("-", "")
+            d2_s = b["d2"][5:].replace("-", "")
+            b_clean = b["batch"].replace("/", "-").replace(" ", "").replace("(", "_").replace(")", "")
+            folder = f"{idx:02d}_{b_clean}_{d1_s}-{d2_s}"
+            sub_w = df_walls[df_walls["room"].isin(b["rooms"])].sort_values(by=["room", "file"])
+            for _, row in sub_w.iterrows():
+                fname = row["file"]
+                src = os.path.join(PHOTO_DIR, fname)
+                if os.path.exists(src):
+                    rm = row["room"]
+                    info = rm_map.get(rm, {})
+                    tv_tag = "拆電視" if info.get("has_tv") else "免拆電視"
+                    zf.write(src, arcname=f"{folder}/{rm}_{row['rt']}_{tv_tag}_{fname}")
+            xlsx_bytes = _build_subset_excel_bytes(b["rooms"], df_walls, df_rooms)
+            zf.writestr(f"{folder}/本批報價與拆裝明細.xlsx", xlsx_bytes)
+    return buf.getvalue()
+
+
 def build_excel_bytes(df_rooms, df_walls, inv_data, params):
     """產出 4 分頁專業 Excel 報價與派工工作簿"""
     buf = io.BytesIO()
@@ -871,6 +953,15 @@ def render_wallpaper_planner():
             st.info(f"🏢 涵蓋樓層（共 {len(sel_floors_list)} 層）：`{', '.join(f'{f}F' for f in sel_floors_list)}` ｜ 跨房 FFD `{m_sel['rolls_ffd']} 支` vs 同樓層 `{m_sel['rolls_floor']} 支` vs 固定 {fixed_per_wall} 支/面 `{m_sel['rolls_fixed']} 支`")
             if specials:
                 st.warning(" ｜ ".join(specials))
+            custom_zip = build_batch_zip_bytes(checked_rooms, df_walls, df_rooms, f"自訂選取_{len(checked_rooms)}間")
+            st.download_button(
+                label=f"📦 打包下載【目前勾選 {len(checked_rooms)} 間房（{m_sel['n_walls']} 張照片＋明細表）】給廠商 (.zip)",
+                data=custom_zip,
+                file_name=f"站前館壁紙_自訂{len(checked_rooms)}間照片資料夾.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key="wp_dl_custom_zip",
+            )
 
     # --------------------------------------------------------------------------
     # TAB 2: 報價試算對比與月預算分期器
@@ -962,16 +1053,88 @@ def render_wallpaper_planner():
             m_cols[idx].metric(f"📆 {ym} 月度預估合計 ({tax_txt})", f"NT$ {m_amt:,}", status_lbl,
                                delta_color="normal" if diff >= 0 else "inverse")
 
-        # 各批次逐房工程／房務交辦明細卡片
-        with st.expander("📋 展開各批次「逐房交辦明細」（直接給工程拆電視／房務整理核對）", expanded=False):
-            for b in active_plan:
-                tv_str, no_tv_str = split_tv_rooms(b["rooms"], df_rooms)
-                st.markdown(f"**🔹 {b['batch']}（`{b['d1']}` 卸家具 → `{b['d2']}` 雙師傅施工）** — 📺 需拆電視：`{tv_str}` ｜ ⬜ 免拆電視：`{no_tv_str}`")
-                sub_b = df_rooms[df_rooms["room"].isin(b["rooms"])][[
-                    "room", "rt_label", "sev_label", "wall_count", "tv_status", "area_ping", "strips", "notes"
-                ]].copy()
-                sub_b.columns = ["房號", "PMS房型", "嚴重度", "牆數", "電視拆裝", "面積(坪)", "條數", "現場破損與拆裝備註"]
-                st.dataframe(sub_b, use_container_width=True, hide_index=True)
+        # 各批次「現場照片縮圖明細表」＋「一鍵打包分批資料夾給廠商 (.zip)」
+        st.markdown("---")
+        hd_c1, hd_c2 = st.columns([2.2, 1.8])
+        with hd_c1:
+            st.markdown("#### 🖼️ 各批次現場照片彙整與「廠商資料夾打包區」")
+            st.caption("直接在此檢視每批對應房號的現場照片（已自動剔除重複照 3109-3），並可一鍵下載「已分好資料夾的 ZIP」直接轉傳廠商估價！")
+        with hd_c2:
+            all_zip_bytes = build_all_batches_zip_bytes(active_plan, df_walls, df_rooms)
+            plan_tag = "3個月6批次" if "藍圖 A" in plan_choice else "12月中前20間"
+            st.download_button(
+                label=f"📦 一鍵打包下載【全部 {len(active_plan)} 批已分類資料夾】(.zip)",
+                data=all_zip_bytes,
+                file_name=f"站前館壁紙_{plan_tag}_全部分批資料夾.zip",
+                mime="application/zip",
+                type="primary",
+                use_container_width=True,
+                key=f"wp_dl_all_batches_{plan_tag}",
+            )
+
+        batch_labels = [f"{b['batch']}（{b['d1'][5:]}卸 → {b['d2'][5:]}貼｜{len(b['rooms'])}間）" for b in active_plan]
+        bc1, bc2 = st.columns([2.4, 1.6])
+        sel_b_lbl = bc1.selectbox("選擇要檢視照片與下載的批次：", batch_labels, index=0, key=f"wp_photo_batch_sel_{plan_tag}")
+        sel_b = active_plan[batch_labels.index(sel_b_lbl)]
+        sel_b_walls = df_walls[df_walls["room"].isin(sel_b["rooms"])].sort_values(by=["room", "file"]).copy()
+        sel_b_tv, sel_b_notv = split_tv_rooms(sel_b["rooms"], df_rooms)
+
+        with bc2:
+            st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+            one_zip = build_batch_zip_bytes(sel_b["rooms"], df_walls, df_rooms, f"{sel_b['batch']}_{sel_b['d1'][5:]}_{sel_b['d2'][5:]}")
+            st.download_button(
+                label=f"📁 下載本批資料夾 ({len(sel_b_walls)} 張照片＋Excel)",
+                data=one_zip,
+                file_name=f"站前館壁紙_{sel_b['d1'][5:].replace('-','')}_{len(sel_b['rooms'])}間.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key=f"wp_dl_one_batch_{sel_b['d1']}",
+            )
+
+        st.info(f"**🔹 {sel_b['batch']}（`{sel_b['d1']}` 卸家具 → `{sel_b['d2']}` 雙師傅施工）**　｜　📺 需拆電視：`{sel_b_tv}`　｜　⬜ 免拆電視：`{sel_b_notv}`")
+
+        # 含嵌入圖片縮圖的逐牆對照表（一牆一圖，完全對應照片檔名！）
+        rm_info_map = df_rooms.set_index("room").to_dict("index")
+        tbl_rows = []
+        for _, wr in sel_b_walls.iterrows():
+            rm = wr["room"]
+            rinfo = rm_info_map.get(rm, {})
+            tbl_rows.append({
+                "現場照片": get_photo_thumb_uri(wr["file"]),
+                "房號": rm,
+                "照片檔名": wr["file"],
+                "PMS房型": rinfo.get("rt_label", wr["rt"]),
+                "嚴重度": rinfo.get("sev_label", wr["sev"]),
+                "電視拆裝": rinfo.get("tv_status", ""),
+                "照片標註尺寸": wr["raw"],
+                "高×寬(cm)": f"{wr['h']}×{wr['w']}",
+                "坪數 / 條數": f"{wr['area_ping']:.2f}坪 / {wr['strips']}條",
+                "牆面區域與施工備註": f"{wr['loc']}｜{wr['note']}",
+            })
+
+        st.dataframe(
+            pd.DataFrame(tbl_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "現場照片": st.column_config.ImageColumn("🖼️ 現場縮圖", width="medium"),
+                "房號": st.column_config.TextColumn("房號", width="small"),
+                "照片檔名": st.column_config.TextColumn("照片檔名", width="small"),
+            },
+        )
+
+        # 大圖預覽畫廊（點擊展開看清晰大圖與紅框細節）
+        with st.expander(f"🔎 展開【{sel_b['batch']}】全部 {len(sel_b_walls)} 張清晰大圖檢視（4 欄畫廊）", expanded=False):
+            g_cols = st.columns(4)
+            for idx_w, (_, wr) in enumerate(sel_b_walls.iterrows()):
+                col_box = g_cols[idx_w % 4]
+                p_img = os.path.join(PHOTO_DIR, wr["file"])
+                rinfo = rm_info_map.get(wr["room"], {})
+                cap = f"{wr['room']} ({wr['rt']})｜{wr['file']}｜{wr['raw']}｜{rinfo.get('tv_status','')}"
+                if os.path.exists(p_img):
+                    col_box.image(p_img, caption=cap, use_container_width=True)
+                else:
+                    col_box.warning(f"找不到圖片：{wr['file']}")
 
     # --------------------------------------------------------------------------
     # TAB 3: 金旭 PMS 即時房型庫存熱力圖 × What-If 壓房衝突模擬器
