@@ -202,7 +202,7 @@ def calc_ffd_rolls(strip_lengths_cm, roll_len_cm=1000):
 
 
 def compute_selection_metrics(selected_rooms, walls_df, roll_mode="ffd_cross", fixed_rolls_per_wall=2.5,
-                              trim_cm=10, roll_price=441, worker_fee=4500, cap_1=3.0, cap_2=7.5,
+                              trim_cm=10, roll_price=441, worker_fee=4500, cap_1=3.0, cap_2=8.0,
                               spare_rolls=0, misc_fee=0, include_tax=False):
     """根據任意勾選房號與報價參數，即時計算支數、工資與總預算"""
     sub = walls_df[walls_df["room"].isin(selected_rooms)]
@@ -490,6 +490,24 @@ def build_dataframes(inv_data):
     return df_walls, df_rooms
 
 
+def split_tv_rooms(rooms, df_rooms):
+    """將一組房號拆分為『📺 需拆電視房號』與『⬜ 免拆電視房號』字串"""
+    rm_map = df_rooms.set_index("room").to_dict("index")
+    tv_list, no_tv_list = [], []
+    for r in rooms:
+        info = rm_map.get(r, {})
+        if info.get("has_tv", False):
+            if r == "3106":
+                tv_list.append("3106(可視色差免拆)")
+            elif r == "2605":
+                tv_list.append("2605(吊管)")
+            else:
+                tv_list.append(r)
+        else:
+            no_tv_list.append(r)
+    return (", ".join(tv_list) if tv_list else "無"), (", ".join(no_tv_list) if no_tv_list else "無")
+
+
 def build_excel_bytes(df_rooms, df_walls, inv_data, params):
     """產出 4 分頁專業 Excel 報價與派工工作簿"""
     buf = io.BytesIO()
@@ -532,6 +550,7 @@ def build_excel_bytes(df_rooms, df_walls, inv_data, params):
                 include_tax=params["include_tax"],
             )
             r2rt = inv_data.get("room_to_rt", DEFAULT_ROOM_TO_RT)
+            tv_str, no_tv_str = split_tv_rooms(b["rooms"], df_rooms)
             rm_str = ", ".join(f"{r}({r2rt.get(r,'?')})" for r in b["rooms"])
             sched_rows.append({
                 "批次": b["batch"],
@@ -542,12 +561,14 @@ def build_excel_bytes(df_rooms, df_walls, inv_data, params):
                 "牆面數": m["n_walls"],
                 "總坪數": round(m["area_ping"], 1),
                 "總條數": m["strips"],
-                "需拆電視": m["tv_rooms"],
+                "需拆電視": f"{m['tv_rooms']} 台",
+                "📺 需拆電視房號": tv_str,
+                "⬜ 免拆電視房號": no_tv_str,
                 "實算支數": m["rolls_used"],
                 "材料費(NT$)": m["mat_cost"],
                 "雙師傅工資(NT$)": m["labor_2m"],
                 "批次小計(NT$)": m["grand_total"],
-                "排定房號(房型)": rm_str,
+                "全部房號(房型)": rm_str,
                 "庫存檢核備註": b["note"],
             })
         pd.DataFrame(sched_rows).to_excel(writer, sheet_name="6批次零超賣排程與預算", index=False)
@@ -627,8 +648,8 @@ def render_wallpaper_planner():
             worker_fee = st.number_input("師傅單人出班費 (NT$/人·天)", min_value=2000, max_value=10000, value=4500, step=500, key="wp_worker_fee")
         with c2:
             cap_1 = st.number_input("單師傅日產能 (間/天)", min_value=1.0, max_value=6.0, value=3.0, step=0.5, key="wp_cap1")
-            cap_2 = st.slider("雙師傅日產能 (間/天)", min_value=5.0, max_value=8.5, value=7.5, step=0.5,
-                              help="廠商報 7~8 間/天（預設取中位 7.5 間/天，全案 44 間剛好 6 天）；若擔心飯店管制時段打折，可往左調至 6.0 測試預算敏感度", key="wp_cap2")
+            cap_2 = st.slider("雙師傅日產能 (間/天)", min_value=5.0, max_value=8.5, value=8.0, step=0.5,
+                              help="廠商報 7~8 間/天（預設以 8.0 間/天計，6~8 間批次皆為 1 天雙師傅 NT$9,000）；若擔心飯店管制時段打折，可往左調至 6.0 或 7.0 壓測預算", key="wp_cap2")
         with c3:
             mode_label = st.selectbox(
                 "壁紙支數計算基準",
@@ -914,6 +935,7 @@ def render_wallpaper_planner():
                 spare_rolls=0, misc_fee=0, include_tax=include_tax,
             )
             month_totals[b["month"]] += mb["grand_total"]
+            tv_str, no_tv_str = split_tv_rooms(b["rooms"], df_rooms)
             rows_plan.append({
                 "月份": b["month"],
                 "批次": b["batch"],
@@ -923,11 +945,12 @@ def render_wallpaper_planner():
                 "坪數": round(mb["area_ping"], 1),
                 "條數": mb["strips"],
                 "需拆電視": f"{mb['tv_rooms']} 台",
+                "📺 需拆電視房號": tv_str,
+                "⬜ 免拆電視房號": no_tv_str,
                 "實算支數": mb["rolls_used"],
                 "材料費": f"NT$ {mb['mat_cost']:,}",
                 "點工工資": f"NT$ {mb['labor_2m']:,}",
                 f"批次小計 ({tax_txt})": f"NT$ {mb['grand_total']:,}",
-                "排定房號": ", ".join(b["rooms"]),
             })
         st.dataframe(pd.DataFrame(rows_plan), use_container_width=True, hide_index=True)
 
@@ -938,6 +961,17 @@ def render_wallpaper_planner():
             status_lbl = f"✅ 預算內（餘 NT$ {diff:,}）" if diff >= 0 else f"⚠️ 超出 NT$ {abs(diff):,}"
             m_cols[idx].metric(f"📆 {ym} 月度預估合計 ({tax_txt})", f"NT$ {m_amt:,}", status_lbl,
                                delta_color="normal" if diff >= 0 else "inverse")
+
+        # 各批次逐房工程／房務交辦明細卡片
+        with st.expander("📋 展開各批次「逐房交辦明細」（直接給工程拆電視／房務整理核對）", expanded=False):
+            for b in active_plan:
+                tv_str, no_tv_str = split_tv_rooms(b["rooms"], df_rooms)
+                st.markdown(f"**🔹 {b['batch']}（`{b['d1']}` 卸家具 → `{b['d2']}` 雙師傅施工）** — 📺 需拆電視：`{tv_str}` ｜ ⬜ 免拆電視：`{no_tv_str}`")
+                sub_b = df_rooms[df_rooms["room"].isin(b["rooms"])][[
+                    "room", "rt_label", "sev_label", "wall_count", "tv_status", "area_ping", "strips", "notes"
+                ]].copy()
+                sub_b.columns = ["房號", "PMS房型", "嚴重度", "牆數", "電視拆裝", "面積(坪)", "條數", "現場破損與拆裝備註"]
+                st.dataframe(sub_b, use_container_width=True, hide_index=True)
 
     # --------------------------------------------------------------------------
     # TAB 3: 金旭 PMS 即時房型庫存熱力圖 × What-If 壓房衝突模擬器
@@ -1083,6 +1117,8 @@ def render_wallpaper_planner():
                     st.success(f"🟢 **檢核 100% 通過！零房型超賣、所有房型壓後皆留有安全可售緩衝！**（本批 {m_sim['n_rooms']} 間 / {m_sim['strips']} 條 / {m_sim['area_ping']:.1f} 坪 / {m_sim['tv_rooms']} 台TV / 預估花費 NT$ {m_sim['grand_total']:,}）")
 
                 st.dataframe(pd.DataFrame(chk_rows), use_container_width=True, hide_index=True)
+                sim_tv_str, sim_notv_str = split_tv_rooms(sim_rooms, df_rooms)
+                st.info(f"📺 **本批需拆電視房號（{m_sim['tv_rooms']} 台）**：`{sim_tv_str}`　｜　⬜ **免拆電視房號**：`{sim_notv_str}`")
 
     # --------------------------------------------------------------------------
     # TAB 4: 同樓層重災熱區與現場施工防坑總覽
