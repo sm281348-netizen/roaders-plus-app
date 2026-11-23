@@ -324,8 +324,8 @@ def run_pricing_audit_rules(
     return df_alerts, day_verdict
 
 
-def build_excel_audit_report(df_alerts, df_rates, df_bf, df_promo):
-    """產出 4 分頁專業定價稽核 Excel (.xlsx) 供經理會議對質與存查。"""
+def build_excel_audit_report(df_alerts, df_rates, df_bf, df_promo, df_bf_inv=None):
+    """產出 5 分頁專業定價稽核 Excel (.xlsx) 供經理會議對質與存查。"""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         (df_alerts if not df_alerts.empty else pd.DataFrame([{"訊息": "目前無觸發異常"}])).to_excel(
@@ -337,8 +337,11 @@ def build_excel_audit_report(df_alerts, df_rates, df_bf, df_promo):
         (df_bf if not df_bf.empty else pd.DataFrame()).to_excel(
             writer, sheet_name="3_含早vs不含早差價", index=False
         )
+        (df_bf_inv if df_bf_inv is not None and not df_bf_inv.empty else pd.DataFrame([{"訊息": "無含早倒掛實單"}])).to_excel(
+            writer, sheet_name="4_含早倒掛抓包實單", index=False
+        )
         (df_promo if not df_promo.empty else pd.DataFrame()).to_excel(
-            writer, sheet_name="4_促銷折數反查明細", index=False
+            writer, sheet_name="5_促銷折數反查明細", index=False
         )
         for ws in writer.book.worksheets:
             for col in ws.columns:
@@ -557,6 +560,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
         rate_rows.append(row_dict)
     df_rates_export = pd.DataFrame(rate_rows)
     df_bf_export = pd.DataFrame(bf_rt_list)
+    df_bf_inv_export = pd.DataFrame(promo_bf.get("bf_inversion_alerts", []))
     df_promo_export = pd.DataFrame(promo_bf.get("recent_promo_orders", []))
 
     # 5 大精簡焦點分頁
@@ -584,9 +588,9 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                 cat_opts = sorted(df_alerts["異常類型"].unique().tolist())
                 sel_cats = st.multiselect("篩選異常類型", cat_opts, default=cat_opts, key="sm_f_cat")
             with f3:
-                excel_bytes = build_excel_audit_report(df_alerts, df_rates_export, df_bf_export, df_promo_export)
+                excel_bytes = build_excel_audit_report(df_alerts, df_rates_export, df_bf_export, df_promo_export, df_bf_inv_export)
                 st.download_button(
-                    "📥 匯出 4 分頁稽核 Excel (.xlsx)",
+                    "📥 匯出 5 分頁稽核 Excel (.xlsx)",
                     data=excel_bytes,
                     file_name=f"站前館_SiteMinder定價稽核_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -704,7 +708,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
 
             bf_ch_list = promo_bf.get("bf_vs_ro_by_channel", [])
             if bf_ch_list:
-                with st.expander("🔍 展開各通路「同日 × 同房型 × 同通路」含早差價明細（抓出哪家 OTA 含早賣太便宜）", expanded=True):
+                with st.expander("🔍 展開各通路「同日 × 同房型 × 同通路」含早差價明細（抓出哪家 OTA 含早賣太便宜）", expanded=False):
                     df_bfc = pd.DataFrame(bf_ch_list)
                     only_low = st.checkbox("僅顯示異常偏低（每人實收早餐費 < NT$ 350 或曾出現負差價）", value=False, key="sm_bf_low")
                     if only_low:
@@ -718,8 +722,48 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                             "牌告加價": "+${:,}", "實收平均差價": "+${:,}",
                             "每人實收早餐": "${:,}/人", "最低差價": "{:+,}", "最高差價": "{:+,}",
                         }),
-                        use_container_width=True, hide_index=True, height=320,
+                        use_container_width=True, hide_index=True, height=300,
                     )
+
+            # 新增：直接抓出「促銷打下去含早 <= 不含早」或「嚴重折損 (<$280/人)」的實單對照！
+            bf_inv_list = promo_bf.get("bf_inversion_alerts", [])
+            st.markdown("#### 🚨 抓包：促銷後「含早 ≤ 不含早」或早餐嚴重折損 (< NT$ 280/人) 實單明細")
+            st.caption(
+                "以收益部設定的「每人一天 NT$ 400」為基準，強制比對「同入住日 × 同房型 × 同通路 × 訂房日相差 ≤ 7 天」的實單："
+                "精準抓出含早比不含早便宜的異常單、列出 OTA 單號、差價金額與反推含早額外打了多少折扣！"
+            )
+            if not bf_inv_list:
+                st.success("✅ 目前近 90 天區間內無發現「含早 ≤ 不含早」或嚴重折損之異常配對！")
+            else:
+                df_bi = pd.DataFrame(bf_inv_list)
+                bi1, bi2 = st.columns([1.4, 2.0])
+                with bi1:
+                    only_inv_neg = st.checkbox("🔴 僅看「含早 ≤ 不含早（倒掛/免費送早）」", value=False, key="sm_bi_neg")
+                with bi2:
+                    bi_chs = sorted(df_bi["channel"].unique().tolist())
+                    sel_bi_chs = st.multiselect("篩選通路", bi_chs, default=bi_chs, key="sm_bi_chs")
+                df_bi_v = df_bi[df_bi["channel"].isin(sel_bi_chs)]
+                if only_inv_neg:
+                    df_bi_v = df_bi_v[df_bi_v["diff_twd"] <= 0]
+                st.dataframe(
+                    df_bi_v[[
+                        "severity", "stay_date", "rt", "sub_label",
+                        "bf_rate", "bf_bk_date", "bf_ota_ref",
+                        "ro_rate", "ro_bk_date", "ro_ota_ref",
+                        "diff_twd", "per_pax_bf", "shortfall_vs_400", "extra_disc_pct", "sm_pct_compare", "reason"
+                    ]].rename(columns={
+                        "severity": "異常等級", "stay_date": "入住日", "rt": "房型", "sub_label": "通路",
+                        "bf_rate": "含早實收", "bf_bk_date": "含早訂房日", "bf_ota_ref": "含早OTA單號",
+                        "ro_rate": "不含早實收", "ro_bk_date": "不含早訂房日", "ro_ota_ref": "不含早OTA單號",
+                        "diff_twd": "兩單差價", "per_pax_bf": "每人實收", "shortfall_vs_400": "比400/人少收",
+                        "extra_disc_pct": "含早額外折%", "sm_pct_compare": "vs今日SiteMinder", "reason": "系統反查判讀",
+                    }).style.format({
+                        "含早實收": "${:,}", "不含早實收": "${:,}",
+                        "兩單差價": "{:+,}", "每人實收": "${:,}/人",
+                        "比400/人少收": "-${:,}", "含早額外折%": "{:.1f}%",
+                    }),
+                    use_container_width=True, hide_index=True, height=360,
+                )
 
         st.divider()
         st.subheader("🏷️ 二、這時候到底做了什麼促銷？（SiteMinder 牌告價 vs 金旭實際成交價反查）")

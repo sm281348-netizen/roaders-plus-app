@@ -724,7 +724,49 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             "is_low_bf": per_pax < 300,
         })
 
-    # 3. 近 14 天新進訂單實收價 vs SiteMinder 掛牌價（促銷折數反查）
+    # 3. 抓包「促銷打下去含早 <= 不含早」或「實收每人早餐 < NT$280」之實單配對（同入住日 × 同房型 × 同通路 × 訂房日相差 <= 7天）
+    bf_inv_start = (today - datetime.timedelta(days=30)).strftime("%Y%m%d")
+    bf_inv_end = (today + datetime.timedelta(days=60)).strftime("%Y%m%d")
+    cur.execute("""
+        WITH nights AS (
+            SELECT
+                v.RV01 AS rv_no,
+                LTRIM(RTRIM(ISNULL(v.RV29,''))) AS ota_ref,
+                v.RV001 AS bk_date,
+                a.AC02 AS stay_date,
+                LTRIM(RTRIM(a.AC03)) AS rt,
+                LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
+                ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
+                ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
+                CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END AS meal,
+                a.AC08 / a.AC06 AS unit_rate
+            FROM HTAC a
+            JOIN HTRV v ON a.AC01 = v.RV01
+            LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+            WHERE a.AC02 >= ? AND a.AC02 <= ?
+              AND v.RV06 = 'ACTV' AND a.AC06 > 0 AND a.AC08 > 0
+              AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
+              AND LEN(LTRIM(RTRIM(v.RV001))) = 8 AND ISDATE(v.RV001) = 1
+        )
+        SELECT
+            bf.stay_date, bf.rt, bf.ch_code, bf.gr_name, bf.pay_type,
+            bf.ota_ref AS bf_ota, bf.bk_date AS bf_bk, bf.unit_rate AS bf_rate,
+            ro.ota_ref AS ro_ota, ro.bk_date AS ro_bk, ro.unit_rate AS ro_rate,
+            DATEDIFF(day, CONVERT(date, ro.bk_date, 112), CONVERT(date, bf.bk_date, 112)) AS bk_gap_days,
+            (bf.unit_rate - ro.unit_rate) AS diff_twd
+        FROM nights bf
+        JOIN nights ro
+          ON bf.stay_date = ro.stay_date
+         AND bf.rt = ro.rt
+         AND bf.ch_code = ro.ch_code
+         AND bf.meal = 'BF' AND ro.meal = 'RO'
+         AND ABS(DATEDIFF(day, CONVERT(date, ro.bk_date, 112), CONVERT(date, bf.bk_date, 112))) <= 7
+        WHERE (bf.unit_rate - ro.unit_rate) < 600
+        ORDER BY diff_twd ASC, bf.stay_date ASC
+    """, (bf_inv_start, bf_inv_end))
+    bf_inv_raw = cur.fetchall()
+
+    # 4. 近 14 天新進訂單實收價 vs SiteMinder 掛牌價（促銷折數反查）
     sm_inv = {}
     if os.path.exists(SM_SNAPSHOT_PATH):
         try:
@@ -732,6 +774,77 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
                 sm_inv = json.load(f).get("inventory", {})
         except Exception:
             sm_inv = {}
+
+    bf_inversion_alerts = []
+    seen_bf_pair = set()
+    for st, rt, code, gname, ptype, b_ota, b_bk, b_rate, r_ota, r_bk, r_rate, gap_d, diff in bf_inv_raw:
+        sm_addon, pax = SM_BF_ADDON_BY_RT.get(rt, (889, 2))
+        b_rate_i = int(round(float(b_rate)))
+        r_rate_i = int(round(float(r_rate)))
+        diff_i = int(round(float(diff)))
+        per_pax = int(round(diff_i / pax)) if pax > 0 else 0
+        if diff_i > 0 and per_pax >= 280:
+            continue
+        pair_key = (st, rt, code, b_ota, r_ota)
+        if pair_key in seen_bf_pair:
+            continue
+        seen_bf_pair.add(pair_key)
+
+        st_iso = f"{st[:4]}-{st[4:6]}-{st[6:8]}"
+        b_bk_iso = f"{b_bk[:4]}-{b_bk[4:6]}-{b_bk[6:8]}"
+        r_bk_iso = f"{r_bk[:4]}-{r_bk[4:6]}-{r_bk[6:8]}"
+        grp, sub_lbl, basis, _, _ = classify_channel(code, gname, ptype)
+
+        # 以該通路不含早實收價 + 設定的400元/人(預付扣佣約321/人)反推含早應有價，計算含早單實打了幾折
+        exp_bf_addon = int(round(400 * pax * (0.85 if basis == "net_prepaid" else 1.0)))
+        expected_bf_rate = r_rate_i + exp_bf_addon
+        bf_vs_expected_pct = round(b_rate_i / expected_bf_rate * 100.0, 1) if expected_bf_rate > 0 else 0.0
+        extra_disc_pct = round(100.0 - bf_vs_expected_pct, 1)
+        shortfall_vs_400 = (400 * pax) - diff_i
+
+        # 若該入住日在 SiteMinder 42天快照內，也一併附上與今日牌告的折數對照
+        sm_ro = sm_inv.get(st_iso, {}).get("rooms", {}).get(rt, {}).get("r", 0)
+        sm_bf_pct_str = "—"
+        if sm_ro > 0 and sm_addon > 0:
+            sm_bf = sm_ro + sm_addon
+            sm_bf_pct = round(b_rate_i / sm_bf * 100.0, 1)
+            sm_ro_pct = round(r_rate_i / sm_ro * 100.0, 1)
+            sm_bf_pct_str = f"含早{sm_bf_pct}% vs 不含早{sm_ro_pct}%"
+
+        if diff_i <= 0:
+            severity = "🔴 含早比不含早便宜" if diff_i < 0 else "🔴 含早與不含早同價"
+            reason = (
+                f"同通路同房型相差 {abs(int(gap_d))} 天下訂，含早反而比不含早少收 ${abs(diff_i):,}！"
+                f"推估含早方案額外打了約 {extra_disc_pct:.1f}% 折扣（疑僅對含早開早鳥/連住/疊加促銷）"
+            )
+        else:
+            severity = "🟠 早餐嚴重折損 (<$280/人)"
+            reason = (
+                f"每人僅實收 ${per_pax}/人（基準應為 $400/人，整間少收 ${shortfall_vs_400:,}）；"
+                f"含早較預期少收約 {extra_disc_pct:.1f}%"
+            )
+
+        bf_inversion_alerts.append({
+            "severity": severity,
+            "stay_date": st_iso,
+            "rt": rt,
+            "pax": pax,
+            "channel": grp,
+            "sub_label": sub_lbl,
+            "bf_rate": b_rate_i,
+            "bf_bk_date": b_bk_iso,
+            "bf_ota_ref": b_ota,
+            "ro_rate": r_rate_i,
+            "ro_bk_date": r_bk_iso,
+            "ro_ota_ref": r_ota,
+            "bk_gap_days": int(gap_d),
+            "diff_twd": diff_i,
+            "per_pax_bf": per_pax,
+            "shortfall_vs_400": shortfall_vs_400,
+            "extra_disc_pct": extra_disc_pct,
+            "sm_pct_compare": sm_bf_pct_str,
+            "reason": reason,
+        })
 
     bk_start = (today - datetime.timedelta(days=14)).strftime("%Y%m%d")
     stay_start = today.strftime("%Y%m%d")
@@ -836,6 +949,7 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         "matched_order_nights": len(ratios_all),
         "bf_vs_ro_by_rt": bf_by_rt,
         "bf_vs_ro_by_channel": bf_by_ch,
+        "bf_inversion_alerts": bf_inversion_alerts[:150],
         "promo_summary_by_channel": chan_summary,
         "recent_promo_orders": promo_orders[:250],
     }
