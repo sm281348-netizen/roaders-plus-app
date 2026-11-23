@@ -9,4 +9,6 @@ rodersplusapp-28df1ecc17c7.json
 secrets_dump.json
 creds_out.txt
 scratch/
+_archive/
+.agent/workflows/*.bak
 

@@ -1,0 +1,17 @@
+{
+  "hotel-master-safety-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hooks\\safety_gate.ps1",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
