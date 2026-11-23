@@ -17,6 +17,8 @@
 """
 
 import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 import json
 import datetime
 import logging
@@ -30,6 +32,16 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKUP_DIR = os.path.join(APP_DIR, "data", "pms_backup")
 CHANNEL_INTEL_PATH = os.path.join(BACKUP_DIR, "pms_channel_intel.json")
 STLY_PACE_PATH = os.path.join(BACKUP_DIR, "pms_stly_pace.json")
+PROMO_BF_PATH = os.path.join(BACKUP_DIR, "pms_promo_bf_audit.json")
+SM_SNAPSHOT_PATH = os.path.join(BACKUP_DIR, "siteminder_inventory_snapshot.json")
+
+# SiteMinder 標準含早加價（依實測 Distribution 衍生規則：每人淨加價 $400 ÷ 0.9）
+SM_BF_ADDON_BY_RT = {
+    "DF": (1778, 4), "F": (1778, 4),
+    "DTP": (1333, 3),
+    "LDT": (889, 2), "DT": (889, 2), "E": (889, 2), "ER": (889, 2), "PD": (889, 2), "PT": (889, 2),
+    "SP": (0, 2), "S": (0, 2), "SD": (0, 2),
+}
 
 
 def classify_channel(rv10_code: str, gr03_name: str, gr07_pay: str):
@@ -533,9 +545,310 @@ def extract_pms_stly_pace(today: datetime.date = None, horizon_days: int = 90):
     return payload
 
 
+def _diagnose_order_promo(code: str, channel: str, rate_basis: str, ratio: float, rt: str):
+    """依據金旭實收單價 ÷ SiteMinder 牌告價，白話判讀該筆訂單套用了哪種促銷或折扣。"""
+    cu = (code or "").upper().strip()
+    if cu == "TAIWANSTAY":
+        return "✅ 國旅補助原價 (100%)", False
+    if channel == "官網 Direct (TBB)":
+        if ratio >= 0.83:
+            return "✅ 官網優惠價 (-15%)", False
+        if ratio >= 0.78:
+            return "✅ 官網連住3晚 (-20%)", False
+        if ratio >= 0.73:
+            return "✅ 官網連住5晚 (-25%)", False
+        return "🔴 官網異常深折 (<73%，請核對優惠碼)", True
+    if channel == "Booking.com":
+        if ratio >= 0.88:
+            return "✅ Booking 原價/9折 (淺折)", False
+        if ratio >= 0.83:
+            return "✅ Booking 常態85折 (Genius/促銷)", False
+        if ratio >= 0.76:
+            return "🟠 Booking 深度促銷 (約76~82折)", True
+        return "🔴 Booking 超深促銷 (<76折，疑重疊活動)", True
+    if channel == "Trip.com":
+        if rate_basis == "gross_pay_at_hotel":
+            if ratio >= 0.83:
+                return "✅ Trip 到付常態85折", False
+            return "🟠 Trip 到付額外促銷 (<83折)", True
+        # 預付 Net (常態 0.85 × 0.85 = 0.7225；機酒/景酒 0.80 × 0.85 = 0.68)
+        if ratio >= 0.71:
+            return "✅ Trip 預付常態 (85折×扣15%佣)", False
+        if ratio >= 0.665:
+            if rt in ("DF", "F", "DT", "E"):
+                return "🟠 Trip <機酒/景酒> (-20%×扣佣)", True
+            return "🟠 Trip 預付額外促銷 (約78~83折實收)", True
+        return "🔴 Trip 預付異常深折 (疑疊加促銷 <66.5%)", True
+    if channel == "Agoda":
+        if rate_basis == "gross_pay_at_hotel":
+            return "✅ Agoda 到付常態" if ratio >= 0.83 else "🟠 Agoda 到付深折", ratio < 0.83
+        if ratio >= 0.71:
+            return "✅ Agoda 預付常態 (85折×扣15%佣)", False
+        if ratio >= 0.66:
+            return "🟠 Agoda 預付額外促銷 (約8折×扣佣)", True
+        return "🔴 Agoda 預付異常深折 (<66%，疑疊加促銷)", True
+    if channel == "Expedia":
+        if rate_basis == "net_prepaid":
+            if ratio >= 0.78:
+                return "✅ Expedia 預付常態 (+5%倍率×9折×扣佣)", False
+            if ratio >= 0.71:
+                return "🟠 Expedia 促銷活動 (+5%×85折×扣佣)", False
+            return "🔴 Expedia 異常深折 (<71%)", True
+        return "✅ Expedia 到付" if ratio >= 0.83 else "🟠 Expedia 到付深折", ratio < 0.83
+    if "Rakuten" in channel:
+        return "✅ 樂天方案 (-10%~-20%)" if ratio >= 0.78 else "🟠 樂天深度促銷", ratio < 0.78
+    return f"其他專案 ({ratio*100:.1f}%)", ratio < 0.70
+
+
+def extract_pms_promo_and_bf_audit(today: datetime.date = None):
+    """
+    從金旭 HT2000 抽取兩大經理最關心的定價稽核真相（100% 唯讀 SELECT）：
+      1. 同日期 × 同房型「含早 vs 不含早」真實成交差價（全通路彙總 + 分通路明細），直接對照 SiteMinder 牌告加價。
+      2. 近 14 天新進訂單實收價 (HTAC.AC08) vs SiteMinder 掛牌價折數反查，揭露實際做了什麼促銷。
+    """
+    if today is None:
+        today = datetime.date.today()
+
+    conn = get_sql_connection()
+    cur = conn.cursor()
+
+    # 1. 同日期 × 同房型「含早 vs 不含早」真實成交差價（涵蓋前 30 天 ~ 未來 60 天）
+    s_bf = (today - datetime.timedelta(days=30)).strftime("%Y%m%d")
+    e_bf = (today + datetime.timedelta(days=60)).strftime("%Y%m%d")
+
+    cur.execute("""
+        WITH per_day_rt AS (
+            SELECT
+                a.AC02 AS stay_date,
+                LTRIM(RTRIM(a.AC03)) AS rt,
+                CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO'
+                     WHEN a.AC11 LIKE '%含早%' THEN 'BF' END AS meal,
+                SUM(a.AC06) AS rn,
+                SUM(a.AC08) AS rev
+            FROM HTAC a
+            JOIN HTRV v ON a.AC01 = v.RV01
+            WHERE a.AC02 >= ? AND a.AC02 <= ?
+              AND v.RV06 = 'ACTV' AND a.AC06 > 0
+              AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
+            GROUP BY a.AC02, LTRIM(RTRIM(a.AC03)),
+                     CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END
+        )
+        SELECT
+            ro.rt,
+            COUNT(*) AS matched_days,
+            SUM(ro.rn) AS ro_rn,
+            SUM(bf.rn) AS bf_rn,
+            AVG(ro.rev / ro.rn) AS avg_ro_adr,
+            AVG(bf.rev / bf.rn) AS avg_bf_adr,
+            AVG((bf.rev / bf.rn) - (ro.rev / ro.rn)) AS avg_diff
+        FROM per_day_rt ro
+        JOIN per_day_rt bf ON ro.stay_date = bf.stay_date AND ro.rt = bf.rt
+        WHERE ro.meal = 'RO' AND bf.meal = 'BF'
+        GROUP BY ro.rt
+        ORDER BY ro.rt
+    """, (s_bf, e_bf))
+
+    bf_by_rt = []
+    for rt, mdays, ro_rn, bf_rn, avg_ro, avg_bf, avg_diff in cur.fetchall():
+        sm_addon, pax = SM_BF_ADDON_BY_RT.get(rt, (889, 2))
+        sm_90_addon = int(round(sm_addon * 0.9))
+        act_diff = int(round(float(avg_diff or 0)))
+        per_pax_act = int(round(act_diff / pax)) if pax > 0 else 0
+        bf_by_rt.append({
+            "rt": rt,
+            "pax": pax,
+            "matched_days": int(mdays),
+            "ro_rn": int(round(float(ro_rn or 0))),
+            "bf_rn": int(round(float(bf_rn or 0))),
+            "avg_ro_adr": int(round(float(avg_ro or 0))),
+            "avg_bf_adr": int(round(float(avg_bf or 0))),
+            "sm_shelf_diff": sm_addon,
+            "sm_90_diff": sm_90_addon,
+            "actual_avg_diff": act_diff,
+            "actual_per_pax": per_pax_act,
+        })
+
+    # 2. 同日期 × 同房型 × 同通路「含早 vs 不含早」明細（抓出哪個通路含早折價過頭或倒掛）
+    cur.execute("""
+        WITH per_day_ch AS (
+            SELECT
+                a.AC02 AS stay_date,
+                LTRIM(RTRIM(a.AC03)) AS rt,
+                LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
+                ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
+                ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
+                CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END AS meal,
+                SUM(a.AC06) AS rn,
+                SUM(a.AC08) AS rev
+            FROM HTAC a
+            JOIN HTRV v ON a.AC01 = v.RV01
+            LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+            WHERE a.AC02 >= ? AND a.AC02 <= ?
+              AND v.RV06 = 'ACTV' AND a.AC06 > 0
+              AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
+            GROUP BY a.AC02, LTRIM(RTRIM(a.AC03)), LTRIM(RTRIM(ISNULL(v.RV10,''))),
+                     ISNULL(LTRIM(RTRIM(g.GR03)),''), ISNULL(LTRIM(RTRIM(g.GR07)),''),
+                     CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END
+        )
+        SELECT
+            ro.rt, ro.ch_code, ro.gr_name, ro.pay_type,
+            COUNT(*) AS pairs,
+            AVG((bf.rev / bf.rn) - (ro.rev / ro.rn)) AS avg_diff,
+            MIN((bf.rev / bf.rn) - (ro.rev / ro.rn)) AS min_diff,
+            MAX((bf.rev / bf.rn) - (ro.rev / ro.rn)) AS max_diff
+        FROM per_day_ch ro
+        JOIN per_day_ch bf ON ro.stay_date = bf.stay_date AND ro.rt = bf.rt AND ro.ch_code = bf.ch_code
+        WHERE ro.meal = 'RO' AND bf.meal = 'BF'
+        GROUP BY ro.rt, ro.ch_code, ro.gr_name, ro.pay_type
+        HAVING COUNT(*) >= 2
+        ORDER BY ro.rt, pairs DESC
+    """, (s_bf, e_bf))
+
+    bf_by_ch = []
+    for rt, code, gname, ptype, pairs, avg_d, min_d, max_d in cur.fetchall():
+        grp, sub_lbl, basis, _, _ = classify_channel(code, gname, ptype)
+        sm_addon, pax = SM_BF_ADDON_BY_RT.get(rt, (889, 2))
+        act_d = int(round(float(avg_d or 0)))
+        per_pax = int(round(act_d / pax)) if pax > 0 else 0
+        bf_by_ch.append({
+            "rt": rt,
+            "pax": pax,
+            "channel": grp,
+            "sub_label": sub_lbl,
+            "pairs": int(pairs),
+            "sm_shelf_diff": sm_addon,
+            "actual_avg_diff": act_d,
+            "min_diff": int(round(float(min_d or 0))),
+            "max_diff": int(round(float(max_d or 0))),
+            "per_pax_bf": per_pax,
+            "is_low_bf": per_pax < 300,
+        })
+
+    # 3. 近 14 天新進訂單實收價 vs SiteMinder 掛牌價（促銷折數反查）
+    sm_inv = {}
+    if os.path.exists(SM_SNAPSHOT_PATH):
+        try:
+            with open(SM_SNAPSHOT_PATH, "r", encoding="utf-8") as f:
+                sm_inv = json.load(f).get("inventory", {})
+        except Exception:
+            sm_inv = {}
+
+    bk_start = (today - datetime.timedelta(days=14)).strftime("%Y%m%d")
+    stay_start = today.strftime("%Y%m%d")
+    stay_end = (today + datetime.timedelta(days=45)).strftime("%Y%m%d")
+
+    cur.execute("""
+        SELECT
+            v.RV01 AS rv_no,
+            LTRIM(RTRIM(ISNULL(v.RV29,''))) AS ota_ref,
+            v.RV001 AS bk_date,
+            a.AC02 AS stay_date,
+            LTRIM(RTRIM(a.AC03)) AS rt,
+            LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
+            ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
+            ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
+            LTRIM(RTRIM(ISNULL(a.AC11,''))) AS plan_name,
+            a.AC06 AS rooms,
+            a.AC08 AS rev
+        FROM HTAC a
+        JOIN HTRV v ON a.AC01 = v.RV01
+        LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+        WHERE v.RV001 >= ? AND v.RV06 = 'ACTV'
+          AND a.AC02 >= ? AND a.AC02 <= ?
+          AND a.AC06 > 0 AND a.AC08 > 0
+        ORDER BY v.RV001 DESC, a.AC02 ASC
+    """, (bk_start, stay_start, stay_end))
+
+    promo_orders = []
+    ratios_all = []
+    by_chan_agg = defaultdict(lambda: {"n": 0, "ratios": [], "deep_cnt": 0, "pms_sum": 0, "bar_sum": 0})
+    for rv_no, ota_ref, bk_d, st_d, rt, code, gname, ptype, pname, rms, rev in cur.fetchall():
+        if len(st_d) != 8 or len(bk_d) != 8:
+            continue
+        st_iso = f"{st_d[:4]}-{st_d[4:6]}-{st_d[6:8]}"
+        bk_iso = f"{bk_d[:4]}-{bk_d[4:6]}-{bk_d[6:8]}"
+        sm_ro = sm_inv.get(st_iso, {}).get("rooms", {}).get(rt, {}).get("r", 0)
+        if sm_ro <= 0:
+            continue
+        is_bf = ("含早" in pname) and ("不含早" not in pname)
+        bf_addon = SM_BF_ADDON_BY_RT.get(rt, (889, 2))[0] if is_bf else 0
+        sm_ref = sm_ro + bf_addon
+        pms_unit = int(round(float(rev) / float(rms)))
+        ratio = round(pms_unit / sm_ref, 4) if sm_ref > 0 else 0.0
+        if ratio <= 0.25 or ratio >= 1.8:
+            continue
+
+        grp, sub_lbl, basis, _, _ = classify_channel(code, gname, ptype)
+        diag, is_deep = _diagnose_order_promo(code, grp, basis, ratio, rt)
+
+        ratios_all.append(ratio)
+        agg = by_chan_agg[sub_lbl]
+        agg["n"] += 1
+        agg["ratios"].append(ratio)
+        agg["pms_sum"] += pms_unit
+        agg["bar_sum"] += sm_ref
+        if is_deep:
+            agg["deep_cnt"] += 1
+
+        promo_orders.append({
+            "bk_date": bk_iso,
+            "stay_date": st_iso,
+            "rt": rt,
+            "meal": "含早" if is_bf else "不含早",
+            "channel": grp,
+            "sub_label": sub_lbl,
+            "ota_ref": ota_ref,
+            "sm_ref_rate": sm_ref,
+            "pms_actual_rate": pms_unit,
+            "ratio_pct": round(ratio * 100.0, 1),
+            "diff_twd": pms_unit - sm_ref,
+            "promo_diag": diag,
+            "is_deep_promo": is_deep,
+        })
+
+    conn.close()
+
+    import statistics
+    chan_summary = []
+    for sub_lbl, d in sorted(by_chan_agg.items(), key=lambda x: -x[1]["n"]):
+        med_r = statistics.median(d["ratios"]) if d["ratios"] else 0.0
+        min_r = min(d["ratios"]) if d["ratios"] else 0.0
+        max_r = max(d["ratios"]) if d["ratios"] else 0.0
+        chan_summary.append({
+            "sub_label": sub_lbl,
+            "nights": d["n"],
+            "avg_sm_ref": int(round(d["bar_sum"] / d["n"])) if d["n"] else 0,
+            "avg_pms_actual": int(round(d["pms_sum"] / d["n"])) if d["n"] else 0,
+            "med_ratio_pct": round(med_r * 100.0, 1),
+            "min_ratio_pct": round(min_r * 100.0, 1),
+            "max_ratio_pct": round(max_r * 100.0, 1),
+            "deep_promo_nights": d["deep_cnt"],
+        })
+
+    emp_ratio = round(sum(ratios_all) / len(ratios_all), 4) if ratios_all else 0.77
+    # 依折數最深排序，最多保留前 250 筆細節免檔案膨脹
+    promo_orders.sort(key=lambda x: (not x["is_deep_promo"], x["ratio_pct"], x["stay_date"]))
+
+    payload = {
+        "as_of": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "base_date": today.strftime("%Y-%m-%d"),
+        "empirical_actual_to_bar_ratio": emp_ratio,
+        "matched_order_nights": len(ratios_all),
+        "bf_vs_ro_by_rt": bf_by_rt,
+        "bf_vs_ro_by_channel": bf_by_ch,
+        "promo_summary_by_channel": chan_summary,
+        "recent_promo_orders": promo_orders[:250],
+    }
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    with open(PROMO_BF_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    logger.info(f"[SUCCESS] 金旭促銷折數反查與含早差價健檢已更新 ({len(ratios_all)} 筆對照) -> {PROMO_BF_PATH}")
+    return payload
+
+
 def run_pms_revenue_intel_sync():
-    """每日 05:00 全自動同步入口：通路淨利情報 + 90 天 STLY Pace + 12 房型剩餘庫存快照。"""
-    results = {"channel_intel": False, "stly_pace": False, "roomtype_inventory": False}
+    """每日 05:00 全自動同步入口：通路淨利情報 + 90 天 STLY Pace + 促銷與含早差價健檢 + 12 房型剩餘庫存快照。"""
+    results = {"channel_intel": False, "stly_pace": False, "promo_bf_audit": False, "roomtype_inventory": False}
     try:
         extract_pms_channel_intel()
         results["channel_intel"] = True
@@ -547,6 +860,12 @@ def run_pms_revenue_intel_sync():
         results["stly_pace"] = True
     except Exception as e:
         logger.error(f"[FAIL] 金旭 STLY Pace 抽取失敗: {e}", exc_info=True)
+
+    try:
+        extract_pms_promo_and_bf_audit()
+        results["promo_bf_audit"] = True
+    except Exception as e:
+        logger.error(f"[FAIL] 金旭促銷與含早差價健檢抽取失敗: {e}", exc_info=True)
 
     try:
         import wallpaper_planner
