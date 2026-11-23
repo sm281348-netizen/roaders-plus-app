@@ -3792,7 +3792,7 @@ else:
         "🍽️ 餐廳數據", "🍽️ 現場餐期每日登記", "🔧 工務數據", "🏢 櫃台數據", "👥 人事概況", 
         "🌍 國籍分析", "📉 渠道分析", "📋 營運檢討報告", "📑 店務會議專區",
         "🏔️ The Peak 專案總評", "⚖️ 雙館餐飲成本攤提", "💡 專案：免費服務成本優化",
-        "🧱 專案：客房壁紙修繕規劃"
+        "🧱 專案：客房壁紙修繕規劃", "📡 專案：SiteMinder 定價稽核雷達"
     ]
 selected_page = st.sidebar.radio("請選擇功能：", menu_options, label_visibility="collapsed")
 
@@ -13833,3 +13833,26 @@ if selected_page == "🧱 專案：客房壁紙修繕規劃":
     else:
         import wallpaper_planner
         wallpaper_planner.render_wallpaper_planner()
+
+if selected_page == "📡 專案：SiteMinder 定價稽核雷達":
+    if current_hotel == "主題館":
+        _render_theme_unavailable_notice(
+            "📡 專案：SiteMinder 定價稽核雷達",
+            "整合每日 05:00 金旭 PMS 唯讀通路淨利、STLY 去年同期 Pace 與 SiteMinder 未來 42 天掛牌價，自動抓出房價倒掛、臨期滯銷、錯失漲價與派單異常。",
+            [
+                "自動掃描未來 42 天 10 房型定價階梯（抓出倒掛、零價差、Fat-Finger 暴跌與幽靈關房）",
+                "還原各 OTA「預付淨價 vs 到付毛價」真實 Net ADR 排行與未來 60 天高取消通路洗盤預警",
+                "連動台北大型活動與金旭 STLY Pace 進度，一鍵產出給收益策略部的會議核對清單與 4 分頁 Excel",
+            ],
+        )
+    else:
+        import siteminder_audit
+        _sm_events_df = fetch_taipei_events()
+        try:
+            _sm_targets_df = read_google_sheet("targets", ttl="1h")
+        except Exception:
+            _sm_targets_df = pd.DataFrame()
+        siteminder_audit.render_siteminder_audit(
+            taipei_events_df=_sm_events_df,
+            targets_df=_sm_targets_df,
+        )

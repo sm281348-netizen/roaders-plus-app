@@ -202,6 +202,9 @@ def push_to_cloud_git():
             "git", "add", 
             "data/pms_backup/", 
             "pms_future_extractor.py", 
+            "pms_revenue_intel.py",
+            "siteminder_cdp_sync.py",
+            "siteminder_audit.py",
             "run_daily_sync.py",
             "pms_channel_sync.py",
             "fb_purchase_extractor.py",
@@ -272,6 +275,20 @@ def main():
         sync_hk_purchases()
     except Exception as e_hk:
         logger.error(f"[FAIL] 房務請購單同步發生例外: {e_hk}", exc_info=True)
+
+    # 執行站前館金旭 HT2000 收益情報全自動唯讀同步 (通路淨利/取消率/ALOS/Lead + 90天 STLY Pace + 12房型庫存)
+    try:
+        from pms_revenue_intel import run_pms_revenue_intel_sync
+        run_pms_revenue_intel_sync()
+    except Exception as e_rev:
+        logger.error(f"[FAIL] 金旭收益情報與 STLY Pace 同步發生例外: {e_rev}", exc_info=True)
+
+    # 執行 SiteMinder 100% 唯讀 CDP 快照同步 (若無人值守時 Chrome 未開或登入過期則自動保留舊快照，不中斷排程)
+    try:
+        from siteminder_cdp_sync import run_siteminder_sync
+        run_siteminder_sync(unattended=True, windows_count=3)
+    except Exception as e_sm:
+        logger.warning(f"[WARN] SiteMinder 唯讀快照同步略過（保留既有快照）: {e_sm}")
 
     if args.git_push:
         push_to_cloud_git()
