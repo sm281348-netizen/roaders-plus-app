@@ -383,7 +383,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     st.markdown(
         f"""
 <div class="sm-hero">
-  <h2>📡 站前館 SiteMinder 定價稽核雷達 × 促銷與含早差價健檢</h2>
+  <h2>📡 站前館 SiteMinder 定價稽核雷達 × 促銷與含早差價健檢 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v2.0</span></h2>
   <p>
     100% 唯讀營運稽核｜結合 <b>每日 05:00 金旭 HT2000 全自動同步</b> 與 <b>SiteMinder 未來 {n_inv_days} 天掛牌價</b>，
     直接回答 4 件最重要的事：<b>① 收益部開價合不合理（為何高低）② 實際做了什麼促銷 ③ 含早／不含早差價 ④ 通路真實淨利</b>。

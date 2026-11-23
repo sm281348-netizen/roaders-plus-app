@@ -13846,7 +13846,9 @@ if selected_page == "📡 專案：SiteMinder 定價稽核雷達":
             ],
         )
     else:
+        import importlib
         import siteminder_audit
+        importlib.reload(siteminder_audit)
         _sm_events_df = fetch_taipei_events()
         try:
             _sm_targets_df = read_google_sheet("targets", ttl="1h")
