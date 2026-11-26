@@ -13847,7 +13847,9 @@ if selected_page == "📡 專案：SiteMinder 定價稽核雷達":
         )
     else:
         import importlib
+        import decision_engine
         import siteminder_audit
+        importlib.reload(decision_engine)
         importlib.reload(siteminder_audit)
         _sm_events_df = fetch_taipei_events()
         try:

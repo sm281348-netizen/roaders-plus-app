@@ -1,0 +1,14 @@
+{
+  "records": [
+    {
+      "warned_on": "2026-11-23",
+      "stay_date": "2026-11-24",
+      "type": "last_minute_soft",
+      "title": "11-24 臨期高價滯銷預警",
+      "warned_occ": 78.4,
+      "warned_sold": 98,
+      "warned_rem": 27,
+      "warned_note": "距入住 1 天尚餘 27 間（住房率 78.4%），但標準掛牌價仍高於平常週二 +28%，建議臨期局部房型去化。"
+    }
+  ]
+}

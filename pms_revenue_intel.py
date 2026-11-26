@@ -989,6 +989,13 @@ def run_pms_revenue_intel_sync():
     except Exception as e:
         logger.error(f"[FAIL] 金旭 12 房型庫存快照刷新失敗: {e}", exc_info=True)
 
+    try:
+        import decision_engine
+        decision_engine.append_daily_ledger_snapshot()
+        logger.info("[SUCCESS] 每日預警覆盤日誌 (decision_ledger.json) 已自動更新。")
+    except Exception as e:
+        logger.warning(f"[WARN] 更新每日預警覆盤日誌失敗: {e}")
+
     return results
 
 

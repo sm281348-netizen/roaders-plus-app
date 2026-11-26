@@ -104,10 +104,150 @@ def _inject_module_css():
     background: #fef2f2; border: 1px solid #fecaca; border-left: 5px solid #ef4444;
     border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; color: #7f1d1d; font-size: 0.9rem; line-height: 1.5;
 }
+.sm-dcard {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 13px 16px 11px 16px;
+    margin-bottom: 6px;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+.sm-dcard-locked {
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    opacity: 0.92;
+}
+.sm-dcard-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+.sm-dpill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.sm-dtitle {
+    font-size: 0.98rem;
+    font-weight: 800;
+    color: #0f172a;
+}
+.sm-dsum {
+    font-size: 0.85rem;
+    color: #475569;
+    line-height: 1.4;
+}
+.sm-lane-hdr {
+    font-size: 0.96rem;
+    font-weight: 800;
+    color: #1e293b;
+    padding: 6px 12px;
+    background: #f1f5f9;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
 </style>
 """,
         unsafe_allow_html=True,
     )
+
+
+def _render_card_detail_body(card: dict, ack_state: dict):
+    """渲染單一決策卡的完整 Drill-Down 詳情內容（共用予 Dialog 彈窗或降級展開區）。"""
+    import decision_engine
+
+    if card.get("detail_intro"):
+        st.markdown(card["detail_intro"])
+
+    metrics = card.get("metrics") or []
+    if metrics:
+        m_cols = st.columns(len(metrics))
+        for col, (lbl, val) in zip(m_cols, metrics):
+            col.metric(lbl, val)
+
+    df_d = card.get("detail_df")
+    if df_d is not None and isinstance(df_d, pd.DataFrame) and not df_d.empty:
+        st.markdown("##### 📋 相關異常明細")
+        st.dataframe(df_d, use_container_width=True, hide_index=True, height=min(320, 44 + 35 * len(df_d)))
+
+    actions = card.get("actions") or []
+    if actions:
+        st.markdown("##### 🎯 建議行動方案")
+        for idx, act in enumerate(actions, 1):
+            st.markdown(f"**{idx}.** {act}")
+
+    copy_txt = card.get("copy_text") or ""
+    if copy_txt:
+        st.markdown("##### 💬 一鍵複製核對話術（可直接貼 LINE / 會議紀錄）")
+        st.code(copy_txt, language="text")
+
+    if not card.get("is_locked"):
+        st.divider()
+        b1, b2 = st.columns(2)
+        cid = card["id"]
+        with b1:
+            if st.button("✅ 標記已處理 / 已交辦", key=f"dlg_done_{cid}", type="primary", use_container_width=True):
+                ack_state[cid] = {"status": "done", "at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "title": card["title"]}
+                st.session_state["sm_decision_ack"] = ack_state
+                decision_engine.save_ack_state(ack_state)
+                st.rerun()
+        with b2:
+            if st.button("🔕 刻意為之（暫時隱藏）", key=f"dlg_ign_{cid}", use_container_width=True):
+                ack_state[cid] = {"status": "ignored", "at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "title": card["title"]}
+                st.session_state["sm_decision_ack"] = ack_state
+                decision_engine.save_ack_state(ack_state)
+                st.rerun()
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("🧭 異常細節與行動方案", width="large")
+    def _open_decision_dialog(card: dict, ack_state: dict):
+        st.markdown(f"### {card['badge']}　{card['title']}")
+        _render_card_detail_body(card, ack_state)
+else:
+    def _open_decision_dialog(card: dict, ack_state: dict):
+        st.session_state["sm_inline_open_card"] = card["id"]
+
+
+def _render_compact_card(card: dict, ack_state: dict):
+    """最前端極簡卡片：僅呈現「燈號 + 短標題 + 1 行量化結論 + 查看詳情按鈕」。"""
+    sev_style = {
+        "critical": ("#ef4444", "#fef2f2", "#b91c1c"),
+        "warning":  ("#f97316", "#fff7ed", "#c2410c"),
+        "info":     ("#3b82f6", "#eff6ff", "#1d4ed8"),
+        "verified": ("#10b981", "#ecfdf5", "#047857"),
+        "locked":   ("#94a3b8", "#f1f5f9", "#475569"),
+    }
+    border_c, pill_bg, pill_fg = sev_style.get(card.get("severity", "info"), ("#3b82f6", "#eff6ff", "#1d4ed8"))
+    lock_cls = " sm-dcard-locked" if card.get("is_locked") else ""
+
+    c_txt, c_btn = st.columns([4.4, 1.35], vertical_alignment="center")
+    with c_txt:
+        st.markdown(
+            f"""
+<div class="sm-dcard{lock_cls}" style="border-left: 5px solid {border_c};">
+  <div class="sm-dcard-top">
+    <span class="sm-dpill" style="background:{pill_bg}; color:{pill_fg};">{card['badge']}</span>
+    <span class="sm-dtitle">{card['title']}</span>
+  </div>
+  <div class="sm-dsum">{card['summary']}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with c_btn:
+        btn_lbl = "🔓 解鎖方式" if card.get("is_locked") else "🔎 查看詳情"
+        if st.button(btn_lbl, key=f"open_card_{card['id']}", use_container_width=True):
+            _open_decision_dialog(card, ack_state)
+
+    if not hasattr(st, "dialog") and st.session_state.get("sm_inline_open_card") == card["id"]:
+        with st.container(border=True):
+            _render_card_detail_body(card, ack_state)
 
 
 def run_pricing_audit_rules(
@@ -380,47 +520,110 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
             if ds and en:
                 events_map[ds] = f"{events_map[ds]} / {en}" if ds in events_map else en
 
-    # 1. 頂部 Hero Banner（修正 94/105 為已驗證 100% 實售方案對應，不製造假警報）
-    b_fail_cls = "sm-badge-err" if fail_cnt > 0 else "sm-badge-ok"
-    b_comp_cls = "sm-badge-warn" if comp_cnt == 0 else "sm-badge-ok"
+    import decision_engine
+
+    # 預先執行 6 大規則（使用預設門檻，下方進階設定可覆蓋）
+    stly_mode_lbl = st.session_state.get("sm_stly_mode", "同星期比對 (-364天｜SiteMinder 預設)")
+    stly_mode = "dow" if "-364" in stly_mode_lbl else "date"
+    allow_nye_101 = st.session_state.get("sm_nye_101", True)
+    last_min_days = st.session_state.get("sm_lastmin_d", 3)
+    underprice_pace_rn = st.session_state.get("sm_up_rn", 5)
+
+    df_alerts, day_verdict = run_pricing_audit_rules(
+        sm_snap=sm_snap, pace_data=pace_data, rt_inv=rt_inv, events_map=events_map,
+        stly_mode=stly_mode, last_min_days=last_min_days,
+        underprice_pace_rn=underprice_pace_rn, allow_nye_101_exception=allow_nye_101,
+    )
+
+    bundle = decision_engine.build_daily_decision_bundle(
+        sm_alerts_df=df_alerts,
+        taipei_events_df=taipei_events_df,
+    )
+    dh = bundle["health"]
+
+    # 1. 頂部精簡 Hero Banner（含即時時效閘門燈號）
+    pms_badge_cls = "sm-badge-ok" if dh["pms_fresh"] else "sm-badge-warn"
+    sm_badge_cls = "sm-badge-warn" if dh["sm_stale"] else "sm-badge-ok"
+    sm_badge_txt = (
+        f"🔒 SiteMinder 快照過期 {dh['sm_age_h']/24:.1f} 天（已上鎖防誤報）"
+        if dh["sm_stale"]
+        else f"🌐 SiteMinder 掛牌新鮮：{sm_asof}"
+    )
+    inv_badge_txt = f"✅ 房型校驗 {dh['rt_total_inv']} 間" if dh["rt_inv_ok"] else f"⚠️ 房型異常 ({dh['rt_total_inv']}間)"
     st.markdown(
         f"""
 <div class="sm-hero">
-  <h2>📡 站前館 SiteMinder 定價稽核雷達 × 促銷與含早差價健檢 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v2.0</span></h2>
+  <h2>📡 站前館營運決策與定價稽核雷達 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v3.0 決策收束</span></h2>
   <p>
-    100% 唯讀營運稽核｜結合 <b>每日 05:00 金旭 HT2000 全自動同步</b> 與 <b>SiteMinder 未來 {n_inv_days} 天掛牌價</b>，
-    直接回答 4 件最重要的事：<b>① 收益部開價合不合理（為何高低）② 實際做了什麼促銷 ③ 含早／不含早差價 ④ 通路真實淨利</b>。
+    最前端自動收束為「<b>今日必看精簡結論</b>」；點選任一卡片右側 <b>「🔎 查看詳情」</b> 即可展開該異常的單號明細、計算邏輯與一鍵 LINE 話術。
   </p>
   <div>
-    <span class="sm-badge sm-badge-ok">🕒 金旭 05:00 快照：{pms_asof}</span>
-    <span class="sm-badge sm-badge-ok">🌐 SiteMinder 掛牌快照：{sm_asof}</span>
-    <span class="sm-badge {b_fail_cls}">🚨 今日 PMS 派單失敗：{fail_cnt} 筆</span>
-    <span class="sm-badge sm-badge-ok">✅ 實售方案 100% 對應 GoldenUp ({mapped_n}/{mapped_tot}，餘11筆為內部對照表)</span>
-    <span class="sm-badge {b_comp_cls}">👀 競品設定：{comp_cnt} 家</span>
+    <span class="sm-badge {pms_badge_cls}">🕒 金旭最新：{dh['pms_as_of']}</span>
+    <span class="sm-badge {sm_badge_cls}">{sm_badge_txt}</span>
+    <span class="sm-badge sm-badge-ok">{inv_badge_txt}</span>
+    <span class="sm-badge sm-badge-ok">✅ 實售方案 100% 對應 GoldenUp ({mapped_n}/{mapped_tot})</span>
   </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    # 2. 緊急營運止血警示
-    if fail_cnt > 0:
-        fd = health.get("failed_delivery_detail", {})
-        if fd:
-            st.markdown(
-                f"""
-<div class="sm-alert-box">
-  <b>🚨 今日營運止血警示：SiteMinder 有 {fail_cnt} 筆訂單派送至金旭 PMS 失敗！</b><br>
-  • <b>通路／訂單編號</b>：{fd.get('channel','-')} <code>{fd.get('reservation_id','-')}</code>
-  ｜<b>房型／方案</b>：{fd.get('room_type','-')} ({fd.get('rate_plan','-')})
-  ｜<b>入退日</b>：{fd.get('checkin','-')} → {fd.get('checkout','-')}（{fd.get('nights','-')} 晚，TWD {fd.get('total_twd',0):,.2f}）<br>
-  • <b>異動時間與研判</b>：{fd.get('modified_at','-')} — {fd.get('likely_reason','請櫃檯人工核對金旭訂單狀態。')}
-</div>
-""",
-                unsafe_allow_html=True,
-            )
+    # 2. 最前端極簡決策收束看板（Progressive Disclosure：只看結論，點擊展開詳情）
+    if "sm_decision_ack" not in st.session_state:
+        st.session_state["sm_decision_ack"] = decision_engine.load_ack_state()
+    ack_state = st.session_state["sm_decision_ack"]
 
-    # 3. 精簡參數設定（預設收合，不干擾主畫面）
+    active_pm = [c for c in bundle["postmortem_cards"] if c["id"] not in ack_state]
+    active_int = [c for c in bundle["internal_cards"] if c["id"] not in ack_state]
+    active_rev = [c for c in bundle["revenue_cards"] if c["id"] not in ack_state]
+    acked_cards = [
+        c for c in (bundle["postmortem_cards"] + bundle["internal_cards"] + bundle["revenue_cards"])
+        if c["id"] in ack_state
+    ]
+
+    # 2a. 若有昨日/近期預警事後覆盤，以極簡單列置頂呈現
+    if active_pm:
+        for pm_c in active_pm:
+            _render_compact_card(pm_c, ack_state)
+
+    # 2b. 雙欄權責分流（左：館內今日拍板 ｜ 右：總部收益部鐵證對質）
+    col_l, col_r = st.columns(2, gap="medium")
+    with col_l:
+        st.markdown(f'<div class="sm-lane-hdr">🏢 館內今日拍板（{len(active_int)} 項）</div>', unsafe_allow_html=True)
+        if not active_int:
+            st.success("✅ 今日館內無待處理異常！")
+        else:
+            for card in active_int:
+                _render_compact_card(card, ack_state)
+
+    with col_r:
+        st.markdown(f'<div class="sm-lane-hdr">📡 總部收益部對質・僅留鐵證（{len(active_rev)} 項）</div>', unsafe_allow_html=True)
+        if not active_rev:
+            st.success("✅ 目前無待對質定價異常！")
+        else:
+            for card in active_rev:
+                _render_compact_card(card, ack_state)
+
+    # 2c. 已處理／已隱藏閉環收納列（不占主畫面）
+    if acked_cards:
+        with st.expander(f"✅ 已處理 / 已暫時隱藏項目（{len(acked_cards)} 項，點此檢視或還原）", expanded=False):
+            for ac in acked_cards:
+                meta = ack_state.get(ac["id"], {})
+                tag = "已處理" if meta.get("status") == "done" else "刻意為之隱藏"
+                a1, a2, a3 = st.columns([3.8, 1.2, 1.0], vertical_alignment="center")
+                a1.markdown(f"~~{ac['badge']} {ac['title']}~~ — *{tag} ({meta.get('at', '')})*")
+                if a2.button("🔎 詳情", key=f"ack_view_{ac['id']}", use_container_width=True):
+                    _open_decision_dialog(ac, ack_state)
+                if a3.button("↩️ 還原", key=f"ack_undo_{ac['id']}", use_container_width=True):
+                    ack_state.pop(ac["id"], None)
+                    st.session_state["sm_decision_ack"] = ack_state
+                    decision_engine.save_ack_state(ack_state)
+                    st.rerun()
+
+    st.divider()
+    st.markdown("### 📂 底層原始數據查證專區（需要深查全表時再展開檢視）")
+
+    # 3. 進階參數設定（預設收合）
     with st.expander("⚙️ 進階稽核門檻與各通路合約抽成微調（預設已套用站前館實測值，平時無需調整）", expanded=False):
         c_p1, c_p2 = st.columns(2)
         with c_p1:
@@ -440,7 +643,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
             comm_direct = st.slider("官網 Direct 金流手續費 (%)", 0.0, 5.0, 2.0, 0.5, key="sm_c_dir")
             comm_rakuten = st.slider("Rakuten 樂天到付抽成 (%)", 8.0, 18.0, 12.0, 0.5, key="sm_c_rak")
 
-    # 執行自動 6 大稽核 + 每日定價合理性白話診斷
+    # 若上方參數有調整，同步重跑一次 6 大規則供下方 5 分頁查證
     df_alerts, day_verdict = run_pricing_audit_rules(
         sm_snap=sm_snap, pace_data=pace_data, rt_inv=rt_inv, events_map=events_map,
         stly_mode=stly_mode, last_min_days=last_min_days,

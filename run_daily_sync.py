@@ -203,6 +203,7 @@ def push_to_cloud_git():
             "data/pms_backup/", 
             "pms_future_extractor.py", 
             "pms_revenue_intel.py",
+            "decision_engine.py",
             "siteminder_cdp_sync.py",
             "siteminder_audit.py",
             "run_daily_sync.py",
