@@ -272,6 +272,236 @@ def build_daily_decision_bundle(
         })
 
     # ==========================================================================
+    # B0. 🚨 負庫存即時偵測 (rem < 0) ＋ 頂規房最後 1 間 (DF/F/DTP rem == 1) 撞單哨兵
+    #     100% 讀取金旭每日 12 房型庫存快照 (tot - ooo - sold)，不需等收益部人工巡房
+    # ==========================================================================
+    dow_zh = ["一", "二", "三", "四", "五", "六", "日"]
+    rt_tier_up = {
+        "DF": [],
+        "F": ["DF", "DTP"],
+        "DTP": ["DF"],
+        "LDT": ["DTP", "F", "DF"],
+        "DT": ["LDT", "DTP", "F"],
+        "E": ["DT", "LDT"],
+        "ER": ["E", "DT"],
+        "PD": ["E", "DT"],
+        "PT": ["DT", "E"],
+        "SP": ["PD", "PT", "DT"],
+        "S": ["SP", "PD", "PT"],
+        "SD": ["S", "SP", "PD"],
+    }
+    top_tier_rts = ("DF", "F", "DTP")
+    try:
+        base_d_obj = datetime.date.fromisoformat(base_date)
+    except Exception:
+        base_d_obj = now_dt.date()
+
+    neg_rows = []
+    last1_14d_rows = []
+    last1_30d_cnt = 0
+
+    for d_str in sorted(daily_rt.keys()):
+        if d_str < base_date:
+            continue
+        try:
+            d_obj = datetime.date.fromisoformat(d_str)
+            lead_d = (d_obj - base_d_obj).days
+            dow_s = dow_zh[d_obj.weekday()]
+        except Exception:
+            lead_d, dow_s = 999, ""
+
+        rts = daily_rt.get(d_str, {})
+        ev_s = events_map.get(d_str, "")
+
+        # 1) 全館 12 房型負庫存偵測 (rem < 0)，掃描全區間至 2027-03-31
+        for rt_code, info in rts.items():
+            tot_v = int(info.get("tot", 0) or 0)
+            ooo_v = int(info.get("ooo", 0) or 0)
+            sold_v = int(info.get("sold", 0) or 0)
+            rem_v = int(info.get("rem", tot_v - ooo_v - sold_v) or 0)
+            if rem_v < 0:
+                if ooo_v > 0 and sold_v <= tot_v:
+                    cause = f"🔧 OOO壓房衝突 (OOO={ooo_v})"
+                elif ooo_v > 0 and sold_v > tot_v:
+                    cause = f"⚡ 超賣＋OOO雙重衝突 (售{sold_v}/總{tot_v}, OOO={ooo_v})"
+                else:
+                    cause = "⚡ 跨平台同時進單 / 超賣"
+
+                # 計算當日上位/替代房剩餘緩衝
+                buf_parts = [
+                    f"{up}剩{int(rts.get(up, {}).get('rem', 0))}"
+                    for up in rt_tier_up.get(rt_code, [])
+                    if int(rts.get(up, {}).get("rem", 0)) > 0
+                ]
+                buf_txt = " / ".join(buf_parts) if buf_parts else "⚠️ 上位房皆滿"
+
+                if rt_code == "DF":
+                    rescue = "最高等級無上位房！立即查有無重複/未付高風險單，預先聯繫協商"
+                elif rt_code == "F":
+                    rescue = f"優先盤查3人單能否協商轉DTP(2601/2701雙床)或升DF（{buf_txt}）"
+                elif rt_code == "DTP":
+                    rescue = f"切忌直接換F(變小易客訴)！優先看能否升DF或聯繫確認（{buf_txt}）"
+                else:
+                    rescue = f"核對OOO能否釋放，或預排上位房升等平房（{buf_txt}）"
+
+                neg_rows.append({
+                    "_lead": lead_d,
+                    "_is_top": rt_code in top_tier_rts,
+                    "_is_ooo": ooo_v > 0,
+                    "_rem": rem_v,
+                    "_date": d_str,
+                    "_rt": rt_code,
+                    "_cause": cause,
+                    "日期": f"{d_str} ({dow_s})",
+                    "距入住": f"D+{lead_d}" if lead_d >= 0 else str(lead_d),
+                    "房型": rt_code,
+                    "總房數": tot_v,
+                    "OOO": ooo_v,
+                    "已售": sold_v,
+                    "剩餘庫存": rem_v,
+                    "可能成因": cause,
+                    "平房救援建議": rescue,
+                    "台北活動": ev_s,
+                })
+
+        # 2) 頂規無解房 (DF / F / DTP) 剩最後 1 間 (rem == 1) 跨平台撞單預警
+        if 0 <= lead_d <= 30:
+            for rt_code in top_tier_rts:
+                info = rts.get(rt_code, {})
+                if not info:
+                    continue
+                tot_v = int(info.get("tot", 0) or 0)
+                ooo_v = int(info.get("ooo", 0) or 0)
+                sold_v = int(info.get("sold", 0) or 0)
+                rem_v = int(info.get("rem", tot_v - ooo_v - sold_v) or 0)
+                if rem_v == 1:
+                    last1_30d_cnt += 1
+                    if lead_d <= 14:
+                        df_rem = int(rts.get("DF", {}).get("rem", 0))
+                        f_rem = int(rts.get("F", {}).get("rem", 0))
+                        dtp_rem = int(rts.get("DTP", {}).get("rem", 0))
+                        alt_rts = [k for k in ("DF", "F", "DTP") if k != rt_code]
+                        alt_txt = " / ".join(f"{k}剩{int(rts.get(k, {}).get('rem', 0))}" for k in alt_rts)
+                        if rt_code == "DF":
+                            # DF 為全館最高等級，沒有任何上位房可升等！
+                            no_escape = True
+                            risk_lbl = "🔴 最高級無上位房(爆房只能降等/拆房)"
+                        elif rt_code == "DTP":
+                            # DTP 轉 F 會因房間變小引發客訴，僅 DF 為真正安全上位緩衝
+                            no_escape = (df_rem <= 0)
+                            risk_lbl = "🔴 零退路(DF已滿，轉F易客訴)" if no_escape else f"🟠 可升DF緩衝(DF剩{df_rem})"
+                        else:  # F
+                            no_escape = (df_rem <= 0 and dtp_rem <= 0)
+                            risk_lbl = "🔴 零退路(DF與DTP皆滿)" if no_escape else f"🟠 尚有緩衝(DF剩{df_rem} / DTP剩{dtp_rem})"
+                        last1_14d_rows.append({
+                            "_lead": lead_d,
+                            "_no_escape": no_escape,
+                            "_date": d_str,
+                            "_rt": rt_code,
+                            "日期": f"{d_str} ({dow_s})",
+                            "距入住": f"D+{lead_d}",
+                            "頂規房型": rt_code,
+                            "狀態(售/總/OOO)": f"{sold_v}/{tot_v} (OOO:{ooo_v})",
+                            "剩餘": 1,
+                            "撞單風險分級": risk_lbl,
+                            "同日其餘頂規房": alt_txt,
+                            "台北活動": ev_s,
+                        })
+
+    # 寫入健康哨兵摘要供 Hero Banner 亮燈
+    health["overbook_count"] = len(neg_rows)
+    health["overbook_top_count"] = sum(1 for x in neg_rows if x["_is_top"])
+    health["last1_14d_count"] = len(last1_14d_rows)
+    health["last1_14d_no_escape"] = sum(1 for x in last1_14d_rows if x["_no_escape"])
+    health["last1_30d_count"] = last1_30d_cnt
+
+    # 卡片 B0-1：🚨 負庫存即時爆房警報（只要全區間有任何 1 筆 rem < 0，立刻強制置頂左欄！）
+    if neg_rows:
+        neg_rows.sort(key=lambda x: (0 if x["_lead"] <= 7 else 1, 0 if x["_is_top"] else 1, x["_lead"], x["_rem"]))
+        top_neg = neg_rows[0]
+        uniq_neg_days = len({x["_date"] for x in neg_rows})
+        top_cnt = sum(1 for x in neg_rows if x["_is_top"])
+        ooo_cnt = sum(1 for x in neg_rows if x["_is_ooo"])
+        df_neg = pd.DataFrame(neg_rows).drop(columns=["_lead", "_is_top", "_is_ooo", "_rem", "_date", "_rt", "_cause"])
+        neg_line_items = [
+            f"{idx}. {x['日期']} {x['房型']}：剩 {x['剩餘庫存']} 間（已售 {x['已售']}/總 {x['總房數']}，OOO {x['OOO']}）→ {x['可能成因']}"
+            for idx, x in enumerate(neg_rows[:6], 1)
+        ]
+        internal_cards.append({
+            "id": f"int_overbook_{base_date}_{len(neg_rows)}",
+            "lane": "internal",
+            "severity": "critical",
+            "badge": "🚨 負庫存爆房",
+            "title": f"全館負庫存即時警報（共 {len(neg_rows)} 筆｜{uniq_neg_days} 天）",
+            "summary": f"最急：{top_neg['日期']} {top_neg['房型']} ({top_neg['剩餘庫存']} 間｜{top_neg['_cause']})｜請現場立刻平房！",
+            "detail_intro": (
+                f"依據金旭最新 12 房型庫存快照（{health['rt_as_of']}），系統掃描至 2027-03-31 偵測到以下負庫存（rem = 總房數 - OOO - 已售 < 0）。"
+                "請櫃檯／房務無須等收益部通知，立即依建議啟動平房或釋放 OOO："
+            ),
+            "metrics": [
+                ("負庫存總筆數", f"{len(neg_rows)} 筆"),
+                ("涉及入住天數", f"{uniq_neg_days} 天"),
+                ("頂規房(DF/F/DTP)", f"{top_cnt} 筆"),
+                ("含OOO壓房衝突", f"{ooo_cnt} 筆"),
+            ],
+            "detail_df": df_neg,
+            "actions": [
+                "櫃檯：先排查『OOO > 0』項目，確認工務／房務能否立即換房號或解除 OOO 直接平房。",
+                "櫃檯：針對跨平台超賣之 DF/F/DTP，先檢查最新進單是否為『入住前未付高風險單』，並提早聯繫客人協商換房（切忌 DTP 換 F 造成變小客訴）。",
+                "同步回報總部收益部確認 SiteMinder 庫存是否已歸零，避免二次爆房。",
+            ],
+            "copy_text": (
+                f"【站前館 🚨 負庫存即時通報｜{base_date}】\n"
+                "系統偵測以下日期房型出現負庫存，請現場與收益部立即核對平房與關房狀態：\n"
+                + "\n".join(neg_line_items)
+            ),
+            "is_locked": False,
+        })
+
+    # 卡片 B0-2：⚡ 頂規房最後 1 間 (DF / F / DTP rem == 1) 跨平台撞單預警（未來 14 天熱區）
+    if last1_14d_rows:
+        last1_14d_rows.sort(key=lambda x: (0 if x["_no_escape"] else 1, x["_lead"], x["_rt"]))
+        no_esc_cnt = sum(1 for x in last1_14d_rows if x["_no_escape"])
+        uniq_l1_days = len({x["_date"] for x in last1_14d_rows})
+        first_l1 = last1_14d_rows[0]
+        preview_l1 = "、".join(f"{x['_date'][5:]}({x['_rt']})" for x in last1_14d_rows[:4])
+        df_last1 = pd.DataFrame(last1_14d_rows).drop(columns=["_lead", "_no_escape", "_date", "_rt"])
+        l1_line_items = [
+            f"- {x['日期']} {x['頂規房型']} 僅剩最後 1 間（{x['狀態(售/總/OOO)']}）｜{x['撞單風險分級']}"
+            for x in last1_14d_rows[:8]
+        ]
+        internal_cards.append({
+            "id": f"int_top_last1_{base_date}",
+            "lane": "internal",
+            "severity": "warning" if no_esc_cnt > 0 else "info",
+            "badge": "⚡ 最後1間撞單戒備",
+            "title": f"頂規房剩最後 1 間（近14天 {len(last1_14d_rows)} 筆｜{no_esc_cnt} 筆零退路）",
+            "summary": f"{preview_l1} 等 {uniq_l1_days} 天 DF/F/DTP 僅剩 1 間（金旭2分鐘輪詢易跨OTA撞單）",
+            "detail_intro": (
+                "金旭 RequestBooking 為每 ~123 秒（2 分鐘）批次輪詢 SiteMinder；當 DF / F / DTP（總數僅 4~8 間、爆房無上位房可救）僅剩最後 1 間時，"
+                "同時掛多通路極易發生跨 OTA 同時進單爆房。下列為未來 14 天（含零退路熱區）清單："
+            ),
+            "metrics": [
+                ("近14天剩1間筆數", f"{len(last1_14d_rows)} 筆"),
+                ("🔴 零退路筆數", f"{no_esc_cnt} 筆"),
+                ("涵蓋天數", f"{uniq_l1_days} 天"),
+                ("未來30天累計", f"{last1_30d_cnt} 筆"),
+            ],
+            "detail_df": df_last1,
+            "actions": [
+                "櫃檯／房務：上述日期嚴禁對 DF / F / DTP 臨時壓 OOO，並留意晚間熱門時段（20:00~23:00）新進訂單，避免隔日中午才發現爆房。",
+                "建議收益部（零業績損失解法）：對『🔴 零退路』日期的最後 1 間頂規房，改採「單一預付主力通路販售（其餘 OTA 設 Stop Sell）」，總庫存 100% 賣滿但跨平台撞單率歸零！",
+            ],
+            "copy_text": (
+                f"【站前館 頂規房最後 1 間防撞單提醒｜{base_date}】\n"
+                f"未來 14 天內共有 {len(last1_14d_rows)} 筆 DF/F/DTP 僅剩最後 1 間（其中 {no_esc_cnt} 筆其餘家庭/三人房全滿、爆房無解）：\n"
+                + "\n".join(l1_line_items)
+                + "\n建議評估對上述日期最後 1 間採『單一預付主力通路販售』，不減可售房數、不影響業績，同時杜絕 2 分鐘輪詢跨平台撞單！"
+            ),
+            "is_locked": False,
+        })
+
+    # ==========================================================================
     # B. 左欄：🏢 館內今日可拍板（D+0 ~ D+7，100% 每日新鮮金旭數據）
     # ==========================================================================
     d0_3 = pace_daily[:4]

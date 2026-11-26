@@ -541,7 +541,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     )
     dh = bundle["health"]
 
-    # 1. 頂部精簡 Hero Banner（含即時時效閘門燈號）
+    # 1. 頂部精簡 Hero Banner（含即時時效閘門＋負庫存防爆房哨兵燈號）
     pms_badge_cls = "sm-badge-ok" if dh["pms_fresh"] else "sm-badge-warn"
     sm_badge_cls = "sm-badge-warn" if dh["sm_stale"] else "sm-badge-ok"
     sm_badge_txt = (
@@ -550,15 +550,28 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
         else f"🌐 SiteMinder 掛牌新鮮：{sm_asof}"
     )
     inv_badge_txt = f"✅ 房型校驗 {dh['rt_total_inv']} 間" if dh["rt_inv_ok"] else f"⚠️ 房型異常 ({dh['rt_total_inv']}間)"
+    ov_cnt = int(dh.get("overbook_count", 0) or 0)
+    l1_cnt = int(dh.get("last1_14d_count", 0) or 0)
+    l1_noesc = int(dh.get("last1_14d_no_escape", 0) or 0)
+    ov_badge_cls = "sm-badge-err" if ov_cnt > 0 else "sm-badge-ok"
+    ov_badge_txt = f"🚨 負庫存爆房 {ov_cnt} 筆！" if ov_cnt > 0 else "✅ 全館負庫存 0 筆"
+    l1_badge_cls = "sm-badge-warn" if l1_noesc > 0 else "sm-badge-ok"
+    l1_badge_txt = (
+        f"⚡ 頂規剩1間 {l1_cnt} 筆 ({l1_noesc}零退路)"
+        if l1_cnt > 0
+        else "✅ 近14天無頂規剩1間"
+    )
     st.markdown(
         f"""
 <div class="sm-hero">
-  <h2>📡 站前館營運決策與定價稽核雷達 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v3.0 決策收束</span></h2>
+  <h2>📡 站前館營運決策與定價稽核雷達 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v3.1 決策收束＋防爆房哨兵</span></h2>
   <p>
-    最前端自動收束為「<b>今日必看精簡結論</b>」；點選任一卡片右側 <b>「🔎 查看詳情」</b> 即可展開該異常的單號明細、計算邏輯與一鍵 LINE 話術。
+    最前端自動收束為「<b>今日必看精簡結論</b>」與「<b>全館負庫存／頂規房最後1間撞單哨兵</b>」；點選卡片右側 <b>「🔎 查看詳情」</b> 即可展開明細、平房建議與一鍵 LINE 話術。
   </p>
   <div>
     <span class="sm-badge {pms_badge_cls}">🕒 金旭最新：{dh['pms_as_of']}</span>
+    <span class="sm-badge {ov_badge_cls}">{ov_badge_txt}</span>
+    <span class="sm-badge {l1_badge_cls}">{l1_badge_txt}</span>
     <span class="sm-badge {sm_badge_cls}">{sm_badge_txt}</span>
     <span class="sm-badge sm-badge-ok">{inv_badge_txt}</span>
     <span class="sm-badge sm-badge-ok">✅ 實售方案 100% 對應 GoldenUp ({mapped_n}/{mapped_tot})</span>
