@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-11-23 14:15",
-  "msb_date": "20261122",
+  "as_of": "2026-11-26 10:22",
+  "msb_date": "20261125",
   "rt_master": {
     "DF": {
       "order": "01",
@@ -214,13 +214,13 @@
       "SD",
       "布巾房"
     ],
-    "3302": [
-      "ER",
-      "冷氣待維修"
+    "3001": [
+      "DF",
+      "保留給#98914"
     ],
-    "3502": [
-      "ER",
-      "11/23 房務保留"
+    "3301": [
+      "DF",
+      "11/26房務保留"
     ],
     "2702": [
       "PD",
@@ -236,6 +236,10 @@
     ],
     "3211": [
       "SP",
+      "壁紙作業"
+    ],
+    "3302": [
+      "ER",
       "壁紙作業"
     ],
     "2603": [
@@ -272,24 +276,24 @@
     ]
   },
   "daily_avail": {
-    "2026-11-23": {
+    "2026-11-26": {
       "DF": {
         "tot": 8,
-        "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "ooo": 2,
+        "sold": 6,
+        "rem": 0
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "LDT": {
         "tot": 4,
@@ -306,14 +310,14 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
-        "ooo": 2,
-        "sold": 5,
-        "rem": 1
+        "ooo": 0,
+        "sold": 8,
+        "rem": 0
       },
       "PD": {
         "tot": 22,
@@ -324,8 +328,8 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 11,
-        "rem": 1
+        "sold": 12,
+        "rem": 0
       },
       "SP": {
         "tot": 20,
@@ -338,228 +342,6 @@
         "ooo": 0,
         "sold": 10,
         "rem": 0
-      },
-      "SD": {
-        "tot": 5,
-        "ooo": 2,
-        "sold": 1,
-        "rem": 2
-      }
-    },
-    "2026-11-24": {
-      "DF": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "F": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "DTP": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 3,
-        "rem": 1
-      },
-      "LDT": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 0
-      },
-      "DT": {
-        "tot": 19,
-        "ooo": 0,
-        "sold": 13,
-        "rem": 6
-      },
-      "E": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "ER": {
-        "tot": 8,
-        "ooo": 1,
-        "sold": 6,
-        "rem": 1
-      },
-      "PD": {
-        "tot": 22,
-        "ooo": 0,
-        "sold": 20,
-        "rem": 2
-      },
-      "PT": {
-        "tot": 12,
-        "ooo": 0,
-        "sold": 9,
-        "rem": 3
-      },
-      "SP": {
-        "tot": 20,
-        "ooo": 0,
-        "sold": 19,
-        "rem": 1
-      },
-      "S": {
-        "tot": 10,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 4
-      },
-      "SD": {
-        "tot": 5,
-        "ooo": 2,
-        "sold": 0,
-        "rem": 3
-      }
-    },
-    "2026-11-25": {
-      "DF": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 5,
-        "rem": 3
-      },
-      "F": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 8,
-        "rem": 0
-      },
-      "DTP": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 3,
-        "rem": 1
-      },
-      "LDT": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 0
-      },
-      "DT": {
-        "tot": 19,
-        "ooo": 0,
-        "sold": 16,
-        "rem": 3
-      },
-      "E": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 8,
-        "rem": 0
-      },
-      "ER": {
-        "tot": 8,
-        "ooo": 1,
-        "sold": 7,
-        "rem": 0
-      },
-      "PD": {
-        "tot": 22,
-        "ooo": 0,
-        "sold": 22,
-        "rem": 0
-      },
-      "PT": {
-        "tot": 12,
-        "ooo": 0,
-        "sold": 12,
-        "rem": 0
-      },
-      "SP": {
-        "tot": 20,
-        "ooo": 0,
-        "sold": 18,
-        "rem": 2
-      },
-      "S": {
-        "tot": 10,
-        "ooo": 0,
-        "sold": 7,
-        "rem": 3
-      },
-      "SD": {
-        "tot": 5,
-        "ooo": 2,
-        "sold": 0,
-        "rem": 3
-      }
-    },
-    "2026-11-26": {
-      "DF": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 7,
-        "rem": 1
-      },
-      "F": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 7,
-        "rem": 1
-      },
-      "DTP": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 0
-      },
-      "LDT": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 0
-      },
-      "DT": {
-        "tot": 19,
-        "ooo": 0,
-        "sold": 19,
-        "rem": 0
-      },
-      "E": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 8,
-        "rem": 0
-      },
-      "ER": {
-        "tot": 8,
-        "ooo": 1,
-        "sold": 7,
-        "rem": 0
-      },
-      "PD": {
-        "tot": 22,
-        "ooo": 0,
-        "sold": 22,
-        "rem": 0
-      },
-      "PT": {
-        "tot": 12,
-        "ooo": 0,
-        "sold": 12,
-        "rem": 0
-      },
-      "SP": {
-        "tot": 20,
-        "ooo": 0,
-        "sold": 20,
-        "rem": 0
-      },
-      "S": {
-        "tot": 10,
-        "ooo": 0,
-        "sold": 9,
-        "rem": 1
       },
       "SD": {
         "tot": 5,
@@ -596,19 +378,19 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 17,
-        "rem": 2
+        "sold": 18,
+        "rem": 1
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
-        "ooo": 1,
-        "sold": 7,
+        "ooo": 0,
+        "sold": 8,
         "rem": 0
       },
       "PD": {
@@ -626,8 +408,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 20,
-        "rem": 0
+        "sold": 18,
+        "rem": 2
       },
       "S": {
         "tot": 10,
@@ -670,26 +452,26 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 15,
-        "rem": 4
+        "sold": 18,
+        "rem": 1
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "ER": {
         "tot": 8,
-        "ooo": 1,
-        "sold": 7,
+        "ooo": 0,
+        "sold": 8,
         "rem": 0
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 22,
-        "rem": 0
+        "sold": 21,
+        "rem": 1
       },
       "PT": {
         "tot": 12,
@@ -700,8 +482,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 20,
-        "rem": 0
+        "sold": 19,
+        "rem": 1
       },
       "S": {
         "tot": 10,
@@ -732,8 +514,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -744,38 +526,38 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 14,
-        "rem": 5
+        "sold": 19,
+        "rem": 0
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
-        "ooo": 1,
-        "sold": 7,
+        "ooo": 0,
+        "sold": 8,
         "rem": 0
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 21,
-        "rem": 1
+        "sold": 18,
+        "rem": 4
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 12,
-        "rem": 0
+        "sold": 11,
+        "rem": 1
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 20,
-        "rem": 0
+        "sold": 19,
+        "rem": 1
       },
       "S": {
         "tot": 10,
@@ -806,8 +588,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -818,8 +600,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 10,
-        "rem": 9
+        "sold": 18,
+        "rem": 1
       },
       "E": {
         "tot": 8,
@@ -829,8 +611,8 @@
       },
       "ER": {
         "tot": 8,
-        "ooo": 1,
-        "sold": 7,
+        "ooo": 0,
+        "sold": 8,
         "rem": 0
       },
       "PD": {
@@ -842,14 +624,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 12,
-        "rem": 0
+        "sold": 11,
+        "rem": 1
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 13,
-        "rem": 7
+        "sold": 16,
+        "rem": 4
       },
       "S": {
         "tot": 10,
@@ -880,8 +662,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -892,14 +674,14 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 10,
-        "rem": 9
+        "sold": 16,
+        "rem": 3
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -910,26 +692,26 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 20,
-        "rem": 2
+        "sold": 22,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 9,
-        "rem": 3
+        "sold": 8,
+        "rem": 4
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 15,
-        "rem": 5
+        "sold": 19,
+        "rem": 1
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 6,
-        "rem": 4
+        "sold": 8,
+        "rem": 2
       },
       "SD": {
         "tot": 5,
@@ -960,20 +742,20 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 13,
-        "rem": 6
+        "sold": 17,
+        "rem": 2
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -984,26 +766,26 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 19,
-        "rem": 3
+        "sold": 22,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 8,
-        "rem": 4
+        "sold": 7,
+        "rem": 5
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 17,
-        "rem": 3
+        "sold": 19,
+        "rem": 1
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 9,
-        "rem": 1
+        "sold": 10,
+        "rem": 0
       },
       "SD": {
         "tot": 5,
@@ -1016,38 +798,38 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 15,
-        "rem": 4
+        "sold": 17,
+        "rem": 2
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -1058,20 +840,20 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 17,
-        "rem": 5
+        "sold": 22,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 12,
-        "rem": 0
+        "sold": 11,
+        "rem": 1
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 18,
-        "rem": 2
+        "sold": 20,
+        "rem": 0
       },
       "S": {
         "tot": 10,
@@ -1090,26 +872,26 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 5,
+        "rem": 3
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "DT": {
         "tot": 19,
@@ -1132,26 +914,26 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 16,
-        "rem": 6
+        "sold": 21,
+        "rem": 1
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 11,
-        "rem": 1
+        "sold": 10,
+        "rem": 2
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 19,
-        "rem": 1
+        "sold": 17,
+        "rem": 3
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 7,
-        "rem": 3
+        "sold": 8,
+        "rem": 2
       },
       "SD": {
         "tot": 5,
@@ -1164,20 +946,20 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -1194,8 +976,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -1206,8 +988,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 15,
-        "rem": 7
+        "sold": 18,
+        "rem": 4
       },
       "PT": {
         "tot": 12,
@@ -1218,14 +1000,14 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 16,
-        "rem": 4
+        "sold": 18,
+        "rem": 2
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 9,
-        "rem": 1
+        "sold": 10,
+        "rem": 0
       },
       "SD": {
         "tot": 5,
@@ -1238,14 +1020,14 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
@@ -1262,14 +1044,14 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 19,
-        "rem": 0
+        "sold": 18,
+        "rem": 1
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -1298,8 +1080,8 @@
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 7,
-        "rem": 3
+        "sold": 9,
+        "rem": 1
       },
       "SD": {
         "tot": 5,
@@ -1312,14 +1094,14 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "DTP": {
         "tot": 4,
@@ -1336,26 +1118,26 @@
       "DT": {
         "tot": 19,
         "ooo": 1,
-        "sold": 16,
-        "rem": 2
+        "sold": 18,
+        "rem": 0
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 5,
+        "rem": 3
       },
       "ER": {
         "tot": 8,
         "ooo": 1,
-        "sold": 6,
-        "rem": 1
+        "sold": 7,
+        "rem": 0
       },
       "PD": {
         "tot": 22,
         "ooo": 1,
-        "sold": 20,
-        "rem": 1
+        "sold": 21,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
@@ -1366,14 +1148,14 @@
       "SP": {
         "tot": 20,
         "ooo": 2,
-        "sold": 15,
-        "rem": 3
+        "sold": 17,
+        "rem": 1
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 8,
-        "rem": 2
+        "sold": 9,
+        "rem": 1
       },
       "SD": {
         "tot": 5,
@@ -1386,8 +1168,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "F": {
         "tot": 8,
@@ -1422,8 +1204,8 @@
       "ER": {
         "tot": 8,
         "ooo": 1,
-        "sold": 6,
-        "rem": 1
+        "sold": 7,
+        "rem": 0
       },
       "PD": {
         "tot": 22,
@@ -1434,14 +1216,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 11,
-        "rem": 1
+        "sold": 10,
+        "rem": 2
       },
       "SP": {
         "tot": 20,
         "ooo": 2,
-        "sold": 15,
-        "rem": 3
+        "sold": 17,
+        "rem": 1
       },
       "S": {
         "tot": 10,
@@ -1496,14 +1278,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 20,
-        "rem": 2
+        "sold": 19,
+        "rem": 3
       },
       "PT": {
         "tot": 12,
@@ -1520,8 +1302,8 @@
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 7,
-        "rem": 3
+        "sold": 8,
+        "rem": 2
       },
       "SD": {
         "tot": 5,
@@ -1534,14 +1316,14 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 8,
-        "rem": 0
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "DTP": {
         "tot": 4,
@@ -1552,8 +1334,8 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 2,
+        "rem": 2
       },
       "DT": {
         "tot": 19,
@@ -1570,14 +1352,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 7,
+        "rem": 1
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 21,
-        "rem": 1
+        "sold": 19,
+        "rem": 3
       },
       "PT": {
         "tot": 12,
@@ -1594,8 +1376,8 @@
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 6,
-        "rem": 4
+        "sold": 8,
+        "rem": 2
       },
       "SD": {
         "tot": 5,
@@ -1608,8 +1390,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 5,
+        "rem": 3
       },
       "F": {
         "tot": 8,
@@ -1626,8 +1408,8 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "DT": {
         "tot": 19,
@@ -1644,14 +1426,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 6,
+        "rem": 2
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 20,
-        "rem": 2
+        "sold": 18,
+        "rem": 4
       },
       "PT": {
         "tot": 12,
@@ -1668,8 +1450,8 @@
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 5,
-        "rem": 5
+        "sold": 7,
+        "rem": 3
       },
       "SD": {
         "tot": 5,
@@ -1688,14 +1470,88 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
         "sold": 4,
         "rem": 0
+      },
+      "LDT": {
+        "tot": 4,
+        "ooo": 0,
+        "sold": 3,
+        "rem": 1
+      },
+      "DT": {
+        "tot": 19,
+        "ooo": 0,
+        "sold": 15,
+        "rem": 4
+      },
+      "E": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 8,
+        "rem": 0
+      },
+      "ER": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 6,
+        "rem": 2
+      },
+      "PD": {
+        "tot": 22,
+        "ooo": 0,
+        "sold": 20,
+        "rem": 2
+      },
+      "PT": {
+        "tot": 12,
+        "ooo": 0,
+        "sold": 12,
+        "rem": 0
+      },
+      "SP": {
+        "tot": 20,
+        "ooo": 0,
+        "sold": 18,
+        "rem": 2
+      },
+      "S": {
+        "tot": 10,
+        "ooo": 0,
+        "sold": 10,
+        "rem": 0
+      },
+      "SD": {
+        "tot": 5,
+        "ooo": 2,
+        "sold": 0,
+        "rem": 3
+      }
+    },
+    "2026-12-13": {
+      "DF": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 7,
+        "rem": 1
+      },
+      "F": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 5,
+        "rem": 3
+      },
+      "DTP": {
+        "tot": 4,
+        "ooo": 0,
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -1712,26 +1568,26 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 8,
-        "rem": 0
+        "sold": 6,
+        "rem": 2
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 22,
-        "rem": 0
+        "sold": 19,
+        "rem": 3
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 11,
-        "rem": 1
+        "sold": 12,
+        "rem": 0
       },
       "SP": {
         "tot": 20,
@@ -1752,92 +1608,18 @@
         "rem": 3
       }
     },
-    "2026-12-13": {
-      "DF": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "F": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "DTP": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 2,
-        "rem": 2
-      },
-      "LDT": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 0
-      },
-      "DT": {
-        "tot": 19,
-        "ooo": 0,
-        "sold": 13,
-        "rem": 6
-      },
-      "E": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
-        "rem": 2
-      },
-      "ER": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 4
-      },
-      "PD": {
-        "tot": 22,
-        "ooo": 0,
-        "sold": 18,
-        "rem": 4
-      },
-      "PT": {
-        "tot": 12,
-        "ooo": 0,
-        "sold": 12,
-        "rem": 0
-      },
-      "SP": {
-        "tot": 20,
-        "ooo": 0,
-        "sold": 20,
-        "rem": 0
-      },
-      "S": {
-        "tot": 10,
-        "ooo": 0,
-        "sold": 2,
-        "rem": 8
-      },
-      "SD": {
-        "tot": 5,
-        "ooo": 2,
-        "sold": 0,
-        "rem": 3
-      }
-    },
     "2026-12-14": {
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 8,
-        "rem": 0
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
@@ -1860,8 +1642,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 7,
+        "rem": 1
       },
       "ER": {
         "tot": 8,
@@ -1872,8 +1654,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 12,
-        "rem": 10
+        "sold": 13,
+        "rem": 9
       },
       "PT": {
         "tot": 12,
@@ -1884,14 +1666,14 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 15,
-        "rem": 5
+        "sold": 17,
+        "rem": 3
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 1,
-        "rem": 9
+        "sold": 3,
+        "rem": 7
       },
       "SD": {
         "tot": 5,
@@ -1928,14 +1710,14 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 10,
-        "rem": 9
+        "sold": 11,
+        "rem": 8
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 6,
+        "rem": 2
       },
       "ER": {
         "tot": 8,
@@ -1958,14 +1740,14 @@
       "SP": {
         "tot": 20,
         "ooo": 2,
-        "sold": 10,
-        "rem": 8
+        "sold": 12,
+        "rem": 6
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 2,
-        "rem": 8
+        "sold": 4,
+        "rem": 6
       },
       "SD": {
         "tot": 5,
@@ -1978,8 +1760,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 4,
+        "rem": 4
       },
       "F": {
         "tot": 8,
@@ -2002,14 +1784,14 @@
       "DT": {
         "tot": 19,
         "ooo": 1,
-        "sold": 12,
-        "rem": 6
+        "sold": 14,
+        "rem": 4
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 8,
+        "rem": 0
       },
       "ER": {
         "tot": 8,
@@ -2020,8 +1802,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 15,
-        "rem": 7
+        "sold": 19,
+        "rem": 3
       },
       "PT": {
         "tot": 12,
@@ -2032,14 +1814,14 @@
       "SP": {
         "tot": 20,
         "ooo": 2,
-        "sold": 9,
-        "rem": 9
+        "sold": 13,
+        "rem": 5
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 1,
-        "rem": 9
+        "sold": 3,
+        "rem": 7
       },
       "SD": {
         "tot": 5,
@@ -2076,8 +1858,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 13,
-        "rem": 6
+        "sold": 14,
+        "rem": 5
       },
       "E": {
         "tot": 8,
@@ -2094,8 +1876,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 15,
-        "rem": 7
+        "sold": 17,
+        "rem": 5
       },
       "PT": {
         "tot": 12,
@@ -2106,8 +1888,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 12,
-        "rem": 8
+        "sold": 16,
+        "rem": 4
       },
       "S": {
         "tot": 10,
@@ -2150,8 +1932,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 16,
-        "rem": 3
+        "sold": 17,
+        "rem": 2
       },
       "E": {
         "tot": 8,
@@ -2168,8 +1950,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 14,
-        "rem": 8
+        "sold": 17,
+        "rem": 5
       },
       "PT": {
         "tot": 12,
@@ -2180,8 +1962,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 8,
-        "rem": 12
+        "sold": 11,
+        "rem": 9
       },
       "S": {
         "tot": 10,
@@ -2206,8 +1988,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "DTP": {
         "tot": 4,
@@ -2224,8 +2006,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 14,
-        "rem": 5
+        "sold": 16,
+        "rem": 3
       },
       "E": {
         "tot": 8,
@@ -2242,82 +2024,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 16,
-        "rem": 6
-      },
-      "PT": {
-        "tot": 12,
-        "ooo": 0,
-        "sold": 11,
-        "rem": 1
-      },
-      "SP": {
-        "tot": 20,
-        "ooo": 0,
-        "sold": 16,
-        "rem": 4
-      },
-      "S": {
-        "tot": 10,
-        "ooo": 0,
-        "sold": 0,
-        "rem": 10
-      },
-      "SD": {
-        "tot": 5,
-        "ooo": 2,
-        "sold": 0,
-        "rem": 3
-      }
-    },
-    "2026-12-20": {
-      "DF": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 5,
-        "rem": 3
-      },
-      "F": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 6,
+        "sold": 20,
         "rem": 2
-      },
-      "DTP": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 3,
-        "rem": 1
-      },
-      "LDT": {
-        "tot": 4,
-        "ooo": 0,
-        "sold": 1,
-        "rem": 3
-      },
-      "DT": {
-        "tot": 19,
-        "ooo": 0,
-        "sold": 16,
-        "rem": 3
-      },
-      "E": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 2,
-        "rem": 6
-      },
-      "ER": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 3,
-        "rem": 5
-      },
-      "PD": {
-        "tot": 22,
-        "ooo": 0,
-        "sold": 14,
-        "rem": 8
       },
       "PT": {
         "tot": 12,
@@ -2344,6 +2052,80 @@
         "rem": 3
       }
     },
+    "2026-12-20": {
+      "DF": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 5,
+        "rem": 3
+      },
+      "F": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 7,
+        "rem": 1
+      },
+      "DTP": {
+        "tot": 4,
+        "ooo": 0,
+        "sold": 3,
+        "rem": 1
+      },
+      "LDT": {
+        "tot": 4,
+        "ooo": 0,
+        "sold": 1,
+        "rem": 3
+      },
+      "DT": {
+        "tot": 19,
+        "ooo": 0,
+        "sold": 16,
+        "rem": 3
+      },
+      "E": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 2,
+        "rem": 6
+      },
+      "ER": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 3,
+        "rem": 5
+      },
+      "PD": {
+        "tot": 22,
+        "ooo": 0,
+        "sold": 20,
+        "rem": 2
+      },
+      "PT": {
+        "tot": 12,
+        "ooo": 0,
+        "sold": 9,
+        "rem": 3
+      },
+      "SP": {
+        "tot": 20,
+        "ooo": 0,
+        "sold": 19,
+        "rem": 1
+      },
+      "S": {
+        "tot": 10,
+        "ooo": 0,
+        "sold": 0,
+        "rem": 10
+      },
+      "SD": {
+        "tot": 5,
+        "ooo": 2,
+        "sold": 0,
+        "rem": 3
+      }
+    },
     "2026-12-21": {
       "DF": {
         "tot": 8,
@@ -2354,8 +2136,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
@@ -2390,8 +2172,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 16,
-        "rem": 6
+        "sold": 21,
+        "rem": 1
       },
       "PT": {
         "tot": 12,
@@ -2402,8 +2184,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 17,
-        "rem": 3
+        "sold": 19,
+        "rem": 1
       },
       "S": {
         "tot": 10,
@@ -2428,8 +2210,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
@@ -2464,8 +2246,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 12,
-        "rem": 10
+        "sold": 14,
+        "rem": 8
       },
       "PT": {
         "tot": 12,
@@ -2502,8 +2284,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
@@ -2514,8 +2296,8 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "DT": {
         "tot": 19,
@@ -2532,14 +2314,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 3,
+        "rem": 5
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 12,
-        "rem": 10
+        "sold": 15,
+        "rem": 7
       },
       "PT": {
         "tot": 12,
@@ -2550,8 +2332,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 20,
-        "rem": 0
+        "sold": 18,
+        "rem": 2
       },
       "S": {
         "tot": 10,
@@ -2588,8 +2370,8 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "DT": {
         "tot": 19,
@@ -2606,14 +2388,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 6,
+        "rem": 2
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 15,
-        "rem": 7
+        "sold": 17,
+        "rem": 5
       },
       "PT": {
         "tot": 12,
@@ -2624,14 +2406,14 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 22,
-        "rem": -2
+        "sold": 20,
+        "rem": 0
       },
       "S": {
         "tot": 10,
         "ooo": 0,
-        "sold": 0,
-        "rem": 10
+        "sold": 1,
+        "rem": 9
       },
       "SD": {
         "tot": 5,
@@ -2650,8 +2432,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
@@ -2662,14 +2444,14 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 1,
-        "rem": 3
+        "sold": 2,
+        "rem": 2
       },
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 18,
-        "rem": 1
+        "sold": 19,
+        "rem": 0
       },
       "E": {
         "tot": 8,
@@ -2680,14 +2462,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 18,
-        "rem": 4
+        "sold": 22,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
@@ -2698,8 +2480,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 21,
-        "rem": -1
+        "sold": 20,
+        "rem": 0
       },
       "S": {
         "tot": 10,
@@ -2736,14 +2518,14 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 16,
-        "rem": 3
+        "sold": 17,
+        "rem": 2
       },
       "E": {
         "tot": 8,
@@ -2760,8 +2542,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 19,
-        "rem": 3
+        "sold": 21,
+        "rem": 1
       },
       "PT": {
         "tot": 12,
@@ -2810,14 +2592,14 @@
       "LDT": {
         "tot": 4,
         "ooo": 0,
-        "sold": 1,
-        "rem": 3
+        "sold": 2,
+        "rem": 2
       },
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 13,
-        "rem": 6
+        "sold": 14,
+        "rem": 5
       },
       "E": {
         "tot": 8,
@@ -2834,8 +2616,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 13,
-        "rem": 9
+        "sold": 15,
+        "rem": 7
       },
       "PT": {
         "tot": 12,
@@ -2846,8 +2628,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 19,
-        "rem": 1
+        "sold": 20,
+        "rem": 0
       },
       "S": {
         "tot": 10,
@@ -2878,8 +2660,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "LDT": {
         "tot": 4,
@@ -2908,14 +2690,14 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 13,
-        "rem": 9
+        "sold": 14,
+        "rem": 8
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 12,
-        "rem": 0
+        "sold": 11,
+        "rem": 1
       },
       "SP": {
         "tot": 20,
@@ -2946,14 +2728,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 7,
-        "rem": 1
+        "sold": 8,
+        "rem": 0
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -2982,14 +2764,14 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 13,
-        "rem": 9
+        "sold": 14,
+        "rem": 8
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 11,
-        "rem": 1
+        "sold": 10,
+        "rem": 2
       },
       "SP": {
         "tot": 20,
@@ -3020,14 +2802,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -3056,14 +2838,14 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 20,
-        "rem": 2
+        "sold": 21,
+        "rem": 1
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 12,
-        "rem": 0
+        "sold": 11,
+        "rem": 1
       },
       "SP": {
         "tot": 20,
@@ -3094,14 +2876,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "LDT": {
         "tot": 4,
@@ -3168,14 +2950,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 4,
+        "rem": 0
       },
       "LDT": {
         "tot": 4,
@@ -3260,26 +3042,26 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 16,
-        "rem": 3
+        "sold": 17,
+        "rem": 2
       },
       "E": {
+        "tot": 8,
+        "ooo": 0,
+        "sold": 6,
+        "rem": 2
+      },
+      "ER": {
         "tot": 8,
         "ooo": 0,
         "sold": 5,
         "rem": 3
       },
-      "ER": {
-        "tot": 8,
-        "ooo": 0,
-        "sold": 4,
-        "rem": 4
-      },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 23,
-        "rem": -1
+        "sold": 22,
+        "rem": 0
       },
       "PT": {
         "tot": 12,
@@ -3334,26 +3116,26 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 12,
-        "rem": 7
+        "sold": 13,
+        "rem": 6
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 2,
+        "rem": 6
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 18,
-        "rem": 4
+        "sold": 17,
+        "rem": 5
       },
       "PT": {
         "tot": 12,
@@ -3364,8 +3146,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 17,
-        "rem": 3
+        "sold": 18,
+        "rem": 2
       },
       "S": {
         "tot": 10,
@@ -3408,26 +3190,26 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 9,
-        "rem": 10
+        "sold": 10,
+        "rem": 9
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 2,
+        "rem": 6
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 20,
-        "rem": 2
+        "sold": 19,
+        "rem": 3
       },
       "PT": {
         "tot": 12,
@@ -3438,8 +3220,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 13,
-        "rem": 7
+        "sold": 14,
+        "rem": 6
       },
       "S": {
         "tot": 10,
@@ -3488,20 +3270,20 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 5,
+        "rem": 3
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 0,
-        "rem": 8
+        "sold": 1,
+        "rem": 7
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 17,
-        "rem": 5
+        "sold": 16,
+        "rem": 6
       },
       "PT": {
         "tot": 12,
@@ -3512,8 +3294,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 11,
-        "rem": 9
+        "sold": 12,
+        "rem": 8
       },
       "S": {
         "tot": 10,
@@ -3562,20 +3344,20 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 0,
-        "rem": 8
+        "sold": 1,
+        "rem": 7
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 19,
-        "rem": 3
+        "sold": 18,
+        "rem": 4
       },
       "PT": {
         "tot": 12,
@@ -3612,8 +3394,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "DTP": {
         "tot": 4,
@@ -3636,20 +3418,20 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 0,
-        "rem": 8
+        "sold": 1,
+        "rem": 7
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 17,
-        "rem": 5
+        "sold": 16,
+        "rem": 6
       },
       "PT": {
         "tot": 12,
@@ -3686,8 +3468,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
@@ -3704,20 +3486,20 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 4,
-        "rem": 15
+        "sold": 7,
+        "rem": 12
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 3,
+        "rem": 5
       },
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 3,
+        "rem": 5
       },
       "PD": {
         "tot": 22,
@@ -3728,8 +3510,8 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 5,
-        "rem": 7
+        "sold": 6,
+        "rem": 6
       },
       "SP": {
         "tot": 20,
@@ -3760,8 +3542,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
@@ -3778,8 +3560,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 2,
-        "rem": 17
+        "sold": 4,
+        "rem": 15
       },
       "E": {
         "tot": 8,
@@ -3796,8 +3578,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 5,
-        "rem": 17
+        "sold": 6,
+        "rem": 16
       },
       "PT": {
         "tot": 12,
@@ -3834,8 +3616,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "DTP": {
         "tot": 4,
@@ -3852,8 +3634,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 5,
-        "rem": 14
+        "sold": 7,
+        "rem": 12
       },
       "E": {
         "tot": 8,
@@ -3870,14 +3652,14 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 8,
-        "rem": 14
+        "sold": 9,
+        "rem": 13
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 9,
-        "rem": 3
+        "sold": 10,
+        "rem": 2
       },
       "SP": {
         "tot": 20,
@@ -3908,8 +3690,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 6,
-        "rem": 2
+        "sold": 7,
+        "rem": 1
       },
       "DTP": {
         "tot": 4,
@@ -3926,8 +3708,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 9,
-        "rem": 10
+        "sold": 11,
+        "rem": 8
       },
       "E": {
         "tot": 8,
@@ -4000,8 +3782,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 9,
-        "rem": 10
+        "sold": 11,
+        "rem": 8
       },
       "E": {
         "tot": 8,
@@ -4074,8 +3856,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 5,
-        "rem": 14
+        "sold": 7,
+        "rem": 12
       },
       "E": {
         "tot": 8,
@@ -4104,8 +3886,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 11,
-        "rem": 9
+        "sold": 12,
+        "rem": 8
       },
       "S": {
         "tot": 10,
@@ -4148,8 +3930,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 3,
-        "rem": 16
+        "sold": 5,
+        "rem": 14
       },
       "E": {
         "tot": 8,
@@ -4166,20 +3948,20 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 12,
-        "rem": 10
+        "sold": 13,
+        "rem": 9
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 5,
-        "rem": 7
+        "sold": 6,
+        "rem": 6
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 9,
-        "rem": 11
+        "sold": 10,
+        "rem": 10
       },
       "S": {
         "tot": 10,
@@ -4210,8 +3992,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 0,
-        "rem": 4
+        "sold": 1,
+        "rem": 3
       },
       "LDT": {
         "tot": 4,
@@ -4228,8 +4010,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 2,
+        "rem": 6
       },
       "ER": {
         "tot": 8,
@@ -4240,20 +4022,20 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 9,
-        "rem": 13
+        "sold": 10,
+        "rem": 12
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 7,
-        "rem": 5
+        "sold": 8,
+        "rem": 4
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 9,
-        "rem": 11
+        "sold": 10,
+        "rem": 10
       },
       "S": {
         "tot": 10,
@@ -4278,14 +4060,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 1,
+        "rem": 7
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 1,
-        "rem": 3
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -4302,8 +4084,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 3,
+        "rem": 5
       },
       "ER": {
         "tot": 8,
@@ -4314,14 +4096,14 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 12,
-        "rem": 10
+        "sold": 13,
+        "rem": 9
       },
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 6,
-        "rem": 6
+        "sold": 7,
+        "rem": 5
       },
       "SP": {
         "tot": 20,
@@ -4352,8 +4134,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 2,
+        "rem": 6
       },
       "DTP": {
         "tot": 4,
@@ -4400,8 +4182,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 9,
-        "rem": 11
+        "sold": 10,
+        "rem": 10
       },
       "S": {
         "tot": 10,
@@ -4426,8 +4208,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 2,
+        "rem": 6
       },
       "DTP": {
         "tot": 4,
@@ -4468,14 +4250,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 3,
-        "rem": 9
+        "sold": 5,
+        "rem": 7
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 7,
-        "rem": 13
+        "sold": 8,
+        "rem": 12
       },
       "S": {
         "tot": 10,
@@ -4542,14 +4324,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 2,
-        "rem": 10
+        "sold": 4,
+        "rem": 8
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 5,
-        "rem": 15
+        "sold": 6,
+        "rem": 14
       },
       "S": {
         "tot": 10,
@@ -4580,8 +4362,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -4616,8 +4398,8 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 2,
-        "rem": 10
+        "sold": 4,
+        "rem": 8
       },
       "SP": {
         "tot": 20,
@@ -4654,8 +4436,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -4678,8 +4460,8 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
@@ -4696,8 +4478,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 4,
-        "rem": 16
+        "sold": 5,
+        "rem": 15
       },
       "S": {
         "tot": 10,
@@ -4728,8 +4510,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 1,
-        "rem": 3
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -4752,8 +4534,8 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
@@ -4770,8 +4552,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 2,
-        "rem": 18
+        "sold": 3,
+        "rem": 17
       },
       "S": {
         "tot": 10,
@@ -4802,8 +4584,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -4826,8 +4608,8 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
@@ -4844,8 +4626,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 3,
-        "rem": 17
+        "sold": 4,
+        "rem": 16
       },
       "S": {
         "tot": 10,
@@ -4900,8 +4682,8 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
@@ -4918,8 +4700,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 0,
-        "rem": 20
+        "sold": 1,
+        "rem": 19
       },
       "S": {
         "tot": 10,
@@ -4938,8 +4720,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 3,
+        "rem": 5
       },
       "F": {
         "tot": 8,
@@ -4974,14 +4756,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 2,
-        "rem": 20
+        "sold": 1,
+        "rem": 21
       },
       "PT": {
         "tot": 12,
@@ -4992,8 +4774,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 4,
-        "rem": 16
+        "sold": 5,
+        "rem": 15
       },
       "S": {
         "tot": 10,
@@ -5012,8 +4794,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "F": {
         "tot": 8,
@@ -5048,14 +4830,14 @@
       "ER": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 0,
+        "rem": 8
       },
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 2,
-        "rem": 20
+        "sold": 1,
+        "rem": 21
       },
       "PT": {
         "tot": 12,
@@ -5128,8 +4910,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 3,
-        "rem": 19
+        "sold": 2,
+        "rem": 20
       },
       "PT": {
         "tot": 12,
@@ -5202,8 +4984,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 4,
-        "rem": 18
+        "sold": 3,
+        "rem": 19
       },
       "PT": {
         "tot": 12,
@@ -5288,8 +5070,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 3,
-        "rem": 17
+        "sold": 4,
+        "rem": 16
       },
       "S": {
         "tot": 10,
@@ -5800,8 +5582,8 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 0,
-        "rem": 12
+        "sold": 1,
+        "rem": 11
       },
       "SP": {
         "tot": 20,
@@ -5874,14 +5656,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 0,
-        "rem": 12
+        "sold": 2,
+        "rem": 10
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 1,
-        "rem": 19
+        "sold": 3,
+        "rem": 17
       },
       "S": {
         "tot": 10,
@@ -5948,14 +5730,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 0,
-        "rem": 12
+        "sold": 1,
+        "rem": 11
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 2,
-        "rem": 18
+        "sold": 4,
+        "rem": 16
       },
       "S": {
         "tot": 10,
@@ -6022,14 +5804,14 @@
       "PT": {
         "tot": 12,
         "ooo": 0,
-        "sold": 2,
-        "rem": 10
+        "sold": 3,
+        "rem": 9
       },
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 3,
-        "rem": 17
+        "sold": 5,
+        "rem": 15
       },
       "S": {
         "tot": 10,
@@ -6818,8 +6600,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 0,
+        "rem": 8
       },
       "ER": {
         "tot": 8,
@@ -6892,8 +6674,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 0,
+        "rem": 8
       },
       "ER": {
         "tot": 8,
@@ -6904,8 +6686,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 5,
-        "rem": 17
+        "sold": 6,
+        "rem": 16
       },
       "PT": {
         "tot": 12,
@@ -6960,14 +6742,14 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 4,
-        "rem": 15
+        "sold": 5,
+        "rem": 14
       },
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 2,
+        "rem": 6
       },
       "ER": {
         "tot": 8,
@@ -6978,8 +6760,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 6,
-        "rem": 16
+        "sold": 7,
+        "rem": 15
       },
       "PT": {
         "tot": 12,
@@ -6990,8 +6772,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 8,
-        "rem": 12
+        "sold": 9,
+        "rem": 11
       },
       "S": {
         "tot": 10,
@@ -7034,8 +6816,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 4,
-        "rem": 15
+        "sold": 5,
+        "rem": 14
       },
       "E": {
         "tot": 8,
@@ -7064,8 +6846,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 8,
-        "rem": 12
+        "sold": 9,
+        "rem": 11
       },
       "S": {
         "tot": 10,
@@ -7108,8 +6890,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 2,
-        "rem": 17
+        "sold": 3,
+        "rem": 16
       },
       "E": {
         "tot": 8,
@@ -7138,8 +6920,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 5,
-        "rem": 15
+        "sold": 6,
+        "rem": 14
       },
       "S": {
         "tot": 10,
@@ -7188,8 +6970,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 3,
+        "rem": 5
       },
       "ER": {
         "tot": 8,
@@ -7262,8 +7044,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "ER": {
         "tot": 8,
@@ -7336,8 +7118,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 5,
+        "rem": 3
       },
       "ER": {
         "tot": 8,
@@ -7348,8 +7130,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 5,
-        "rem": 17
+        "sold": 6,
+        "rem": 16
       },
       "PT": {
         "tot": 12,
@@ -7410,8 +7192,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 2,
-        "rem": 6
+        "sold": 4,
+        "rem": 4
       },
       "ER": {
         "tot": 8,
@@ -7422,8 +7204,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 4,
-        "rem": 18
+        "sold": 5,
+        "rem": 17
       },
       "PT": {
         "tot": 12,
@@ -7508,8 +7290,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 2,
-        "rem": 18
+        "sold": 3,
+        "rem": 17
       },
       "S": {
         "tot": 10,
@@ -7570,8 +7352,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 1,
-        "rem": 21
+        "sold": 2,
+        "rem": 20
       },
       "PT": {
         "tot": 12,
@@ -7582,8 +7364,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 2,
-        "rem": 18
+        "sold": 3,
+        "rem": 17
       },
       "S": {
         "tot": 10,
@@ -7644,8 +7426,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 1,
-        "rem": 21
+        "sold": 2,
+        "rem": 20
       },
       "PT": {
         "tot": 12,
@@ -7718,8 +7500,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 1,
-        "rem": 21
+        "sold": 2,
+        "rem": 20
       },
       "PT": {
         "tot": 12,
@@ -7792,8 +7574,8 @@
       "PD": {
         "tot": 22,
         "ooo": 0,
-        "sold": 0,
-        "rem": 22
+        "sold": 1,
+        "rem": 21
       },
       "PT": {
         "tot": 12,
@@ -8354,8 +8136,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 2,
-        "rem": 2
+        "sold": 1,
+        "rem": 3
       },
       "LDT": {
         "tot": 4,
@@ -8428,8 +8210,8 @@
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -8496,14 +8278,14 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -8564,20 +8346,20 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 3,
-        "rem": 5
+        "sold": 4,
+        "rem": 4
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 3,
-        "rem": 1
+        "sold": 2,
+        "rem": 2
       },
       "LDT": {
         "tot": 4,
@@ -8638,20 +8420,20 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "DTP": {
         "tot": 4,
         "ooo": 0,
-        "sold": 4,
-        "rem": 0
+        "sold": 3,
+        "rem": 1
       },
       "LDT": {
         "tot": 4,
@@ -8712,8 +8494,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 5,
-        "rem": 3
+        "sold": 6,
+        "rem": 2
       },
       "F": {
         "tot": 8,
@@ -8786,8 +8568,8 @@
       "DF": {
         "tot": 8,
         "ooo": 0,
-        "sold": 4,
-        "rem": 4
+        "sold": 5,
+        "rem": 3
       },
       "F": {
         "tot": 8,
@@ -8890,8 +8672,8 @@
       "E": {
         "tot": 8,
         "ooo": 0,
-        "sold": 0,
-        "rem": 8
+        "sold": 1,
+        "rem": 7
       },
       "ER": {
         "tot": 8,
@@ -8958,8 +8740,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 0,
-        "rem": 19
+        "sold": 3,
+        "rem": 16
       },
       "E": {
         "tot": 8,
@@ -9014,8 +8796,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 1,
-        "rem": 7
+        "sold": 2,
+        "rem": 6
       },
       "DTP": {
         "tot": 4,
@@ -9032,8 +8814,8 @@
       "DT": {
         "tot": 19,
         "ooo": 0,
-        "sold": 1,
-        "rem": 18
+        "sold": 4,
+        "rem": 15
       },
       "E": {
         "tot": 8,
@@ -9088,8 +8870,8 @@
       "F": {
         "tot": 8,
         "ooo": 0,
-        "sold": 0,
-        "rem": 8
+        "sold": 1,
+        "rem": 7
       },
       "DTP": {
         "tot": 4,
@@ -9728,8 +9510,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 3,
-        "rem": 17
+        "sold": 4,
+        "rem": 16
       },
       "S": {
         "tot": 10,
@@ -9802,8 +9584,8 @@
       "SP": {
         "tot": 20,
         "ooo": 0,
-        "sold": 0,
-        "rem": 20
+        "sold": 1,
+        "rem": 19
       },
       "S": {
         "tot": 10,
