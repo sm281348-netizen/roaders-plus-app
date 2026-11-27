@@ -1,5 +1,5 @@
 {
-  "last_attempt_at": "2026-11-26 10:22:41",
+  "last_attempt_at": "2026-11-27 08:33:29",
   "status": "skipped_no_cdp",
   "mode": "default_chrome_unavailable: WebSocketTimeoutException",
   "detail": "SiteMinder CDP 未連線 (default_chrome_unavailable: WebSocketTimeoutException)，保留現有快照不中斷排程。",

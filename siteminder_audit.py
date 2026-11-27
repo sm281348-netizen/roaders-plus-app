@@ -25,9 +25,11 @@ BACKUP_DIR = os.path.join(APP_DIR, "data", "pms_backup")
 
 SM_SNAPSHOT_PATH = os.path.join(BACKUP_DIR, "siteminder_inventory_snapshot.json")
 SM_STATUS_PATH = os.path.join(BACKUP_DIR, "siteminder_sync_status.json")
+SM_HISTORY_DIR = os.path.join(BACKUP_DIR, "sm_history")
 CHAN_INTEL_PATH = os.path.join(BACKUP_DIR, "pms_channel_intel.json")
 STLY_PACE_PATH = os.path.join(BACKUP_DIR, "pms_stly_pace.json")
 PROMO_BF_PATH = os.path.join(BACKUP_DIR, "pms_promo_bf_audit.json")
+DYN_YIELD_PATH = os.path.join(BACKUP_DIR, "pms_dynamic_yield.json")
 RT_INV_PATH = os.path.join(BACKUP_DIR, "wallpaper_roomtype_inventory.json")
 OCC_CSV_PATH = os.path.join(BACKUP_DIR, "station_occ_data.csv")
 
@@ -323,11 +325,13 @@ def run_pricing_audit_rules(
         sm_tot_avail = sum(int(v.get("a", 0)) for v in rooms.values())
 
         day_inv_cnt = 0
+        day_latent_cnt = 0
+        day_clear_cnt = 0
         day_eq_cnt = 0
         day_overprice = False
         day_underprice = False
 
-        # 規則 1 & 2：房型階梯倒掛 / 有庫存同價
+        # 規則 1 & 2：動態收益視角之房型階梯檢核（區分「雙有庫存真倒掛」vs「低階完售・高階合理清倉」vs「D+3↑潛伏退訂風險」）
         for hi, lo in TIER_PAIRS:
             if hi not in rooms or lo not in rooms:
                 continue
@@ -339,26 +343,45 @@ def run_pricing_audit_rules(
                 is_nye_101 = allow_nye_101_exception and d_str == "2026-12-31" and hi == "DT" and lo == "E"
                 diff = r_lo - r_hi
                 if is_nye_101:
-                    sev = "🟡 提醒"
-                    note = f"跨年夜 101 景觀房 E(05) ({r_lo:,}) 高於 DT ({r_hi:,}) +{diff:,}（屬煙火景觀溢價，確認為刻意操作即可）"
+                    alerts.append({
+                        "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": "🟡 提醒",
+                        "異常類型": "🎆 景觀特殊溢價", "涉及房型": f"{lo} > {hi}",
+                        "掛牌價/數據摘要": f"{lo} ${r_lo:,} vs {hi} ${r_hi:,}",
+                        "說明與收益部提問建議": f"跨年夜 101 景觀房 E(05) 高於 DT +{diff:,}（煙火景觀溢價，屬合理操作）",
+                        "台北活動": ev_name,
+                    })
+                elif a_lo == 0 and lead_d <= 2:
+                    # 臨期 D-0~D-2 低階已完售(0間)，收益部調降高階清庫存 → 100% 合理動態去化，不列異常！
+                    day_clear_cnt += 1
+                elif a_lo == 0 and lead_d >= 3:
+                    # 遠中程低階暫滿(0間)、高階降價低於低階原價 → 僅列提醒（防免費取消回庫變真倒掛），不報嚴重/警告！
+                    day_latent_cnt += 1
+                    alerts.append({
+                        "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": "🟡 提醒",
+                        "異常類型": "💤 潛伏價差(低階已滿)", "涉及房型": f"{lo}(0間) > {hi}",
+                        "掛牌價/數據摘要": f"{lo} ${r_lo:,}(剩0) vs {hi} ${r_hi:,}(剩{a_hi})",
+                        "說明與收益部提問建議": f"低階 {lo} 已滿(0間)、高階 {hi} 降價去化屬合理浮動操作；僅提醒距入住尚有 {lead_d} 天，若 {lo} 發生免費取消回庫將觸發倒掛。",
+                        "台北活動": ev_name,
+                    })
                 else:
+                    # a_lo > 0：低階仍有庫存卻賣得比高階貴 → 真實上架倒掛！
                     day_inv_cnt += 1
-                    sev = "🔴 嚴重" if (a_lo > 0 or diff >= 500) else "🟠 警告"
-                    avail_note = "雙方或低階仍有庫存，客人下單即倒掛！" if a_lo > 0 else "低階目前庫存為 0，一旦退訂釋房將立刻倒掛。"
-                    note = f"低階 {lo} ({r_lo:,}, 剩{a_lo}) 高於高階 {hi} ({r_hi:,}, 剩{a_hi}) +{diff:,} 元。{avail_note}"
-                alerts.append({
-                    "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": sev,
-                    "異常類型": "📉 房價階梯倒掛", "涉及房型": f"{lo} > {hi}",
-                    "掛牌價/數據摘要": f"{lo} ${r_lo:,} vs {hi} ${r_hi:,}",
-                    "說明與收益部提問建議": note, "台北活動": ev_name,
-                })
+                    sev = "🔴 嚴重" if a_hi > 0 else "🟠 警告"
+                    avail_note = f"雙方皆有庫存（{lo}剩{a_lo}、{hi}剩{a_hi}），旅客搜尋直接看到小房比大房貴，流失高階溢價與升等主導權！" if a_hi > 0 else f"低階 {lo} 仍有 {a_lo} 間在售但高於已滿之 {hi}。"
+                    alerts.append({
+                        "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": sev,
+                        "異常類型": "📉 雙有庫存掛牌倒掛", "涉及房型": f"{lo} > {hi}",
+                        "掛牌價/數據摘要": f"{lo} ${r_lo:,}(剩{a_lo}) vs {hi} ${r_hi:,}(剩{a_hi})",
+                        "說明與收益部提問建議": f"低階 {lo} 高於高階 {hi} +{diff:,} 元。{avail_note}",
+                        "台北活動": ev_name,
+                    })
             elif r_lo == r_hi and (a_hi > 0 and a_lo > 0):
                 day_eq_cnt += 1
                 alerts.append({
                     "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": "🟠 警告",
                     "異常類型": "⚖️ 跨階同價零價差", "涉及房型": f"{lo} ＝ {hi}",
                     "掛牌價/數據摘要": f"皆掛 ${r_hi:,}（庫存 {lo}:{a_lo} / {hi}:{a_hi}）",
-                    "說明與收益部提問建議": f"{hi} 與低一階 {lo} 同價且雙雙有房，等於免費升級壓縮價差。",
+                    "說明與收益部提問建議": f"{hi} 與低一階 {lo} 同價且雙雙有房，若低階跑得快建議拉開價差改由預排升等消化。",
                     "台北活動": ev_name,
                 })
 
@@ -433,7 +456,11 @@ def run_pricing_audit_rules(
         vs_str = f"{vs_dow_pct:+.0f}%"
         reasons = []
         if day_inv_cnt > 0:
-            reasons.append(f"🔴 倒掛({day_inv_cnt}處)")
+            reasons.append(f"🔴 雙有房倒掛({day_inv_cnt}處)")
+        if day_clear_cnt > 0:
+            reasons.append(f"✅ 低階完售・高階清倉({day_clear_cnt}處)")
+        elif day_latent_cnt > 0:
+            reasons.append(f"💤 低階滿・高階降價({day_latent_cnt}處)")
         if day_eq_cnt > 0:
             reasons.append(f"🟠 同價({day_eq_cnt}處)")
         if day_overprice:
@@ -499,6 +526,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     chan_intel = _load_json_safe(CHAN_INTEL_PATH)
     pace_data = _load_json_safe(STLY_PACE_PATH)
     promo_bf = _load_json_safe(PROMO_BF_PATH)
+    dyn_yield = _load_json_safe(DYN_YIELD_PATH)
     rt_inv = _load_json_safe(RT_INV_PATH)
 
     health = sm_snap.get("health", {})
@@ -561,20 +589,23 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
         if l1_cnt > 0
         else "✅ 近14天無頂規剩1間"
     )
+    upg_60d = int(dh.get("upg_60d_rn", 0) or 0)
+    er_pct = float(dh.get("er_share_pct", 0.0) or 0.0)
+    upg_badge_txt = f"🔄 60天升等消化 {upg_60d} 晚 (ER池 {er_pct:.0f}%)" if upg_60d > 0 else "🔄 動態升等引擎就緒"
     st.markdown(
         f"""
 <div class="sm-hero">
-  <h2>📡 站前館營運決策與定價稽核雷達 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v3.1 決策收束＋防爆房哨兵</span></h2>
+  <h2>📡 站前館營運決策與定價稽核雷達 <span style="font-size:0.75rem;background:#f59e0b;color:#0f172a;padding:2px 8px;border-radius:999px;vertical-align:middle;">v4.0 動態收益參謀</span></h2>
   <p>
-    最前端自動收束為「<b>今日必看精簡結論</b>」與「<b>全館負庫存／頂規房最後1間撞單哨兵</b>」；點選卡片右側 <b>「🔎 查看詳情」</b> 即可展開明細、平房建議與一鍵 LINE 話術。
+    以「<b>浮動房價 × 低階升等導流</b>」全局視角自動剔除跨日調價與免費升等汙染；最前端收束為精簡結論，點選 <b>「🔎 查看詳情」</b> 即可展開明細、軌跡與一鍵 LINE 話術。
   </p>
   <div>
     <span class="sm-badge {pms_badge_cls}">🕒 金旭最新：{dh['pms_as_of']}</span>
     <span class="sm-badge {ov_badge_cls}">{ov_badge_txt}</span>
     <span class="sm-badge {l1_badge_cls}">{l1_badge_txt}</span>
+    <span class="sm-badge sm-badge-ok">{upg_badge_txt}</span>
     <span class="sm-badge {sm_badge_cls}">{sm_badge_txt}</span>
     <span class="sm-badge sm-badge-ok">{inv_badge_txt}</span>
-    <span class="sm-badge sm-badge-ok">✅ 實售方案 100% 對應 GoldenUp ({mapped_n}/{mapped_tot})</span>
   </div>
 </div>
 """,
@@ -784,7 +815,7 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
         "🚨 定價異常 & 收益部對質清單",
         "📅 42天定價合理性（為何高/低）",
         "🏷️ 促銷折數反查 & 含早/不含早差價",
-        "📈 訂房進度 (Pace) & 通路真實淨利",
+        "📈 浮動軌跡 (Booking Curve) × 升等導流 & 淨利",
         "⚙️ 05:00 全自動同步狀態",
     ])
 
@@ -861,8 +892,12 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                             rl, al = int(rooms[lo].get("r", 0)), int(rooms[lo].get("a", 0))
                             if rl > rh > 0:
                                 if not (allow_nye_101 and d_str == "2026-12-31" and hi == "DT" and lo == "E"):
-                                    styles.at[idx, lo] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
-                                    styles.at[idx, hi] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                                    if al > 0:
+                                        styles.at[idx, lo] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                                        styles.at[idx, hi] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                                    else:
+                                        # 低階已完售(al=0)、高階降價清倉 → 柔和灰藍提示，不標刺眼紅底
+                                        styles.at[idx, hi] = "background-color: #e0f2fe; color: #0369a1; font-weight: 600;"
                             elif rl == rh > 0 and ah > 0 and al > 0:
                                 styles.at[idx, lo] = "background-color: #fef3c7; color: #92400e; font-weight: 700;"
                                 styles.at[idx, hi] = "background-color: #fef3c7; color: #92400e; font-weight: 700;"
@@ -941,45 +976,54 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                         use_container_width=True, hide_index=True, height=300,
                     )
 
-            # 新增：直接抓出「促銷打下去含早 <= 不含早」或「嚴重折損 (<$280/人)」的實單對照！
+            # 含早 vs 不含早實單比對（預設嚴格過濾跨日浮動調價干擾！）
             bf_inv_list = promo_bf.get("bf_inversion_alerts", [])
-            st.markdown("#### 🚨 抓包：促銷後「含早 ≤ 不含早」或早餐嚴重折損 (< NT$ 280/人) 實單明細")
+            st.markdown("#### 🔍 同產品『含早 vs 不含早』實單差價檢核（已回溯 HTACL 原始下訂房型）")
             st.caption(
-                "以收益部設定的「每人一天 NT$ 400」為基準，強制比對「同入住日 × 同房型 × 同通路 × 訂房日相差 ≤ 7 天」的實單："
-                "精準抓出含早比不含早便宜的異常單、列出 OTA 單號、差價金額與反推含早額外打了多少折扣！"
+                "在浮動房價架構下，跨日下訂之價差多源於市場動態調價而非設定錯誤。預設僅顯示 **「同一天 4 小時內下訂＋同連住晚數級距」** 的嚴格比對樣本；"
+                "若想觀察跨日浮動調價造成的帳面價差，可取消下方勾選。"
             )
             if not bf_inv_list:
-                st.success("✅ 目前近 90 天區間內無發現「含早 ≤ 不含早」或嚴重折損之異常配對！")
+                st.success("✅ 目前近 90 天區間內無異常含早差價樣本！")
             else:
                 df_bi = pd.DataFrame(bf_inv_list)
-                bi1, bi2 = st.columns([1.4, 2.0])
+                if "is_strict_intraday" not in df_bi.columns:
+                    df_bi["is_strict_intraday"] = df_bi["bk_gap_days"] == 0
+                bi0, bi1, bi2 = st.columns([1.6, 1.3, 1.8])
+                with bi0:
+                    only_strict = st.checkbox("🎯 僅看「同日 4h 內＋同連住級距」嚴格比對", value=True, key="sm_bi_strict")
                 with bi1:
-                    only_inv_neg = st.checkbox("🔴 僅看「含早 ≤ 不含早（倒掛/免費送早）」", value=False, key="sm_bi_neg")
+                    only_inv_neg = st.checkbox("🔴 僅看「含早 ≤ 不含早」", value=False, key="sm_bi_neg")
                 with bi2:
                     bi_chs = sorted(df_bi["channel"].unique().tolist())
                     sel_bi_chs = st.multiselect("篩選通路", bi_chs, default=bi_chs, key="sm_bi_chs")
                 df_bi_v = df_bi[df_bi["channel"].isin(sel_bi_chs)]
+                if only_strict:
+                    df_bi_v = df_bi_v[df_bi_v["is_strict_intraday"] == True]
                 if only_inv_neg:
                     df_bi_v = df_bi_v[df_bi_v["diff_twd"] <= 0]
-                st.dataframe(
-                    df_bi_v[[
-                        "severity", "stay_date", "rt", "sub_label",
-                        "bf_rate", "bf_bk_date", "bf_ota_ref",
-                        "ro_rate", "ro_bk_date", "ro_ota_ref",
-                        "diff_twd", "per_pax_bf", "shortfall_vs_400", "extra_disc_pct", "sm_pct_compare", "reason"
-                    ]].rename(columns={
-                        "severity": "異常等級", "stay_date": "入住日", "rt": "房型", "sub_label": "通路",
-                        "bf_rate": "含早實收", "bf_bk_date": "含早訂房日", "bf_ota_ref": "含早OTA單號",
-                        "ro_rate": "不含早實收", "ro_bk_date": "不含早訂房日", "ro_ota_ref": "不含早OTA單號",
-                        "diff_twd": "兩單差價", "per_pax_bf": "每人實收", "shortfall_vs_400": "比400/人少收",
-                        "extra_disc_pct": "含早額外折%", "sm_pct_compare": "vs今日SiteMinder", "reason": "系統反查判讀",
-                    }).style.format({
-                        "含早實收": "${:,}", "不含早實收": "${:,}",
-                        "兩單差價": "{:+,}", "每人實收": "${:,}/人",
-                        "比400/人少收": "-${:,}", "含早額外折%": "{:.1f}%",
-                    }),
-                    use_container_width=True, hide_index=True, height=360,
-                )
+                if df_bi_v.empty:
+                    st.success("✅ 在嚴格同日 4 小時內且同連住級距條件下，目前 **0 筆** 含早倒掛或異常重折！（其餘皆為正常跨日浮動調價或連住差異）")
+                else:
+                    st.dataframe(
+                        df_bi_v[[
+                            "severity", "stay_date", "rt", "sub_label",
+                            "bf_rate", "bf_bk_date", "bf_ota_ref",
+                            "ro_rate", "ro_bk_date", "ro_ota_ref",
+                            "diff_twd", "per_pax_bf", "shortfall_vs_400", "sm_pct_compare", "reason"
+                        ]].rename(columns={
+                            "severity": "判讀分類", "stay_date": "入住日", "rt": "原始房型", "sub_label": "通路",
+                            "bf_rate": "含早實收", "bf_bk_date": "含早訂房日", "bf_ota_ref": "含早OTA單號",
+                            "ro_rate": "不含早實收", "ro_bk_date": "不含早訂房日", "ro_ota_ref": "不含早OTA單號",
+                            "diff_twd": "兩單差價", "per_pax_bf": "每人實收", "shortfall_vs_400": "較$400/人差額",
+                            "sm_pct_compare": "vs牌告BAR比例", "reason": "動態歸因說明",
+                        }).style.format({
+                            "含早實收": "${:,}", "不含早實收": "${:,}",
+                            "兩單差價": "{:+,}", "每人實收": "${:,}/人",
+                            "較$400/人差額": "{:+,}",
+                        }),
+                        use_container_width=True, hide_index=True, height=340,
+                    )
 
         st.divider()
         st.subheader("🏷️ 二、這時候到底做了什麼促銷？（SiteMinder 牌告價 vs 金旭實際成交價反查）")
@@ -1029,7 +1073,114 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     # TAB 4: STLY 訂房進度 (Pace) & 通路真實淨利 (Net ADR) + 洗盤預警
     # ------------------------------------------------------------------
     with tab4:
-        st.subheader("📈 未來 STLY 去年同期進度 (Pace) × 7 日淨增訂 (Pickup)")
+        st.subheader("🎢 一、單日浮動調價與進單軌跡（Booking Curve｜零升等汙染原始房型）")
+        st.caption(
+            "回溯金旭 `HTACL` 首次寫入之「原始下訂房型」，100% 剔除現場免費升等造成的假低價與假買氣，"
+            "直接還原特定入住日從遠期（D-60）到近期（D-1）的真實成交價走勢與收益部調價軌跡。"
+        )
+        bc_list = dyn_yield.get("booking_curves", [])
+        diag_by_d = {d["date"]: d for d in dyn_yield.get("daily_yield_diagnostics", [])}
+        if bc_list:
+            df_bc_all = pd.DataFrame(bc_list)
+            bc_dates = sorted(df_bc_all["stay_date"].unique().tolist())
+            # 預設挑選未來 14 天內點位最豐富的一天（如週末滿房日）方便一眼看懂曲線
+            near_dates = [d for d in bc_dates[:16]]
+            def_bc_d = max(near_dates, key=lambda x: len(df_bc_all[df_bc_all["stay_date"] == x])) if near_dates else bc_dates[0]
+            def_idx = bc_dates.index(def_bc_d) if def_bc_d in bc_dates else 0
+
+            def _fmt_bc_date(d_iso: str):
+                dg = diag_by_d.get(d_iso, {})
+                return f"{d_iso} ({dg.get('dow','')})｜住房率 {dg.get('occ_pct',0):.0f}%｜{dg.get('strategy_label','')}"
+
+            c_bc1, c_bc2 = st.columns([1.8, 2.2])
+            with c_bc1:
+                sel_bc_date = st.selectbox("選擇目標入住日", bc_dates, index=def_idx, format_func=_fmt_bc_date, key="sm_bc_date")
+            df_bc_day = df_bc_all[df_bc_all["stay_date"] == sel_bc_date].copy()
+            avail_rts = sorted(df_bc_day["orig_rt"].unique().tolist(), key=lambda x: RT_TIER_ORDER.index(x) if x in RT_TIER_ORDER else 99)
+            with c_bc2:
+                sel_bc_rts = st.multiselect("篩選原始下訂房型", avail_rts, default=avail_rts[:6], key="sm_bc_rts")
+
+            dg_sel = diag_by_d.get(sel_bc_date, {})
+            if dg_sel:
+                st.info(f"🧭 **{sel_bc_date} ({dg_sel.get('dow','')}) 動態收益診斷**：**{dg_sel.get('strategy_label','')}** — {dg_sel.get('evidence_note','')}")
+
+            df_bc_plot = df_bc_day[df_bc_day["orig_rt"].isin(sel_bc_rts)].sort_values("bk_date")
+            if not df_bc_plot.empty:
+                df_bc_plot["系列"] = df_bc_plot["orig_rt"] + " (" + df_bc_plot["meal"].map({"RO": "不含早", "BF": "含早"}).fillna("不含早") + ")"
+                df_bc_plot["氣泡大小"] = df_bc_plot["rn"].clip(lower=1, upper=8) * 5 + 6
+                fig_bc = px.line(
+                    df_bc_plot,
+                    x="bk_date",
+                    y="avg_rate",
+                    color="系列",
+                    markers=True,
+                    hover_data={
+                        "bk_date": True,
+                        "lead_at_bk": True,
+                        "rn": True,
+                        "avg_rate": ":,",
+                        "upgraded_rn": True,
+                        "系列": False,
+                    },
+                    labels={
+                        "bk_date": "旅客下訂日期",
+                        "avg_rate": "原始房型成交單價 (NT$)",
+                        "lead_at_bk": "提前天數(D-N)",
+                        "rn": "成交房晚",
+                        "upgraded_rn": "後續現場升等晚數",
+                    },
+                )
+                fig_bc.update_traces(marker=dict(size=9))
+                fig_bc.update_layout(
+                    height=350,
+                    margin=dict(l=20, r=20, t=20, b=35),
+                    legend=dict(orientation="h", y=1.14),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_bc, use_container_width=True)
+
+        vel_list = dyn_yield.get("rt_velocity_30d", [])
+        upg_mat = dyn_yield.get("upgrade_matrix_60d", [])
+        if vel_list or upg_mat:
+            with st.expander("🔄 展開「12 房型真實原始買氣 vs 現場免費升等消化矩陣（揭密 ER 專用升等池）」", expanded=False):
+                dy_sum = dyn_yield.get("summary", {})
+                st.caption(
+                    f"統計視窗：{dy_sum.get('upg_window_label','近60天')}｜全館共發生 **{dy_sum.get('total_upgraded_rn',0)} 晚** 現場改房型／免費升等，"
+                    f"其中 **同床型零增本大床升等 {dy_sum.get('zero_cost_queen_upg_rn',0)} 晚**、**ER(8間未掛OTA專用池) 吸收 {dy_sum.get('er_absorbed_rn',0)} 晚 ({dy_sum.get('er_share_pct',0):.1f}%)**。"
+                )
+                vcol1, vcol2 = st.columns([1.45, 1.15])
+                with vcol1:
+                    st.markdown("##### 📊 未來 30 天各房型「真實買氣 vs 排房移轉」")
+                    if vel_list:
+                        df_vel = pd.DataFrame(vel_list)
+                        st.dataframe(
+                            df_vel[[
+                                "rt", "tot_inv", "orig_demand_rn", "cur_assigned_rn",
+                                "net_upgrade_shift", "orig_pickup_7d", "orig_adr_all", "adr_delta_7d"
+                            ]].rename(columns={
+                                "rt": "房型", "tot_inv": "總房數", "orig_demand_rn": "原始下訂(晚)",
+                                "cur_assigned_rn": "現排房(晚)", "net_upgrade_shift": "升等淨移入",
+                                "orig_pickup_7d": "7日原始淨買氣", "orig_adr_all": "原始成交ADR", "adr_delta_7d": "近7日均價變化",
+                            }).style.format({
+                                "升等淨移入": "{:+d}", "7日原始淨買氣": "{:+d}",
+                                "原始成交ADR": "${:,}", "近7日均價變化": "{:+,}",
+                            }),
+                            use_container_width=True, hide_index=True, height=430,
+                        )
+                with vcol2:
+                    st.markdown("##### 🔀 近 60 天現場免費升等路徑排行")
+                    if upg_mat:
+                        df_um = pd.DataFrame(upg_mat)
+                        df_um["路徑"] = df_um["orig_rt"] + " ➔ " + df_um["cur_rt"]
+                        st.dataframe(
+                            df_um[["路徑", "room_nights", "orders", "avg_rate", "category"]].rename(columns={
+                                "room_nights": "房晚數", "orders": "訂單數", "avg_rate": "原單均價", "category": "成本與床型分類",
+                            }).style.format({"原單均價": "${:,}"}),
+                            use_container_width=True, hide_index=True, height=430,
+                        )
+
+        st.divider()
+        st.subheader("📈 二、未來 STLY 去年同期進度 (Pace) × 7 日淨增訂 (Pickup)")
         if pace_daily:
             df_p = pd.DataFrame(pace_daily)
             show_days = st.slider("檢視未來天數", 14, min(90, len(df_p)), 42, key="sm_pace_days")
@@ -1155,10 +1306,12 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
             st.success(f"✅ 通路真實淨利與取消情報：`{chan_intel.get('as_of', '未同步')}`")
             st.success(f"✅ 促銷折數反查與含早差價：`{promo_bf.get('as_of', '未同步')}`")
             st.success(f"✅ 未來 90 天 STLY Pace & Pickup：`{pace_data.get('as_of', '未同步')}`")
+            st.success(f"✅ 動態收益與原始買氣軌跡 (HTACL)：`{dyn_yield.get('as_of', '未同步')}`")
             st.success(f"✅ 12 房型每日剩餘庫存：`{rt_asof}`")
         with c_s2:
-            st.markdown("##### 2️⃣ SiteMinder 42 天掛牌價快照（唯讀）")
-            st.info(f"🌐 最新有效掛牌快照：`{sm_asof}`（涵蓋 {n_inv_days} 天）")
+            n_sm_hist = len([fn for fn in os.listdir(SM_HISTORY_DIR) if fn.endswith(".json")]) if os.path.exists(SM_HISTORY_DIR) else 0
+            st.markdown("##### 2️⃣ SiteMinder 42 天掛牌價快照（唯讀＋歷史歸檔）")
+            st.info(f"🌐 最新有效掛牌快照：`{sm_asof}`（涵蓋 {n_inv_days} 天｜已累積歷史歸檔 `{n_sm_hist}` 天）")
             if sm_status:
                 st.caption(f"最近狀態：`{sm_status.get('last_attempt_at','-')}`｜{sm_status.get('detail','-')}")
             st.markdown(

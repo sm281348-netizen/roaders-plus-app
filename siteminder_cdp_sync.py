@@ -28,6 +28,29 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKUP_DIR = os.path.join(APP_DIR, "data", "pms_backup")
 SNAPSHOT_PATH = os.path.join(BACKUP_DIR, "siteminder_inventory_snapshot.json")
 SYNC_STATUS_PATH = os.path.join(BACKUP_DIR, "siteminder_sync_status.json")
+SM_HISTORY_DIR = os.path.join(BACKUP_DIR, "sm_history")
+
+
+def archive_siteminder_snapshot(payload: dict, max_keep_days: int = 120):
+    """將當日有效 SiteMinder 掛牌快照按日期歸檔至 sm_history/YYYY-MM-DD.json（不覆蓋跨日歷史，供未來精準對照下訂當日 BAR）。"""
+    if not payload or not payload.get("inventory"):
+        return None
+    as_of_date = str(payload.get("as_of", ""))[:10]
+    if len(as_of_date) != 10:
+        as_of_date = datetime.date.today().strftime("%Y-%m-%d")
+    os.makedirs(SM_HISTORY_DIR, exist_ok=True)
+    arch_path = os.path.join(SM_HISTORY_DIR, f"{as_of_date}.json")
+    with open(arch_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    # 自動清理超過 max_keep_days 的舊歸檔避免倉庫膨脹
+    try:
+        files = sorted(fn for fn in os.listdir(SM_HISTORY_DIR) if fn.endswith(".json"))
+        if len(files) > max_keep_days:
+            for old_fn in files[:-max_keep_days]:
+                os.remove(os.path.join(SM_HISTORY_DIR, old_fn))
+    except Exception:
+        pass
+    return arch_path
 
 PROPERTY_ID = "1bd893db-536e-44df-80de-7395edace58e"
 DASHBOARD_URL = f"https://app.siteminder.com/web/cm/properties/{PROPERTY_ID}/dashboard"
@@ -369,6 +392,7 @@ def run_siteminder_sync(unattended: bool = True, windows_count: int = 3):
         os.makedirs(BACKUP_DIR, exist_ok=True)
         with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
             json.dump(out_payload, f, ensure_ascii=False, indent=2)
+        archive_siteminder_snapshot(out_payload)
 
         msg = f"SiteMinder 唯讀同步成功 (mode={mode}, 擷取 {len(captured_dates)} 天, 總快照 {len(inv_clean)} 天, 今日漏單={health.get('delivery_failures_today', 0)})"
         logger.info(f"[SUCCESS] {msg}")
@@ -394,7 +418,12 @@ if __name__ == "__main__":
     print("SiteMinder sync result:", json.dumps(res, ensure_ascii=False))
     if args.git_push and res.get("status") == "success":
         import subprocess
-        subprocess.run(["git", "add", "data/pms_backup/siteminder_inventory_snapshot.json", "data/pms_backup/siteminder_sync_status.json"], cwd=APP_DIR, check=True)
+        subprocess.run([
+            "git", "add",
+            "data/pms_backup/siteminder_inventory_snapshot.json",
+            "data/pms_backup/siteminder_sync_status.json",
+            "data/pms_backup/sm_history/",
+        ], cwd=APP_DIR, check=True)
         diff_res = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=APP_DIR)
         if diff_res.returncode != 0:
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")

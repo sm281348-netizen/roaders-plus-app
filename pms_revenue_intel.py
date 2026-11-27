@@ -33,7 +33,10 @@ BACKUP_DIR = os.path.join(APP_DIR, "data", "pms_backup")
 CHANNEL_INTEL_PATH = os.path.join(BACKUP_DIR, "pms_channel_intel.json")
 STLY_PACE_PATH = os.path.join(BACKUP_DIR, "pms_stly_pace.json")
 PROMO_BF_PATH = os.path.join(BACKUP_DIR, "pms_promo_bf_audit.json")
+DYNAMIC_YIELD_PATH = os.path.join(BACKUP_DIR, "pms_dynamic_yield.json")
 SM_SNAPSHOT_PATH = os.path.join(BACKUP_DIR, "siteminder_inventory_snapshot.json")
+SM_HISTORY_DIR = os.path.join(BACKUP_DIR, "sm_history")
+RT_INV_PATH = os.path.join(BACKUP_DIR, "wallpaper_roomtype_inventory.json")
 
 # SiteMinder 標準含早加價（依實測 Distribution 衍生規則：每人淨加價 $400 ÷ 0.9）
 SM_BF_ADDON_BY_RT = {
@@ -600,11 +603,37 @@ def _diagnose_order_promo(code: str, channel: str, rate_basis: str, ratio: float
     return f"其他專案 ({ratio*100:.1f}%)", ratio < 0.70
 
 
+def _norm_orig_rt(rt_code: str) -> str:
+    c = (rt_code or "").strip()
+    return "DT" if c == "DR" else c
+
+
+def _hhmmss_to_sec(t8: str):
+    s = str(t8 or "").strip().zfill(8)
+    if len(s) >= 6 and s[:6].isdigit():
+        hh, mm, ss = int(s[:2]), int(s[2:4]), int(s[4:6])
+        cc = int(s[6:8]) if len(s) >= 8 and s[6:8].isdigit() else 0
+        return hh * 3600 + mm * 60 + ss + cc / 100.0
+    return None
+
+
+def _los_tier(nights: int) -> str:
+    n = max(1, int(nights or 1))
+    if n == 1:
+        return "1N"
+    if n == 2:
+        return "2N"
+    if n <= 4:
+        return "3-4N"
+    return "5N+"
+
+
 def extract_pms_promo_and_bf_audit(today: datetime.date = None):
     """
-    從金旭 HT2000 抽取兩大經理最關心的定價稽核真相（100% 唯讀 SELECT）：
-      1. 同日期 × 同房型「含早 vs 不含早」真實成交差價（全通路彙總 + 分通路明細），直接對照 SiteMinder 牌告加價。
-      2. 近 14 天新進訂單實收價 (HTAC.AC08) vs SiteMinder 掛牌價折數反查，揭露實際做了什麼促銷。
+    從金旭 HT2000 + HT2000_Log.HTACL 抽取定價稽核真相（100% 唯讀 SELECT，已剔除現場免費升等汙染）：
+      1. 同日期 × 同原始房型「含早 vs 不含早」真實成交差價。
+      2. 嚴格區分「同日 4 小時內＋同連住級距」vs「跨日浮動調價觀察」之含早差價明細。
+      3. 近 14 天新進訂單實收價 vs 優先對照「下訂當日歸檔 BAR」（若無則對照最新快照）之促銷反查。
     """
     if today is None:
         today = datetime.date.today()
@@ -612,25 +641,38 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
     conn = get_sql_connection()
     cur = conn.cursor()
 
-    # 1. 同日期 × 同房型「含早 vs 不含早」真實成交差價（涵蓋前 30 天 ~ 未來 60 天）
     s_bf = (today - datetime.timedelta(days=30)).strftime("%Y%m%d")
     e_bf = (today + datetime.timedelta(days=60)).strftime("%Y%m%d")
 
+    # 1. 同日期 × 同原始房型「含早 vs 不含早」真實成交差價（JOIN HTACL 首次 INSERT 排除升等汙染）
     cur.execute("""
-        WITH per_day_rt AS (
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        ),
+        per_day_rt AS (
             SELECT
                 a.AC02 AS stay_date,
-                LTRIM(RTRIM(a.AC03)) AS rt,
+                CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                     ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END AS rt,
                 CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO'
                      WHEN a.AC11 LIKE '%含早%' THEN 'BF' END AS meal,
                 SUM(a.AC06) AS rn,
                 SUM(a.AC08) AS rev
             FROM HTAC a
             JOIN HTRV v ON a.AC01 = v.RV01
+            LEFT JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
             WHERE a.AC02 >= ? AND a.AC02 <= ?
               AND v.RV06 = 'ACTV' AND a.AC06 > 0
               AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
-            GROUP BY a.AC02, LTRIM(RTRIM(a.AC03)),
+            GROUP BY a.AC02,
+                     CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                          ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END,
                      CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END
         )
         SELECT
@@ -646,7 +688,7 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         WHERE ro.meal = 'RO' AND bf.meal = 'BF'
         GROUP BY ro.rt
         ORDER BY ro.rt
-    """, (s_bf, e_bf))
+    """, (s_bf, e_bf, s_bf, e_bf))
 
     bf_by_rt = []
     for rt, mdays, ro_rn, bf_rn, avg_ro, avg_bf, avg_diff in cur.fetchall():
@@ -668,12 +710,22 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             "actual_per_pax": per_pax_act,
         })
 
-    # 2. 同日期 × 同房型 × 同通路「含早 vs 不含早」明細（抓出哪個通路含早折價過頭或倒掛）
+    # 2. 同日期 × 同原始房型 × 同通路「含早 vs 不含早」明細
     cur.execute("""
-        WITH per_day_ch AS (
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        ),
+        per_day_ch AS (
             SELECT
                 a.AC02 AS stay_date,
-                LTRIM(RTRIM(a.AC03)) AS rt,
+                CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                     ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END AS rt,
                 LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
                 ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
                 ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
@@ -683,10 +735,14 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             FROM HTAC a
             JOIN HTRV v ON a.AC01 = v.RV01
             LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+            LEFT JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
             WHERE a.AC02 >= ? AND a.AC02 <= ?
               AND v.RV06 = 'ACTV' AND a.AC06 > 0
               AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
-            GROUP BY a.AC02, LTRIM(RTRIM(a.AC03)), LTRIM(RTRIM(ISNULL(v.RV10,''))),
+            GROUP BY a.AC02,
+                     CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                          ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END,
+                     LTRIM(RTRIM(ISNULL(v.RV10,''))),
                      ISNULL(LTRIM(RTRIM(g.GR03)),''), ISNULL(LTRIM(RTRIM(g.GR07)),''),
                      CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO' WHEN a.AC11 LIKE '%含早%' THEN 'BF' END
         )
@@ -702,7 +758,7 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         GROUP BY ro.rt, ro.ch_code, ro.gr_name, ro.pay_type
         HAVING COUNT(*) >= 2
         ORDER BY ro.rt, pairs DESC
-    """, (s_bf, e_bf))
+    """, (s_bf, e_bf, s_bf, e_bf))
 
     bf_by_ch = []
     for rt, code, gname, ptype, pairs, avg_d, min_d, max_d in cur.fetchall():
@@ -724,17 +780,32 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             "is_low_bf": per_pax < 300,
         })
 
-    # 3. 抓包「促銷打下去含早 <= 不含早」或「實收每人早餐 < NT$280」之實單配對（同入住日 × 同房型 × 同通路 × 訂房日相差 <= 7天）
+    # 3. 含早 vs 不含早實單配對（加入原始下訂房型、精確進單秒數 RV002 與連住晚數 LOS，嚴格區分同日4h內 vs 跨日浮動價差！）
     bf_inv_start = (today - datetime.timedelta(days=30)).strftime("%Y%m%d")
     bf_inv_end = (today + datetime.timedelta(days=60)).strftime("%Y%m%d")
     cur.execute("""
-        WITH nights AS (
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        ),
+        nights AS (
             SELECT
                 v.RV01 AS rv_no,
                 LTRIM(RTRIM(ISNULL(v.RV29,''))) AS ota_ref,
                 v.RV001 AS bk_date,
+                RIGHT('00000000' + LTRIM(RTRIM(ISNULL(v.RV002,'0'))), 8) AS bk_time,
+                CASE WHEN LEN(LTRIM(RTRIM(v.RV03)))=8 AND LEN(LTRIM(RTRIM(v.RV04)))=8
+                          AND ISDATE(v.RV03)=1 AND ISDATE(v.RV04)=1
+                     THEN DATEDIFF(day, CONVERT(date, v.RV03, 112), CONVERT(date, v.RV04, 112))
+                     ELSE 1 END AS los_nights,
                 a.AC02 AS stay_date,
-                LTRIM(RTRIM(a.AC03)) AS rt,
+                CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                     ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END AS rt,
                 LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
                 ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
                 ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
@@ -743,6 +814,7 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             FROM HTAC a
             JOIN HTRV v ON a.AC01 = v.RV01
             LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+            LEFT JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
             WHERE a.AC02 >= ? AND a.AC02 <= ?
               AND v.RV06 = 'ACTV' AND a.AC06 > 0 AND a.AC08 > 0
               AND (a.AC11 LIKE '%不含早%' OR a.AC11 LIKE '%含早%')
@@ -750,8 +822,8 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         )
         SELECT
             bf.stay_date, bf.rt, bf.ch_code, bf.gr_name, bf.pay_type,
-            bf.ota_ref AS bf_ota, bf.bk_date AS bf_bk, bf.unit_rate AS bf_rate,
-            ro.ota_ref AS ro_ota, ro.bk_date AS ro_bk, ro.unit_rate AS ro_rate,
+            bf.ota_ref AS bf_ota, bf.bk_date AS bf_bk, bf.bk_time AS bf_t, bf.los_nights AS bf_los, bf.unit_rate AS bf_rate,
+            ro.ota_ref AS ro_ota, ro.bk_date AS ro_bk, ro.bk_time AS ro_t, ro.los_nights AS ro_los, ro.unit_rate AS ro_rate,
             DATEDIFF(day, CONVERT(date, ro.bk_date, 112), CONVERT(date, bf.bk_date, 112)) AS bk_gap_days,
             (bf.unit_rate - ro.unit_rate) AS diff_twd
         FROM nights bf
@@ -763,10 +835,10 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
          AND ABS(DATEDIFF(day, CONVERT(date, ro.bk_date, 112), CONVERT(date, bf.bk_date, 112))) <= 7
         WHERE (bf.unit_rate - ro.unit_rate) < 600
         ORDER BY diff_twd ASC, bf.stay_date ASC
-    """, (bf_inv_start, bf_inv_end))
+    """, (bf_inv_start, bf_inv_end, bf_inv_start, bf_inv_end))
     bf_inv_raw = cur.fetchall()
 
-    # 4. 近 14 天新進訂單實收價 vs SiteMinder 掛牌價（促銷折數反查）
+    # 載入最新 SiteMinder 快照與歷史歸檔快取（供精準比對下訂當日 BAR）
     sm_inv = {}
     if os.path.exists(SM_SNAPSHOT_PATH):
         try:
@@ -775,9 +847,34 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         except Exception:
             sm_inv = {}
 
+    sm_hist_cache = {}
+    def _get_bar_for_bk_and_stay(bk_iso_str: str, stay_iso_str: str, rt_code: str):
+        if bk_iso_str not in sm_hist_cache:
+            hpath = os.path.join(SM_HISTORY_DIR, f"{bk_iso_str}.json")
+            if os.path.exists(hpath):
+                try:
+                    with open(hpath, "r", encoding="utf-8") as hf:
+                        sm_hist_cache[bk_iso_str] = json.load(hf).get("inventory", {})
+                except Exception:
+                    sm_hist_cache[bk_iso_str] = None
+            else:
+                sm_hist_cache[bk_iso_str] = None
+        h_inv = sm_hist_cache[bk_iso_str]
+        if h_inv:
+            r_val = int(h_inv.get(stay_iso_str, {}).get("rooms", {}).get(rt_code, {}).get("r", 0) or 0)
+            if r_val > 0:
+                return r_val, "下訂當日BAR"
+        r_latest = int(sm_inv.get(stay_iso_str, {}).get("rooms", {}).get(rt_code, {}).get("r", 0) or 0)
+        return r_latest, "最新快照BAR"
+
     bf_inversion_alerts = []
     seen_bf_pair = set()
-    for st, rt, code, gname, ptype, b_ota, b_bk, b_rate, r_ota, r_bk, r_rate, gap_d, diff in bf_inv_raw:
+    for (
+        st, rt, code, gname, ptype,
+        b_ota, b_bk, b_t, b_los, b_rate,
+        r_ota, r_bk, r_t, r_los, r_rate,
+        gap_d, diff,
+    ) in bf_inv_raw:
         sm_addon, pax = SM_BF_ADDON_BY_RT.get(rt, (889, 2))
         b_rate_i = int(round(float(b_rate)))
         r_rate_i = int(round(float(r_rate)))
@@ -795,37 +892,53 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         r_bk_iso = f"{r_bk[:4]}-{r_bk[4:6]}-{r_bk[6:8]}"
         grp, sub_lbl, basis, _, _ = classify_channel(code, gname, ptype)
 
-        # 以該通路不含早實收價 + 設定的400元/人(預付扣佣約321/人)反推含早應有價，計算含早單實打了幾折
+        gap_d_i = int(gap_d)
+        gap_hrs = None
+        if gap_d_i == 0:
+            sb, sr = _hhmmss_to_sec(b_t), _hhmmss_to_sec(r_t)
+            if sb is not None and sr is not None:
+                gap_hrs = round(abs(sb - sr) / 3600.0, 2)
+
+        b_los_i, r_los_i = max(1, int(b_los or 1)), max(1, int(r_los or 1))
+        same_los = (_los_tier(b_los_i) == _los_tier(r_los_i))
+        is_strict = (gap_d_i == 0) and (gap_hrs is not None and gap_hrs <= 4.0) and same_los
+
         exp_bf_addon = int(round(400 * pax * (0.85 if basis == "net_prepaid" else 1.0)))
         expected_bf_rate = r_rate_i + exp_bf_addon
         bf_vs_expected_pct = round(b_rate_i / expected_bf_rate * 100.0, 1) if expected_bf_rate > 0 else 0.0
         extra_disc_pct = round(100.0 - bf_vs_expected_pct, 1)
         shortfall_vs_400 = (400 * pax) - diff_i
 
-        # 若該入住日在 SiteMinder 42天快照內，也一併附上與今日牌告的折數對照
-        sm_ro = sm_inv.get(st_iso, {}).get("rooms", {}).get(rt, {}).get("r", 0)
+        sm_ro, bar_mode = _get_bar_for_bk_and_stay(b_bk_iso, st_iso, rt)
         sm_bf_pct_str = "—"
         if sm_ro > 0 and sm_addon > 0:
             sm_bf = sm_ro + sm_addon
             sm_bf_pct = round(b_rate_i / sm_bf * 100.0, 1)
             sm_ro_pct = round(r_rate_i / sm_ro * 100.0, 1)
-            sm_bf_pct_str = f"含早{sm_bf_pct}% vs 不含早{sm_ro_pct}%"
+            sm_bf_pct_str = f"含早{sm_bf_pct}% vs 不含早{sm_ro_pct}% ({bar_mode})"
 
-        if diff_i <= 0:
-            severity = "🔴 含早比不含早便宜" if diff_i < 0 else "🔴 含早與不含早同價"
-            reason = (
-                f"同通路同房型相差 {abs(int(gap_d))} 天下訂，含早反而比不含早少收 ${abs(diff_i):,}！"
-                f"推估含早方案額外打了約 {extra_disc_pct:.1f}% 折扣（疑僅對含早開早鳥/連住/疊加促銷）"
-            )
+        if is_strict:
+            if diff_i <= 0:
+                severity = "🔴 同日4h內含早≤不含早"
+                reason = f"同日 {gap_hrs:.1f}h 內下訂且同連住級距({b_los_i}晚 vs {r_los_i}晚)，含早反少收 ${abs(diff_i):,}（需確認是否疊加促銷或VIP會員差）"
+            else:
+                severity = "🟠 同日4h內早餐偏低"
+                reason = f"同日 {gap_hrs:.1f}h 內下訂({b_los_i}晚 vs {r_los_i}晚)，每人早餐實收 ${per_pax}/人（可能含會員等級折扣差異）"
         else:
-            severity = "🟠 早餐嚴重折損 (<$280/人)"
-            reason = (
-                f"每人僅實收 ${per_pax}/人（基準應為 $400/人，整間少收 ${shortfall_vs_400:,}）；"
-                f"含早較預期少收約 {extra_disc_pct:.1f}%"
-            )
+            why_noise = []
+            if gap_d_i != 0:
+                why_noise.append(f"跨日下訂差{abs(gap_d_i)}天(受浮動調價影響)")
+            elif gap_hrs is not None and gap_hrs > 4.0:
+                why_noise.append(f"同日間隔{gap_hrs:.1f}h(可能盤中調價)")
+            if not same_los:
+                why_noise.append(f"連住不同({b_los_i}晚 vs {r_los_i}晚)")
+            noise_tag = "、".join(why_noise) if why_noise else "動態價格變動"
+            severity = "📊 浮動價差觀察(非鐵證)"
+            reason = f"{noise_tag}；兩單帳面差 {diff_i:+,} 元（屬浮動房價或連住折扣軌跡，非設定錯誤鐵證）"
 
         bf_inversion_alerts.append({
             "severity": severity,
+            "is_strict_intraday": is_strict,
             "stay_date": st_iso,
             "rt": rt,
             "pax": pax,
@@ -833,11 +946,14 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             "sub_label": sub_lbl,
             "bf_rate": b_rate_i,
             "bf_bk_date": b_bk_iso,
+            "bf_los": b_los_i,
             "bf_ota_ref": b_ota,
             "ro_rate": r_rate_i,
             "ro_bk_date": r_bk_iso,
+            "ro_los": r_los_i,
             "ro_ota_ref": r_ota,
-            "bk_gap_days": int(gap_d),
+            "bk_gap_days": gap_d_i,
+            "bk_gap_hours": gap_hrs,
             "diff_twd": diff_i,
             "per_pax_bf": per_pax,
             "shortfall_vs_400": shortfall_vs_400,
@@ -846,17 +962,29 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             "reason": reason,
         })
 
+    # 4. 近 14 天新進訂單實收價 vs 原始下訂房型 BAR（剔除免費升等造成之假深折！）
     bk_start = (today - datetime.timedelta(days=14)).strftime("%Y%m%d")
     stay_start = today.strftime("%Y%m%d")
     stay_end = (today + datetime.timedelta(days=45)).strftime("%Y%m%d")
 
     cur.execute("""
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        )
         SELECT
             v.RV01 AS rv_no,
             LTRIM(RTRIM(ISNULL(v.RV29,''))) AS ota_ref,
             v.RV001 AS bk_date,
             a.AC02 AS stay_date,
-            LTRIM(RTRIM(a.AC03)) AS rt,
+            CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                 ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END AS orig_rt,
+            LTRIM(RTRIM(a.AC03)) AS cur_rt,
             LTRIM(RTRIM(ISNULL(v.RV10,''))) AS ch_code,
             ISNULL(LTRIM(RTRIM(g.GR03)),'') AS gr_name,
             ISNULL(LTRIM(RTRIM(g.GR07)),'') AS pay_type,
@@ -866,25 +994,26 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         FROM HTAC a
         JOIN HTRV v ON a.AC01 = v.RV01
         LEFT JOIN HTGR g ON LTRIM(RTRIM(v.RV10)) = LTRIM(RTRIM(g.GR01))
+        LEFT JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
         WHERE v.RV001 >= ? AND v.RV06 = 'ACTV'
           AND a.AC02 >= ? AND a.AC02 <= ?
           AND a.AC06 > 0 AND a.AC08 > 0
         ORDER BY v.RV001 DESC, a.AC02 ASC
-    """, (bk_start, stay_start, stay_end))
+    """, (stay_start, stay_end, bk_start, stay_start, stay_end))
 
     promo_orders = []
     ratios_all = []
     by_chan_agg = defaultdict(lambda: {"n": 0, "ratios": [], "deep_cnt": 0, "pms_sum": 0, "bar_sum": 0})
-    for rv_no, ota_ref, bk_d, st_d, rt, code, gname, ptype, pname, rms, rev in cur.fetchall():
+    for rv_no, ota_ref, bk_d, st_d, orig_rt, cur_rt, code, gname, ptype, pname, rms, rev in cur.fetchall():
         if len(st_d) != 8 or len(bk_d) != 8:
             continue
         st_iso = f"{st_d[:4]}-{st_d[4:6]}-{st_d[6:8]}"
         bk_iso = f"{bk_d[:4]}-{bk_d[4:6]}-{bk_d[6:8]}"
-        sm_ro = sm_inv.get(st_iso, {}).get("rooms", {}).get(rt, {}).get("r", 0)
+        sm_ro, bar_mode = _get_bar_for_bk_and_stay(bk_iso, st_iso, orig_rt)
         if sm_ro <= 0:
             continue
         is_bf = ("含早" in pname) and ("不含早" not in pname)
-        bf_addon = SM_BF_ADDON_BY_RT.get(rt, (889, 2))[0] if is_bf else 0
+        bf_addon = SM_BF_ADDON_BY_RT.get(orig_rt, (889, 2))[0] if is_bf else 0
         sm_ref = sm_ro + bf_addon
         pms_unit = int(round(float(rev) / float(rms)))
         ratio = round(pms_unit / sm_ref, 4) if sm_ref > 0 else 0.0
@@ -892,7 +1021,9 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
             continue
 
         grp, sub_lbl, basis, _, _ = classify_channel(code, gname, ptype)
-        diag, is_deep = _diagnose_order_promo(code, grp, basis, ratio, rt)
+        diag, is_deep = _diagnose_order_promo(code, grp, basis, ratio, orig_rt)
+        if orig_rt != cur_rt:
+            diag = f"{diag} [已升等→{cur_rt}]"
 
         ratios_all.append(ratio)
         agg = by_chan_agg[sub_lbl]
@@ -906,12 +1037,14 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         promo_orders.append({
             "bk_date": bk_iso,
             "stay_date": st_iso,
-            "rt": rt,
+            "rt": orig_rt,
+            "cur_rt": cur_rt,
             "meal": "含早" if is_bf else "不含早",
             "channel": grp,
             "sub_label": sub_lbl,
             "ota_ref": ota_ref,
             "sm_ref_rate": sm_ref,
+            "bar_match_mode": bar_mode,
             "pms_actual_rate": pms_unit,
             "ratio_pct": round(ratio * 100.0, 1),
             "diff_twd": pms_unit - sm_ref,
@@ -939,7 +1072,7 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
         })
 
     emp_ratio = round(sum(ratios_all) / len(ratios_all), 4) if ratios_all else 0.77
-    # 依折數最深排序，最多保留前 250 筆細節免檔案膨脹
+    bf_inversion_alerts.sort(key=lambda x: (not x["is_strict_intraday"], x["diff_twd"], x["stay_date"]))
     promo_orders.sort(key=lambda x: (not x["is_deep_promo"], x["ratio_pct"], x["stay_date"]))
 
     payload = {
@@ -960,9 +1093,390 @@ def extract_pms_promo_and_bf_audit(today: datetime.date = None):
     return payload
 
 
+def extract_pms_dynamic_yield(today: datetime.date = None, horizon_days: int = 45):
+    """
+    串接 HT2000 + HT2000_Log.HTACL（100% 唯讀），還原零升等汙染的「動態收益參謀」底層指標：
+      1. 近 60 天（前30天+後30天）現場真實免費升等流量矩陣（量化 ER 專用升等池貢獻與零增本 vs 跨床型升等）。
+      2. 未來 30 天 12 房型「原始真實買氣 (Original Net Pickup) vs 物理排房移轉」與近期調價方向。
+      3. 未來 45 天逐日「低階升等導流 vs 臨期高階清倉」動態診斷（納入床型相容＋前後連貫空房檢核）。
+      4. 未來 45 天單日單房型「成交價軌跡 (Booking Curve)」，一眼看懂浮動調價歷程。
+    """
+    if today is None:
+        today = datetime.date.today()
+
+    conn = get_sql_connection()
+    cur = conn.cursor()
+
+    s_upg = (today - datetime.timedelta(days=30)).strftime("%Y%m%d")
+    e_upg = (today + datetime.timedelta(days=30)).strftime("%Y%m%d")
+
+    # 1. 近 60 天真實現場免費升等／改房型矩陣（排除 2026-03 DR->DT 房型整併）
+    cur.execute("""
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        )
+        SELECT
+            o.orig_rt,
+            LTRIM(RTRIM(a.AC03)) AS cur_rt,
+            SUM(a.AC06) AS rn_sum,
+            COUNT(DISTINCT a.AC01) AS res_cnt,
+            AVG(a.AC08 / NULLIF(a.AC06, 0)) AS avg_rate
+        FROM HTAC a
+        JOIN HTRV v ON a.AC01 = v.RV01
+        JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
+        WHERE a.AC02 >= ? AND a.AC02 <= ?
+          AND v.RV06 = 'ACTV' AND a.AC06 > 0
+          AND o.orig_rt <> LTRIM(RTRIM(a.AC03))
+          AND NOT (o.orig_rt = 'DR' AND LTRIM(RTRIM(a.AC03)) = 'DT')
+        GROUP BY o.orig_rt, LTRIM(RTRIM(a.AC03))
+        ORDER BY rn_sum DESC
+    """, (s_upg, e_upg, s_upg, e_upg))
+
+    queen_low = {"S", "SP", "PD", "SD"}
+    queen_zero_cost_up = {"SP", "PD", "ER", "E", "LDT"}
+    multi_bed_high = {"DT", "DTP", "F", "DF"}
+
+    upg_matrix = []
+    tot_upg_rn = 0
+    zero_cost_rn = 0
+    er_abs_rn = 0
+    cross_bed_rn = 0
+
+    for ort_raw, crt, rn_s, r_cnt, avg_r in cur.fetchall():
+        ort = _norm_orig_rt(ort_raw)
+        if ort == crt:
+            continue
+        rn_i = int(round(float(rn_s or 0)))
+        if rn_i <= 0:
+            continue
+        tot_upg_rn += rn_i
+        if crt == "ER":
+            er_abs_rn += rn_i
+        if ort in queen_low and crt in queen_zero_cost_up:
+            cat = "🟢 同床型零增本升等(大床→大床)"
+            zero_cost_rn += rn_i
+        elif crt in multi_bed_high and ort not in multi_bed_high:
+            cat = "🟡 跨床型大容量升等(增清潔/排擠)"
+            cross_bed_rn += rn_i
+        else:
+            cat = "🔵 雙床/特殊調度或平移"
+
+        upg_matrix.append({
+            "orig_rt": ort_raw,
+            "cur_rt": crt,
+            "room_nights": rn_i,
+            "orders": int(r_cnt or 0),
+            "avg_rate": int(round(float(avg_r or 0))),
+            "category": cat,
+        })
+
+    # 2. 未來 45 天有效與近期退訂明細（一次拉齊供 Velocity + Diagnostics + Booking Curve 共用）
+    s_fut = today.strftime("%Y%m%d")
+    e_fut = (today + datetime.timedelta(days=horizon_days)).strftime("%Y%m%d")
+    d_7ago = (today - datetime.timedelta(days=7)).strftime("%Y%m%d")
+    d_14ago = (today - datetime.timedelta(days=14)).strftime("%Y%m%d")
+
+    cur.execute("""
+        WITH orig AS (
+            SELECT
+                LTRIM(RTRIM(AC01)) AS rv01,
+                LTRIM(RTRIM(AC02)) AS stay_d,
+                LTRIM(RTRIM(AC03)) AS orig_rt,
+                ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(AC01)), LTRIM(RTRIM(AC02)) ORDER BY DateTime ASC) AS rn
+            FROM HT2000_Log.dbo.HTACL
+            WHERE Action = 'INSERT' AND AC02 >= ? AND AC02 <= ?
+        )
+        SELECT
+            a.AC02 AS stay_d,
+            v.RV001 AS bk_d,
+            v.RV005 AS mod_d,
+            v.RV06 AS status,
+            CASE WHEN ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) = 'DR' THEN 'DT'
+                 ELSE ISNULL(o.orig_rt, LTRIM(RTRIM(a.AC03))) END AS orig_rt,
+            LTRIM(RTRIM(a.AC03)) AS cur_rt,
+            CASE WHEN a.AC11 LIKE '%不含早%' THEN 'RO'
+                 WHEN a.AC11 LIKE '%含早%' THEN 'BF' ELSE 'RO' END AS meal,
+            a.AC06 AS actv_rn,
+            a.AC07 AS cx_rn,
+            a.AC08 AS rev
+        FROM HTAC a
+        JOIN HTRV v ON a.AC01 = v.RV01
+        LEFT JOIN orig o ON LTRIM(RTRIM(a.AC01)) = o.rv01 AND LTRIM(RTRIM(a.AC02)) = o.stay_d AND o.rn = 1
+        WHERE a.AC02 >= ? AND a.AC02 <= ?
+          AND (v.RV06 = 'ACTV' OR (v.RV06 IN ('CXNL', 'NOSH') AND v.RV005 > ?))
+    """, (s_fut, e_fut, s_fut, e_fut, d_14ago))
+
+    fut_rows = cur.fetchall()
+    conn.close()
+
+    # 讀取 12 房型每日剩餘庫存與 STLY Pace 快照
+    rt_inv_data = {}
+    if os.path.exists(RT_INV_PATH):
+        try:
+            with open(RT_INV_PATH, "r", encoding="utf-8") as f:
+                rt_inv_data = json.load(f)
+        except Exception:
+            rt_inv_data = {}
+    rt_master = rt_inv_data.get("rt_master", {})
+    daily_avail = rt_inv_data.get("daily_avail", {})
+
+    pace_map = {}
+    if os.path.exists(STLY_PACE_PATH):
+        try:
+            with open(STLY_PACE_PATH, "r", encoding="utf-8") as f:
+                for pr in json.load(f).get("daily", []):
+                    pace_map[pr["date"]] = pr
+        except Exception:
+            pass
+
+    d30_end_ymd = (today + datetime.timedelta(days=29)).strftime("%Y%m%d")
+    rt_order_12 = ["DF", "F", "DTP", "LDT", "DT", "E", "ER", "PD", "PT", "SP", "S", "SD"]
+
+    rt_agg = {
+        k: {
+            "orig_rn": 0, "cur_rn": 0,
+            "new7": 0, "cx7": 0, "new14": 0, "cx14": 0,
+            "rev_all": 0, "rn_rev_all": 0,
+            "rev_7d": 0, "rn_rev_7d": 0,
+            "rev_prior": 0, "rn_rev_prior": 0,
+        }
+        for k in rt_order_12
+    }
+    day_orig_pk7 = defaultdict(lambda: defaultdict(int))
+    curve_grp = defaultdict(lambda: {"rn": 0, "rev": 0, "upg_rn": 0})
+
+    for stay_d, bk_d, mod_d, st_code, ort, crt, meal, actv_rn, cx_rn, rev in fut_rows:
+        stay_d = str(stay_d or "").strip()
+        bk_d = str(bk_d or "").strip()
+        mod_d = str(mod_d or "").strip()
+        if len(stay_d) != 8:
+            continue
+        stay_iso = f"{stay_d[:4]}-{stay_d[4:6]}-{stay_d[6:8]}"
+
+        if st_code == "ACTV":
+            rn_i = int(round(float(actv_rn or 0)))
+            rev_i = int(round(float(rev or 0)))
+            if rn_i <= 0:
+                continue
+
+            if stay_d <= d30_end_ymd:
+                if ort in rt_agg:
+                    rt_agg[ort]["orig_rn"] += rn_i
+                    if rev_i > 0:
+                        rt_agg[ort]["rev_all"] += rev_i
+                        rt_agg[ort]["rn_rev_all"] += rn_i
+                    if bk_d > d_7ago:
+                        rt_agg[ort]["new7"] += rn_i
+                        if rev_i > 0:
+                            rt_agg[ort]["rev_7d"] += rev_i
+                            rt_agg[ort]["rn_rev_7d"] += rn_i
+                    else:
+                        if rev_i > 0:
+                            rt_agg[ort]["rev_prior"] += rev_i
+                            rt_agg[ort]["rn_rev_prior"] += rn_i
+                    if bk_d > d_14ago:
+                        rt_agg[ort]["new14"] += rn_i
+                if crt in rt_agg:
+                    rt_agg[crt]["cur_rn"] += rn_i
+
+            if bk_d > d_7ago:
+                day_orig_pk7[stay_iso][ort] += rn_i
+
+            if len(bk_d) == 8 and rev_i > 0:
+                bk_iso = f"{bk_d[:4]}-{bk_d[4:6]}-{bk_d[6:8]}"
+                ck = (stay_iso, ort, bk_iso, meal)
+                curve_grp[ck]["rn"] += rn_i
+                curve_grp[ck]["rev"] += rev_i
+                if ort != crt:
+                    curve_grp[ck]["upg_rn"] += rn_i
+        else:
+            # CXNL / NOSH cancelled within 14d -> subtract from net original pickup if originally booked before window!
+            crn_i = int(round(float(cx_rn or 0)))
+            if crn_i <= 0:
+                continue
+            if mod_d > d_7ago and bk_d <= d_7ago:
+                day_orig_pk7[stay_iso][ort] -= crn_i
+                if stay_d <= d30_end_ymd and ort in rt_agg:
+                    rt_agg[ort]["cx7"] += crn_i
+            if stay_d <= d30_end_ymd and mod_d > d_14ago and bk_d <= d_14ago and ort in rt_agg:
+                rt_agg[ort]["cx14"] += crn_i
+
+    rt_velocity_30d = []
+    for k in rt_order_12:
+        a = rt_agg[k]
+        adr_all = int(round(a["rev_all"] / a["rn_rev_all"])) if a["rn_rev_all"] > 0 else 0
+        adr_7d = int(round(a["rev_7d"] / a["rn_rev_7d"])) if a["rn_rev_7d"] > 0 else 0
+        adr_prior = int(round(a["rev_prior"] / a["rn_rev_prior"])) if a["rn_rev_prior"] > 0 else 0
+        delta_7d = (adr_7d - adr_prior) if (adr_7d > 0 and adr_prior > 0) else 0
+        rt_velocity_30d.append({
+            "rt": k,
+            "tot_inv": int(rt_master.get(k, {}).get("total_inv", 0)),
+            "orig_demand_rn": a["orig_rn"],
+            "cur_assigned_rn": a["cur_rn"],
+            "net_upgrade_shift": a["cur_rn"] - a["orig_rn"],
+            "orig_pickup_7d": a["new7"] - a["cx7"],
+            "orig_pickup_14d": a["new14"] - a["cx14"],
+            "orig_adr_all": adr_all,
+            "orig_adr_7d": adr_7d,
+            "orig_adr_prior": adr_prior,
+            "adr_delta_7d": delta_7d,
+        })
+
+    # 3. 整理未來 45 天逐日「低階升等導流 vs 臨期高階清倉」診斷（含前後連貫空房 Continuity 檢核！）
+    dow_zh = ["一", "二", "三", "四", "五", "六", "日"]
+    iso_list = [(today + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(horizon_days + 1)]
+
+    def _pool_rem(d_iso: str, keys):
+        rts = daily_avail.get(d_iso, {})
+        return sum(max(0, int(rts.get(k, {}).get("rem", 0))) for k in keys)
+
+    daily_diag = []
+    for idx, d_iso in enumerate(iso_list):
+        d_obj = today + datetime.timedelta(days=idx)
+        pc = pace_map.get(d_iso, {})
+        rts = daily_avail.get(d_iso, {})
+        pk_map = day_orig_pk7.get(d_iso, {})
+
+        entry_rem = _pool_rem(d_iso, ("S", "SP", "PD"))
+        entry_pk7 = sum(pk_map.get(k, 0) for k in ("S", "SP", "PD"))
+
+        er_rem = max(0, int(rts.get("ER", {}).get("rem", 0)))
+        q_upg_rem = _pool_rem(d_iso, ("ER", "E", "LDT"))
+        q_upg_pk7 = sum(pk_map.get(k, 0) for k in ("ER", "E", "LDT"))
+
+        # 連住連貫緩衝：檢查 d 與 d+1（若有 d-1 且 idx>0 亦參考 d+1 為主）之最低連貫可升等空房，避免連住客中途換房
+        adj_indices = [idx] + ([idx + 1] if idx + 1 < len(iso_list) else [])
+        q_upg_cont_rem = min(_pool_rem(iso_list[j], ("ER", "E", "LDT")) for j in adj_indices)
+        dt_rem = max(0, int(rts.get("DT", {}).get("rem", 0)))
+        dt_cont_rem = min(_pool_rem(iso_list[j], ("DT",)) for j in adj_indices)
+        dt_pk7 = pk_map.get("DT", 0)
+
+        pt_rem = max(0, int(rts.get("PT", {}).get("rem", 0)))
+        pt_pk7 = pk_map.get("PT", 0)
+
+        fam_rem = _pool_rem(d_iso, ("DF", "F", "DTP"))
+        fam_pk7 = sum(pk_map.get(k, 0) for k in ("DF", "F", "DTP"))
+
+        occ_pct = float(pc.get("occ_pct", 0.0))
+        rem_rn = int(pc.get("rem_rn", sum(max(0, int(v.get("rem", 0))) for v in rts.values())))
+
+        if 0 <= idx <= 2 and rem_rn >= 14 and (q_upg_rem + dt_rem + fam_rem) >= 10:
+            scode = "lastmin_high_clear"
+            slabel = "⚡ 臨期高階清倉窗口"
+            snote = (
+                f"距入住僅 {idx} 天、全館尚餘 {rem_rn} 間，其中高階/大容量剩 {q_upg_rem + dt_rem + fam_rem} 間"
+                f"（ER+E+LDT:{q_upg_rem}、DT:{dt_rem}、家庭:{fam_rem}），單靠低階升等已來不及去化，宜確認高階臨期直售水位。"
+            )
+        elif idx >= 2 and entry_rem <= 3 and entry_pk7 >= 3 and q_upg_cont_rem >= 3 and q_upg_pk7 <= 1:
+            scode = "upgrade_capture"
+            slabel = "🔄 預排升等導流（免砍高階價）"
+            snote = (
+                f"主力大床(S+SP+PD)僅剩 {entry_rem} 間且近7日原始淨進單 +{entry_pk7} 晚；"
+                f"同床型高階(ER+E+LDT)當日空 {q_upg_rem} 間、連貫2晚空 {q_upg_cont_rem} 間（其中 ER 專用池空 {er_rem} 間）且高階7日僅 {q_upg_pk7:+d} 晚。"
+                "建議現場預排 SP/PD 免費升等至 ER/E，騰出低階續賣以守住高階價格錨點！"
+            )
+        elif occ_pct >= 88.0 and (entry_pk7 + dt_pk7 + fam_pk7) >= 6:
+            scode = "hold_and_push"
+            slabel = "📈 買氣強勁・穩價鎖利"
+            snote = f"住房率已達 {occ_pct:.1f}% 且近期原始買氣強，無須額外降價促銷。"
+        else:
+            scode = "balanced"
+            slabel = "✅ 結構平衡"
+            snote = f"主力大床剩 {entry_rem} 間(7日{entry_pk7:+d})｜大床升等池剩 {q_upg_rem} 間｜DT剩 {dt_rem} 間｜家庭剩 {fam_rem} 間"
+
+        daily_diag.append({
+            "date": d_iso,
+            "dow": dow_zh[d_obj.weekday()],
+            "lead_days": idx,
+            "occ_pct": occ_pct,
+            "rem_rn": rem_rn,
+            "entry_rem": entry_rem,
+            "entry_pk7": entry_pk7,
+            "er_rem": er_rem,
+            "q_upg_rem": q_upg_rem,
+            "q_upg_cont_rem": q_upg_cont_rem,
+            "q_upg_pk7": q_upg_pk7,
+            "pt_rem": pt_rem,
+            "pt_pk7": pt_pk7,
+            "dt_rem": dt_rem,
+            "dt_cont_rem": dt_cont_rem,
+            "dt_pk7": pk_map.get("DT", 0),
+            "fam_rem": fam_rem,
+            "fam_pk7": fam_pk7,
+            "strategy_code": scode,
+            "strategy_label": slabel,
+            "evidence_note": snote,
+        })
+
+    # 4. 整理 Booking Curves 點位（按 stay_date, bk_date 排序）
+    booking_curves = []
+    for (st_iso, ort, bk_iso, meal), v in sorted(curve_grp.items()):
+        try:
+            lead_bk = (datetime.date.fromisoformat(st_iso) - datetime.date.fromisoformat(bk_iso)).days
+        except Exception:
+            lead_bk = 0
+        booking_curves.append({
+            "stay_date": st_iso,
+            "orig_rt": ort,
+            "bk_date": bk_iso,
+            "lead_at_bk": lead_bk,
+            "meal": meal,
+            "rn": v["rn"],
+            "avg_rate": int(round(v["rev"] / v["rn"])) if v["rn"] > 0 else 0,
+            "upgraded_rn": v["upg_rn"],
+        })
+
+    er_share = round(er_abs_rn / tot_upg_rn * 100.0, 1) if tot_upg_rn > 0 else 0.0
+    out_payload = {
+        "as_of": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "base_date": today.strftime("%Y-%m-%d"),
+        "source": "JinXu HT2000 + HT2000_Log.HTACL Read-Only SQL (Zero Upgrade Bias)",
+        "summary": {
+            "upg_window_label": "近30天已入住＋未來30天在手 (共60天)",
+            "total_upgraded_rn": tot_upg_rn,
+            "zero_cost_queen_upg_rn": zero_cost_rn,
+            "er_absorbed_rn": er_abs_rn,
+            "er_share_pct": er_share,
+            "cross_bed_upg_rn": cross_bed_rn,
+        },
+        "upgrade_matrix_60d": upg_matrix[:35],
+        "rt_velocity_30d": rt_velocity_30d,
+        "daily_yield_diagnostics": daily_diag,
+        "booking_curves": booking_curves,
+    }
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    with open(DYNAMIC_YIELD_PATH, "w", encoding="utf-8") as f:
+        json.dump(out_payload, f, ensure_ascii=False, indent=2)
+    logger.info(
+        f"[SUCCESS] 動態收益與原始買氣軌跡已更新 (60d升等={tot_upg_rn}晚, ER池={er_abs_rn}晚, 曲線點={len(booking_curves)}) -> {DYNAMIC_YIELD_PATH}"
+    )
+    return out_payload
+
+
 def run_pms_revenue_intel_sync():
-    """每日 05:00 全自動同步入口：通路淨利情報 + 90 天 STLY Pace + 促銷與含早差價健檢 + 12 房型剩餘庫存快照。"""
-    results = {"channel_intel": False, "stly_pace": False, "promo_bf_audit": False, "roomtype_inventory": False}
+    """每日 05:00 全自動同步入口：通路淨利 + 90天Pace + 12房型庫存 + 動態收益與升等軌跡(HTACL) + 促銷與含早差價健檢。"""
+    results = {
+        "channel_intel": False,
+        "stly_pace": False,
+        "roomtype_inventory": False,
+        "dynamic_yield": False,
+        "promo_bf_audit": False,
+    }
+    # 若現有 SiteMinder 快照尚未歸檔至 sm_history/，順手確保歷史歸檔初始化
+    try:
+        if os.path.exists(SM_SNAPSHOT_PATH):
+            from siteminder_cdp_sync import archive_siteminder_snapshot
+            with open(SM_SNAPSHOT_PATH, "r", encoding="utf-8") as sf:
+                archive_siteminder_snapshot(json.load(sf))
+    except Exception:
+        pass
+
     try:
         extract_pms_channel_intel()
         results["channel_intel"] = True
@@ -976,18 +1490,24 @@ def run_pms_revenue_intel_sync():
         logger.error(f"[FAIL] 金旭 STLY Pace 抽取失敗: {e}", exc_info=True)
 
     try:
-        extract_pms_promo_and_bf_audit()
-        results["promo_bf_audit"] = True
-    except Exception as e:
-        logger.error(f"[FAIL] 金旭促銷與含早差價健檢抽取失敗: {e}", exc_info=True)
-
-    try:
         import wallpaper_planner
         wallpaper_planner.refresh_pms_roomtype_inventory()
         results["roomtype_inventory"] = True
         logger.info("[SUCCESS] 金旭 12 房型每日剩餘庫存快照已同步更新。")
     except Exception as e:
         logger.error(f"[FAIL] 金旭 12 房型庫存快照刷新失敗: {e}", exc_info=True)
+
+    try:
+        extract_pms_dynamic_yield()
+        results["dynamic_yield"] = True
+    except Exception as e:
+        logger.error(f"[FAIL] 金旭動態收益與升等軌跡抽取失敗: {e}", exc_info=True)
+
+    try:
+        extract_pms_promo_and_bf_audit()
+        results["promo_bf_audit"] = True
+    except Exception as e:
+        logger.error(f"[FAIL] 金旭促銷與含早差價健檢抽取失敗: {e}", exc_info=True)
 
     try:
         import decision_engine

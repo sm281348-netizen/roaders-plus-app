@@ -27,6 +27,7 @@ SM_STATUS_PATH = os.path.join(BACKUP_DIR, "siteminder_sync_status.json")
 CHAN_INTEL_PATH = os.path.join(BACKUP_DIR, "pms_channel_intel.json")
 STLY_PACE_PATH = os.path.join(BACKUP_DIR, "pms_stly_pace.json")
 PROMO_BF_PATH = os.path.join(BACKUP_DIR, "pms_promo_bf_audit.json")
+DYN_YIELD_PATH = os.path.join(BACKUP_DIR, "pms_dynamic_yield.json")
 RT_INV_PATH = os.path.join(BACKUP_DIR, "wallpaper_roomtype_inventory.json")
 OCC_CSV_PATH = os.path.join(BACKUP_DIR, "station_occ_data.csv")
 LEDGER_PATH = os.path.join(BACKUP_DIR, "decision_ledger.json")
@@ -190,11 +191,17 @@ def build_daily_decision_bundle(
     pace = _load_json(STLY_PACE_PATH)
     chan = _load_json(CHAN_INTEL_PATH)
     pbf = _load_json(PROMO_BF_PATH)
+    dyn_yield = _load_json(DYN_YIELD_PATH)
     rt_inv = _load_json(RT_INV_PATH)
     ledger = _load_json(LEDGER_PATH, default={"records": []})
     occ_map = _load_occ_map()
 
     health = check_data_health(sm_snap, sm_stat, pace, chan, pbf, rt_inv, now_dt=now_dt)
+    dyn_sum = dyn_yield.get("summary", {})
+    health["dyn_as_of"] = dyn_yield.get("as_of", "未同步")
+    health["upg_60d_rn"] = int(dyn_sum.get("total_upgraded_rn", 0) or 0)
+    health["er_abs_rn"] = int(dyn_sum.get("er_absorbed_rn", 0) or 0)
+    health["er_share_pct"] = float(dyn_sum.get("er_share_pct", 0.0) or 0.0)
     base_date = health["base_date"]
     pace_daily = pace.get("daily", [])
     daily_rt = rt_inv.get("daily_avail", {})
@@ -646,59 +653,163 @@ def build_daily_decision_bundle(
             "is_locked": False,
         })
 
+    # 卡 2b：🔄 低階熱銷・預排升等導流建議（結合 HTACL 原始買氣 × 同床型 ER/E 連貫空房，避免誤砍高階價！）
+    diag_list = dyn_yield.get("daily_yield_diagnostics", [])
+    upg_cand = [
+        d for d in diag_list
+        if 2 <= int(d.get("lead_days", 99)) <= 21
+        and (
+            d.get("strategy_code") == "upgrade_capture"
+            or (
+                int(d.get("entry_rem", 99)) <= 4
+                and int(d.get("entry_pk7", 0)) >= 2
+                and int(d.get("q_upg_cont_rem", 0)) >= 3
+                and int(d.get("q_upg_pk7", 99)) <= 2
+            )
+        )
+    ]
+    if upg_cand:
+        u0 = upg_cand[0]
+        u_dates_str = "、".join(f"{x['date'][5:]}({x['dow']})" for x in upg_cand[:4])
+        df_upg_cand = pd.DataFrame([
+            {
+                "日期": f"{x['date']} ({x['dow']})",
+                "距入住": f"D+{x['lead_days']}",
+                "全館住房率%": f"{x['occ_pct']:.1f}%",
+                "S+SP+PD剩房": x["entry_rem"],
+                "大床7日原始買氣": f"{x['entry_pk7']:+d} 晚",
+                "ER專用池剩": x["er_rem"],
+                "ER+E+LDT連貫空房": x["q_upg_cont_rem"],
+                "高階7日原始買氣": f"{x['q_upg_pk7']:+d} 晚",
+                "PT雙床剩": x["pt_rem"],
+                "台北活動": events_map.get(x["date"], ""),
+            }
+            for x in upg_cand[:12]
+        ])
+        internal_cards.append({
+            "id": f"int_upgrade_flow_{base_date}",
+            "lane": "internal",
+            "severity": "info",
+            "badge": "🔄 升等導流穩價",
+            "title": f"主力大床熱銷・預排升等導流（{len(upg_cand)} 天免砍高階價）",
+            "summary": f"如 {u0['date'][5:]} S+SP+PD 剩 {u0['entry_rem']} 間(7日{u0['entry_pk7']:+d}晚)，ER+E 連貫空 {u0['q_upg_cont_rem']} 間可接應",
+            "detail_intro": (
+                f"依金旭 HTACL 還原無汙染原始買氣：近 60 天現場已透過免費升等消化 {health['upg_60d_rn']} 房晚（其中 ER 專用池吸收 {health['er_abs_rn']} 晚，佔 {health['er_share_pct']:.1f}%）。"
+                "以下日期『入門/主力大床快滿且買氣強、同床型高階(ER/E/LDT)連貫2晚以上有空房且無連住斷層』，適合先做預排升等騰出 SP/PD 續賣，不必急砍高階牌價："
+            ),
+            "metrics": [
+                ("建議升等導流日", f"{len(upg_cand)} 天"),
+                ("最近目標日", f"{u0['date'][5:]} ({u0['dow']})"),
+                ("60天實績升等", f"{health['upg_60d_rn']} 晚"),
+                ("ER池吸收佔比", f"{health['er_share_pct']:.1f}%"),
+            ],
+            "detail_df": df_upg_cand,
+            "actions": [
+                "櫃檯：針對上述日期已預訂 SP / PD 之連住或單晚訂單，優先預排免費升等至 ER / E（同為一大床、零額外房務拆洗成本，切忌將 PT 雙床轉單大床）。",
+                "與收益部協作：騰出 SP / PD 庫存後可維持低階高轉換入口收單，同時守住高階房 (DT/LDT/E) 價格錨點不倒掛。",
+            ],
+            "copy_text": (
+                f"【站前館 預排升等導流協作｜{base_date}】\n"
+                f"檢視未來分房型買氣與連貫庫存：{u_dates_str} 等 {len(upg_cand)} 天主力大床(S/SP/PD)僅剩 ≤4 間且近7日原始買氣強，"
+                f"同時 ER+E+LDT 連貫空房仍有 ≥3 間。現場可配合預排 SP/PD 升等至 ER/E 騰出低階續賣，建議上述日期高階房可先穩價免下調！"
+            ),
+            "is_locked": False,
+        })
+
     # ==========================================================================
-    # C. 右欄：📡 總部收益策略部對質（僅留鐵證，SiteMinder 過期自動上鎖！）
+    # C. 右欄：📡 總部收益策略部對質（動態收益視角：零跨日誤報，SiteMinder 過期自動上鎖！）
     # ==========================================================================
 
-    # 對質卡 1：🔴 鐵證級「晚訂／同日含早倒掛 & 嚴重折損」（gap >= 0，徹底排除中途漲價雜訊！）
+    # 對質卡 0：⚡ 臨期 48h 高階庫存滯銷預警（單靠低階升等已來不及去化，該直售清倉！）
+    lm_high = [d for d in diag_list if d.get("strategy_code") == "lastmin_high_clear"]
+    if lm_high:
+        lh0 = lm_high[0]
+        df_lh = pd.DataFrame([
+            {
+                "日期": f"{x['date']} ({x['dow']})",
+                "距入住": f"D+{x['lead_days']}",
+                "住房率%": f"{x['occ_pct']:.1f}%",
+                "全館剩房": x["rem_rn"],
+                "ER+E+LDT剩": x["q_upg_rem"],
+                "DT雙大床剩": x["dt_rem"],
+                "家庭三人剩": x["fam_rem"],
+                "S+SP+PD剩": x["entry_rem"],
+            }
+            for x in lm_high
+        ])
+        revenue_cards.append({
+            "id": f"rev_lastmin_high_{lh0['date']}",
+            "lane": "revenue",
+            "severity": "warning",
+            "badge": "⚡ 臨期高階清倉",
+            "title": f"臨期 48h 高階空房偏多（{len(lm_high)} 天單靠升等消化不完）",
+            "summary": f"{lh0['date'][5:]} 全館剩 {lh0['rem_rn']} 間（高階佔 {lh0['q_upg_rem'] + lh0['dt_rem'] + lh0['fam_rem']} 間），宜啟動高階臨期直售",
+            "detail_intro": "當距入住 ≤ 2 天且高階空房仍 ≥ 10 間時，單靠低階收單再免費升等已來不及在過夜前消化完畢（過夜殘值歸零），此時適合關閉已滿低階並直接調整高階臨期售價搶單：",
+            "metrics": [
+                ("臨期警戒天數", f"{len(lm_high)} 天"),
+                ("全館剩房", f"{lh0['rem_rn']} 間"),
+                ("高階待去化", f"{lh0['q_upg_rem'] + lh0['dt_rem'] + lh0['fam_rem']} 間"),
+            ],
+            "detail_df": df_lh,
+            "actions": [
+                "請與收益部確認上述臨期日是否已啟動高階房型（DT/E/LDT）最後 48 小時限時去化，避免重演臨期空房過夜。",
+            ],
+            "copy_text": (
+                f"【站前館 臨期48h高階去化確認｜{base_date}】\n"
+                f"收益部夥伴好，{lh0['date']} ({lh0['dow']}) 距入住僅 {lh0['lead_days']} 天，目前全館尚餘 {lh0['rem_rn']} 間且集中於高階房型"
+                f"（ER+E+LDT 剩 {lh0['q_upg_rem']}、DT 剩 {lh0['dt_rem']}、家庭剩 {lh0['fam_rem']}），單靠低階升等恐來不及消化，想確認是否評估做臨期高階限時去化？"
+            ),
+            "is_locked": False,
+        })
+
+    # 對質卡 1：🔴 嚴格「同日 4 小時內＋同連住級距＋同原始房型」含早異常（100% 排除跨日浮動調價假警報！）
     inv_all = pbf.get("bf_inversion_alerts", [])
-    hard_neg = [x for x in inv_all if int(x.get("diff_twd", 1)) <= 0 and int(x.get("bk_gap_days", -1)) >= 0]
-    hard_low = [x for x in inv_all if 0 < int(x.get("diff_twd", 0)) and int(x.get("per_pax_bf", 999)) < 200 and int(x.get("bk_gap_days", -1)) >= 0]
-    hard_combined = hard_neg + hard_low
-    if hard_combined:
+    strict_neg = [x for x in inv_all if x.get("is_strict_intraday") and int(x.get("diff_twd", 1)) <= 0]
+    strict_low = [x for x in inv_all if x.get("is_strict_intraday") and 0 < int(x.get("diff_twd", 0)) and int(x.get("per_pax_bf", 999)) < 180]
+    strict_combined = strict_neg + strict_low
+    if strict_combined:
         df_hard = pd.DataFrame([
             {
-                "判定": "🔴 鐵證倒掛" if x["diff_twd"] <= 0 else "🟠 鐵證重折(<$200/人)",
+                "判定": "🔴 同日4h內含早≤不含早" if x["diff_twd"] <= 0 else "🟠 同日4h內早餐<$180/人",
                 "入住日": x["stay_date"],
-                "房型": x["rt"],
+                "原始房型": x["rt"],
                 "通路": x["sub_label"],
-                "含早實收": f"${x['bf_rate']:,}",
-                "含早訂房日": x["bf_bk_date"],
+                "含早實收": f"${x['bf_rate']:,} ({x.get('bf_los',1)}晚)",
+                "不含早實收": f"${x['ro_rate']:,} ({x.get('ro_los',1)}晚)",
+                "同日下訂時差": f"{x.get('bk_gap_hours', 0):.1f}h ({x['bf_bk_date']})",
                 "含早OTA單號": x["bf_ota_ref"],
-                "不含早實收": f"${x['ro_rate']:,}",
-                "不含早訂房日": x["ro_bk_date"],
+                "不含早OTA單號": x["ro_ota_ref"],
                 "兩單差價": f"{x['diff_twd']:+,}",
                 "實收每人早餐": f"${x['per_pax_bf']:,}/人",
             }
-            for x in hard_combined[:30]
+            for x in strict_combined[:20]
         ])
-        top1 = hard_combined[0]
-        line_items = []
-        for idx, x in enumerate(hard_combined[:4], 1):
-            line_items.append(
-                f"{idx}. {x['stay_date']} {x['rt']} ({x['sub_label']})：含早單 #{x['bf_ota_ref']} ({x['bf_bk_date']}訂, ${x['bf_rate']:,}) "
-                f"vs 不含早單 #{x['ro_ota_ref']} ({x['ro_bk_date']}訂, ${x['ro_rate']:,})，晚訂/同日含早僅差 {x['diff_twd']:+,} 元（每人 ${x['per_pax_bf']}）。"
-            )
+        top1 = strict_combined[0]
+        line_items = [
+            f"{idx}. {x['stay_date']} {x['rt']} ({x['sub_label']})：同於 {x['bf_bk_date']} 相隔 {x.get('bk_gap_hours',0):.1f}h 下訂，"
+            f"含早 #{x['bf_ota_ref']} (${x['bf_rate']:,}) vs 不含早 #{x['ro_ota_ref']} (${x['ro_rate']:,}) 差 {x['diff_twd']:+,} 元。"
+            for idx, x in enumerate(strict_combined[:4], 1)
+        ]
         revenue_cards.append({
-            "id": f"rev_bf_hard_{top1['stay_date']}_{top1['bf_ota_ref']}",
+            "id": f"rev_bf_strict_{top1['stay_date']}_{top1['bf_ota_ref']}",
             "lane": "revenue",
-            "severity": "critical" if hard_neg else "warning",
-            "badge": "🔴 鐵證抓包",
-            "title": f"含早倒掛/重折鐵證（{len(hard_neg)} 倒掛＋{len(hard_low)} 重折）",
-            "summary": f"例：{top1['stay_date'][5:]} {top1['rt']} {top1['channel']} 晚訂含早反便宜 ${abs(top1['diff_twd']):,}" if top1["diff_twd"] <= 0 else f"例：{top1['stay_date'][5:]} {top1['rt']} 每人早餐僅實收 ${top1['per_pax_bf']}",
-            "detail_intro": "系統已自動剔除「含早較早下訂」可能受中途漲價干擾的樣本；以下全部為「同日下訂」或「含早較晚訂卻反而更便宜／每人不足 $200」的無爭議鐵證：",
+            "severity": "critical" if strict_neg else "warning",
+            "badge": "🔴 同刻含早異常" if strict_neg else "🟠 同刻早餐偏低",
+            "title": f"同日4h內含早價差異常（{len(strict_neg)} 倒掛＋{len(strict_low)} 偏低）",
+            "summary": f"已剔除跨日浮動調價｜{top1['stay_date'][5:]} {top1['rt']} 同日4h內差 {top1['diff_twd']:+,} 元（需確認是否VIP折扣差）",
+            "detail_intro": "系統已 100% 剔除『跨日浮動漲跌價』、『盤中 >4h 改價』、『現場免費升等』與『不同連住天數折扣』；僅保留同一天 4 小時內同連住級距之樣本（請先排除 Genius/VIP 會員等級差異後再核對促銷）：",
             "metrics": [
-                ("鐵證含早≤不含早", f"{len(hard_neg)} 組"),
-                ("鐵證早餐<$200/人", f"{len(hard_low)} 組"),
-                ("設定基準", "$400 / 人"),
+                ("同日4h內倒掛", f"{len(strict_neg)} 組"),
+                ("同日4h內<$180/人", f"{len(strict_low)} 組"),
+                ("跨日浮動已過濾", f"{len(inv_all) - len(strict_combined)} 組"),
             ],
             "detail_df": df_hard,
             "actions": [
-                "直接複製下方單號請總部收益部排查該通路後台是否對「含早方案」重複勾選了疊加促銷。",
+                "請先在 OTA 後台查看該兩筆單是否因『一方為 Genius L3 / Agoda VIP 手機價、另一方為一般客』所致；若會員等級相同卻倒掛，即為含早方案誤疊促銷。",
             ],
             "copy_text": (
-                f"【站前館 含早方案促銷核對｜{base_date}】\n"
-                "收益部夥伴好，我們已排除調價時間差，核對出以下「同日或較晚下訂、含早卻比不含早便宜／嚴重低於 $400/人」的實單，麻煩協助確認 OTA 後台含早方案是否誤掛疊加促銷：\n"
+                f"【站前館 同日同時段含早方案核對｜{base_date}】\n"
+                "收益部夥伴好，我們已排除跨日浮動調價與不同連住天數，發現以下同日 4 小時內下訂但含早差價異常之訂單，想請協助確認是否為 VIP 會員等級差或含早疊加促銷：\n"
                 + "\n".join(line_items)
             ),
             "is_locked": False,
