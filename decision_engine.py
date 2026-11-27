@@ -289,12 +289,12 @@ def build_daily_decision_bundle(
         "DTP": ["DF"],
         "LDT": ["DTP", "F", "DF"],
         "DT": ["LDT", "DTP", "F"],
-        "E": ["DT", "LDT"],
-        "ER": ["E", "DT"],
-        "PD": ["E", "DT"],
-        "PT": ["DT", "E"],
-        "SP": ["PD", "PT", "DT"],
-        "S": ["SP", "PD", "PT"],
+        "E": ["LDT", "DT"],
+        "ER": ["E", "LDT", "DT"],
+        "PD": ["ER", "E", "LDT", "DT"],
+        "PT": ["DT", "DTP"],
+        "SP": ["PD", "ER", "E", "DT"],
+        "S": ["SP", "PD", "ER"],
         "SD": ["S", "SP", "PD"],
     }
     top_tier_rts = ("DF", "F", "DTP")
@@ -348,8 +348,10 @@ def build_daily_decision_bundle(
                     rescue = f"優先盤查3人單能否協商轉DTP(2601/2701雙床)或升DF（{buf_txt}）"
                 elif rt_code == "DTP":
                     rescue = f"切忌直接換F(變小易客訴)！優先看能否升DF或聯繫確認（{buf_txt}）"
+                elif ooo_v > 0:
+                    rescue = f"先核對 OOO({ooo_v}間) 能否改房號釋放，或預排上位房升等平房（{buf_txt}）"
                 else:
-                    rescue = f"核對OOO能否釋放，或預排上位房升等平房（{buf_txt}）"
+                    rescue = f"優先預排同床型上位房免費升等平房（{buf_txt}）"
 
                 neg_rows.append({
                     "_lead": lead_d,
@@ -670,6 +672,10 @@ def build_daily_decision_bundle(
     ]
     if upg_cand:
         u0 = upg_cand[0]
+        u0_rts = daily_rt.get(u0["date"], {})
+        u0_pool_str = "/".join(
+            k for k in ("ER", "E", "LDT") if int(u0_rts.get(k, {}).get("rem", 0)) > 0
+        ) or "高階大床"
         u_dates_str = "、".join(f"{x['date'][5:]}({x['dow']})" for x in upg_cand[:4])
         df_upg_cand = pd.DataFrame([
             {
@@ -678,10 +684,11 @@ def build_daily_decision_bundle(
                 "全館住房率%": f"{x['occ_pct']:.1f}%",
                 "S+SP+PD剩房": x["entry_rem"],
                 "大床7日原始買氣": f"{x['entry_pk7']:+d} 晚",
-                "ER專用池剩": x["er_rem"],
-                "ER+E+LDT連貫空房": x["q_upg_cont_rem"],
+                "ER剩": int(daily_rt.get(x["date"], {}).get("ER", {}).get("rem", 0)),
+                "E剩": int(daily_rt.get(x["date"], {}).get("E", {}).get("rem", 0)),
+                "LDT剩": int(daily_rt.get(x["date"], {}).get("LDT", {}).get("rem", 0)),
+                "連貫可升等空房": x["q_upg_cont_rem"],
                 "高階7日原始買氣": f"{x['q_upg_pk7']:+d} 晚",
-                "PT雙床剩": x["pt_rem"],
                 "台北活動": events_map.get(x["date"], ""),
             }
             for x in upg_cand[:12]
@@ -692,7 +699,7 @@ def build_daily_decision_bundle(
             "severity": "info",
             "badge": "🔄 升等導流穩價",
             "title": f"主力大床熱銷・預排升等導流（{len(upg_cand)} 天免砍高階價）",
-            "summary": f"如 {u0['date'][5:]} S+SP+PD 剩 {u0['entry_rem']} 間(7日{u0['entry_pk7']:+d}晚)，ER+E 連貫空 {u0['q_upg_cont_rem']} 間可接應",
+            "summary": f"如 {u0['date'][5:]} S+SP+PD 剩 {u0['entry_rem']} 間(7日{u0['entry_pk7']:+d}晚)，{u0_pool_str} 連貫空 {u0['q_upg_cont_rem']} 間可接應",
             "detail_intro": (
                 f"依金旭 HTACL 還原無汙染原始買氣：近 60 天現場已透過免費升等消化 {health['upg_60d_rn']} 房晚（其中 ER 專用池吸收 {health['er_abs_rn']} 晚，佔 {health['er_share_pct']:.1f}%）。"
                 "以下日期『入門/主力大床快滿且買氣強、同床型高階(ER/E/LDT)連貫2晚以上有空房且無連住斷層』，適合先做預排升等騰出 SP/PD 續賣，不必急砍高階牌價："
@@ -860,19 +867,29 @@ def build_daily_decision_bundle(
             "is_locked": False,
         })
 
-    # 對質卡 3：⚠️ 買氣大幅領先去年同期 (+10晚以上) 但 ADR 落後去年 (條件邊界建議，不亂編漲價獲利)
-    under_days = [r for r in pace_daily[1:32] if int(r.get("yoy_dow_rn", 0)) >= 10 and int(r.get("yoy_dow_adr", 0)) <= -400]
-    under_days.sort(key=lambda x: x["yoy_dow_adr"])
+    # 對質卡 3：⚠️ 買氣大幅領先去年同期 (+10晚以上) 但 ADR 落後去年（固定日曆節慶自動改用同月同日 -365d 避免跨年錯位！）
+    fixed_holidays = {"12-24", "12-25", "12-29", "12-30", "12-31", "01-01", "01-02"}
+    under_days = []
+    for r in pace_daily[1:35]:
+        mmdd = r["date"][5:]
+        is_hol = mmdd in fixed_holidays
+        yrn = int(r.get("yoy_date_rn" if is_hol else "yoy_dow_rn", 0))
+        yadr = int(r.get("yoy_date_adr" if is_hol else "yoy_dow_adr", 0))
+        sadr = int(r.get("stly_date_adr" if is_hol else "stly_dow_adr", 0))
+        if yrn >= 10 and yadr <= -400 and sadr > 0:
+            under_days.append({**r, "_yrn": yrn, "_yadr": yadr, "_sadr": sadr, "_mode": "同日期" if is_hol else "同星期"})
+    under_days.sort(key=lambda x: x["_yadr"])
     if under_days:
         df_under = pd.DataFrame([
             {
                 "日期": f"{r['date']} ({r['dow']})",
+                "比對基準": r["_mode"],
                 "住房率%": f"{r['occ_pct']:.1f}%",
                 "剩餘空房": int(r["rem_rn"]),
-                "進度領先去年": f"+{r['yoy_dow_rn']} 晚",
+                "進度領先去年": f"+{r['_yrn']} 晚",
                 "今年OTB ADR": f"${r['otb_adr']:,}",
-                "去年同期ADR": f"${r['stly_dow_adr']:,}",
-                "均價落差": f"{r['yoy_dow_adr']:+,}",
+                "去年同期ADR": f"${r['_sadr']:,}",
+                "均價落差": f"{r['_yadr']:+,}",
                 "台北活動": events_map.get(r["date"], ""),
             }
             for r in under_days[:12]
@@ -885,12 +902,12 @@ def build_daily_decision_bundle(
             "severity": "warning",
             "badge": "⚠️ 賣太便宜",
             "title": f"{len(under_days)} 天買氣爆棚但均價低於去年",
-            "summary": f"如 {top_u['date'][5:]} 領先 +{top_u['yoy_dow_rn']} 晚，ADR 卻落後 ${abs(top_u['yoy_dow_adr']):,}",
-            "detail_intro": "以下日期在手房晚已大幅領先去年同期（同星期 STLY）至少 +10 晚，但成交 ADR 反而低於去年 $400 以上。因目前尚無北車競品自動抓價，建議先核對同業價後收斂促銷：",
+            "summary": f"如 {top_u['date'][5:]} 領先 +{top_u['_yrn']} 晚，ADR 卻落後 ${abs(top_u['_yadr']):,}",
+            "detail_intro": "以下日期在手房晚已大幅領先去年同期（平假日採同星期 -364d、耶誕跨年採同月同日 -365d 防錯位）至少 +10 晚，但成交 ADR 卻低於去年 $400 以上：",
             "metrics": [
                 ("異常天數", f"{len(under_days)} 天"),
-                ("最大均價落差", f"{top_u['yoy_dow_adr']:+,} 元"),
-                ("最大領先房晚", f"+{max(r['yoy_dow_rn'] for r in under_days)} 晚"),
+                ("最大均價落差", f"{top_u['_yadr']:+,} 元"),
+                ("最大領先房晚", f"+{max(r['_yrn'] for r in under_days)} 晚"),
             ],
             "detail_df": df_under,
             "actions": [
@@ -899,8 +916,8 @@ def build_daily_decision_bundle(
             ],
             "copy_text": (
                 f"【站前館 未來30天 Pace 領先但均價偏低提醒｜{base_date}】\n"
-                f"收益部夥伴好，核對未來 30 天金旭在手與去年同期進度，發現 {top_u_dates} 等共 {len(under_days)} 天房晚大幅領先去年 +10~+39 晚，"
-                f"但成交 ADR 反而比去年低 $400~$1,428（如 {top_u['date'][5:]} 領先 +{top_u['yoy_dow_rn']} 晚但均價 {top_u['yoy_dow_adr']:+,}）。"
+                f"收益部夥伴好，核對未來金旭在手與去年同期進度（跨年已校正同月同日），發現 {top_u_dates} 等共 {len(under_days)} 天房晚大幅領先去年 +10~+{max(r['_yrn'] for r in under_days)} 晚，"
+                f"但成交 ADR 反而偏低（如 {top_u['date'][5:]} 領先 +{top_u['_yrn']} 晚但均價 {top_u['_yadr']:+,}）。"
                 "建議檢視是否促銷放量過多，並評估收斂剩餘空房折扣幅度。"
             ),
             "is_locked": False,
@@ -963,7 +980,10 @@ def build_daily_decision_bundle(
             })
 
         if sm_alerts_df is not None and not sm_alerts_df.empty:
-            severe_sm = sm_alerts_df[sm_alerts_df["嚴重度"].isin(["🔴 嚴重", "🟠 警告"])]
+            severe_sm = sm_alerts_df[
+                sm_alerts_df["嚴重度"].isin(["🔴 嚴重", "🟠 警告"])
+                & (sm_alerts_df["異常類型"] != "🔥 買氣強卻賣便宜")
+            ]
             if not severe_sm.empty:
                 revenue_cards.insert(0, {
                     "id": f"rev_sm_live_{base_date}",

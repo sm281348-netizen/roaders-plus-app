@@ -49,17 +49,20 @@ RT_NAMES = {
     "S": "標準雙人房 S (無含早)",
 }
 
+# 分床型產品線階梯（區分「一大床線」與「雙床/多人線」，避免將雙小床 PT 與單大床 E 跨床型誤判為倒掛）
 TIER_PAIRS = [
+    # 多人／雙床線 (Multi-pax / 2 Beds)
     ("DF", "F"),
     ("F", "DTP"),
-    ("DTP", "LDT"),
-    ("LDT", "DT"),
-    ("DT", "E"),
+    ("DTP", "DT"),
+    ("DT", "PT"),
+    # 一大床線 (1 Queen/King Bed)
+    ("LDT", "E"),
     ("E", "PD"),
-    ("E", "PT"),
     ("PD", "SP"),
-    ("PT", "SP"),
     ("SP", "S"),
+    # 頂規三人 vs 奢華雙人
+    ("DTP", "LDT"),
 ]
 
 
@@ -277,7 +280,9 @@ def run_pricing_audit_rules(
         base_d = datetime.date.today()
 
     dow_zh = ["一", "二", "三", "四", "五", "六", "日"]
-    dates_sorted = sorted(inv_map.keys())
+    fixed_holidays = {"12-24", "12-25", "12-29", "12-30", "12-31", "01-01", "01-02"}
+    # 嚴格過濾掉已過去日期 (< base_date_str)，徹底杜絕歷史日查無未來 Pace 而補 0% 誤判！
+    dates_sorted = [d for d in sorted(inv_map.keys()) if d >= base_date_str]
     alerts = []
     day_verdict = {}  # date -> (vs_dow_str, plain_chinese_reason)
 
@@ -315,9 +320,11 @@ def run_pricing_audit_rules(
             wd, dow_lbl, lead_d = 0, "", 99
 
         pace = pace_by_date.get(d_str, {})
-        yoy_rn = pace.get("yoy_dow_rn" if stly_mode == "dow" else "yoy_date_rn", 0)
-        yoy_adr = pace.get("yoy_dow_adr" if stly_mode == "dow" else "yoy_date_adr", 0)
-        stly_adr = pace.get("stly_dow_adr" if stly_mode == "dow" else "stly_date_adr", 0)
+        # 固定日曆節慶 (耶誕/跨年) 強制對齊同月同日 (-365d)，避免把今年 12/30 錯比去年跨年夜 12/31！
+        eff_mode = "date" if d_str[5:] in fixed_holidays else stly_mode
+        yoy_rn = pace.get("yoy_dow_rn" if eff_mode == "dow" else "yoy_date_rn", 0)
+        yoy_adr = pace.get("yoy_dow_adr" if eff_mode == "dow" else "yoy_date_adr", 0)
+        stly_adr = pace.get("stly_dow_adr" if eff_mode == "dow" else "stly_date_adr", 0)
         otb_adr = pace.get("otb_adr", 0)
         occ_pct = pace.get("occ_pct", 0.0)
         pms_rem_tot = pace.get("rem_rn", None)
@@ -364,13 +371,14 @@ def run_pricing_audit_rules(
                         "台北活動": ev_name,
                     })
                 else:
-                    # a_lo > 0：低階仍有庫存卻賣得比高階貴 → 真實上架倒掛！
+                    # a_lo > 0：低階仍有庫存卻賣得比高階貴
                     day_inv_cnt += 1
                     sev = "🔴 嚴重" if a_hi > 0 else "🟠 警告"
+                    cat_lbl = "📉 雙有庫存掛牌倒掛" if a_hi > 0 else "📉 低階高於已滿高階"
                     avail_note = f"雙方皆有庫存（{lo}剩{a_lo}、{hi}剩{a_hi}），旅客搜尋直接看到小房比大房貴，流失高階溢價與升等主導權！" if a_hi > 0 else f"低階 {lo} 仍有 {a_lo} 間在售但高於已滿之 {hi}。"
                     alerts.append({
                         "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": sev,
-                        "異常類型": "📉 雙有庫存掛牌倒掛", "涉及房型": f"{lo} > {hi}",
+                        "異常類型": cat_lbl, "涉及房型": f"{lo} > {hi}",
                         "掛牌價/數據摘要": f"{lo} ${r_lo:,}(剩{a_lo}) vs {hi} ${r_hi:,}(剩{a_hi})",
                         "說明與收益部提問建議": f"低階 {lo} 高於高階 {hi} +{diff:,} 元。{avail_note}",
                         "台北活動": ev_name,
@@ -431,8 +439,8 @@ def run_pricing_audit_rules(
                 "台北活動": ev_name,
             })
 
-        # 規則 6：Fat-Finger 暴跌防呆
-        if vs_dow_pct <= -fat_finger_drop_pct and pd_rate > 0:
+        # 規則 6：Fat-Finger 暴跌防呆（須同時低於絕對地板價 <$3,200，避免把連假收尾 $7,422 誤判成少打一個零）
+        if vs_dow_pct <= -fat_finger_drop_pct and 0 < pd_rate < 3200:
             alerts.append({
                 "日期": f"{d_str} ({dow_lbl})", "date": d_str, "嚴重度": "🔴 嚴重",
                 "異常類型": "⚡ 疑誤輸入暴跌", "涉及房型": "PD",
@@ -716,22 +724,42 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     bf_rt_list = promo_bf.get("bf_vs_ro_by_rt", [])
     avg_bf_pax = int(round(np.mean([r["actual_per_pax"] for r in bf_rt_list if r.get("actual_per_pax", 0) > 0]))) if bf_rt_list else 0
 
-    # 4 欄 Executive KPI Cards
+    # 預先過濾有效未來掛牌日期（>= base_date），徹底排除過去歷史日
+    inv_map = sm_snap.get("inventory", {})
+    fut_inv_dates = [d for d in sorted(inv_map.keys()) if d >= dh["base_date"]]
+    n_fut_inv_days = len(fut_inv_dates)
+
+    # 4 欄 Executive KPI Cards（與頂部時效閘門完全同步，零精神分裂！）
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(
-            f"""
-<div class="sm-kpi" style="border-top: 4px solid #f97316;">
-  <div class="sm-kpi-title">🚨 未來 {n_inv_days} 天定價異常檢出</div>
-  <div class="sm-kpi-val">{len(df_alerts)} 項</div>
+        if dh["sm_stale"]:
+            st.markdown(
+                f"""
+<div class="sm-kpi" style="border-top: 4px solid #94a3b8;">
+  <div class="sm-kpi-title">🔒 掛牌價稽核（快照已過期 {dh['sm_age_h']/24:.1f} 天）</div>
+  <div class="sm-kpi-val" style="color:#64748b;">待同步解鎖</div>
   <div class="sm-kpi-sub">
-    🔴 嚴重倒掛/暴跌：<b>{sev_red}</b> 項｜🟠 警告：<b>{sev_org}</b> 項<br>
-    可直接匯出對質清單交給收益部確認
+    快照時間：<b>{sm_asof}</b><br>
+    金旭庫存與買氣判讀仍 100% 即時運作中
   </div>
 </div>
 """,
-            unsafe_allow_html=True,
-        )
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"""
+<div class="sm-kpi" style="border-top: 4px solid #f97316;">
+  <div class="sm-kpi-title">🚨 未來 {n_fut_inv_days} 天定價檢核結果</div>
+  <div class="sm-kpi-val">{sev_red + sev_org} 項待確認</div>
+  <div class="sm-kpi-sub">
+    🔴 嚴重倒掛：<b>{sev_red}</b> 項｜🟠 警告：<b>{sev_org}</b> 項<br>
+    （另含 {max(0, len(df_alerts) - sev_red - sev_org)} 項潛伏/連住提醒）
+  </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
     with k2:
         st.markdown(
             f"""
@@ -777,26 +805,53 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
 
     st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
-    # 預先整理 42 天定價合理性矩陣（簡潔單一真實掛牌價，不加複雜切換！）
-    inv_map = sm_snap.get("inventory", {})
+    # 預先整理未來有效天數定價合理性矩陣（僅納 >= base_date，對齊 PD 自有住房率與同星期常態基準）
     pms_daily_rt = rt_inv.get("daily_avail", {})
     pace_by_date = {r["date"]: r for r in pace_daily}
     dow_zh = ["一", "二", "三", "四", "五", "六", "日"]
-    rate_rows = []
-    for d_str in sorted(inv_map.keys()):
+
+    # 常態同星期 PD 掛牌中位數基準線（排除耶誕跨年 12/23~01/02）
+    dow_pd_bucket = {i: [] for i in range(7)}
+    for d_str in fut_inv_dates:
         try:
-            wd = dow_zh[datetime.date.fromisoformat(d_str).weekday()]
+            wd_i = datetime.date.fromisoformat(d_str).weekday()
         except Exception:
-            wd = ""
+            continue
+        pr_v = int(inv_map[d_str].get("rooms", {}).get("PD", {}).get("r", 0))
+        if pr_v > 0 and not ("12-23" <= d_str[5:] <= "12-31" or "01-01" <= d_str[5:] <= "01-02"):
+            dow_pd_bucket[wd_i].append(pr_v)
+    dow_pd_baseline = {w: int(round(np.median(v))) if v else 5200 for w, v in dow_pd_bucket.items()}
+
+    rate_rows = []
+    pd_occ_series = []
+    pd_rate_series = []
+    pd_base_series = []
+    for d_str in fut_inv_dates:
+        try:
+            wd_idx = datetime.date.fromisoformat(d_str).weekday()
+            wd = dow_zh[wd_idx]
+        except Exception:
+            wd_idx, wd = 0, ""
         d_obj = inv_map[d_str]
         rooms = d_obj.get("rooms", {})
         pc = pace_by_date.get(d_str, {})
         vs_str, verdict_str = day_verdict.get(d_str, ("—", ""))
+
+        # 計算 PD 房型自有金旭即時住房率（與 PD 掛牌價 100% 同口徑對齊！）
+        pd_rt_info = pms_daily_rt.get(d_str, {}).get("PD", {})
+        pd_cap = max(1, int(pd_rt_info.get("tot", 22)) - int(pd_rt_info.get("ooo", 0)))
+        pd_sold = int(pd_rt_info.get("sold", 0))
+        pd_occ = round(min(105.0, pd_sold / pd_cap * 100.0), 1)
+        pd_occ_series.append(pd_occ)
+        pd_rate_series.append(int(rooms.get("PD", {}).get("r", 0)))
+        pd_base_series.append(dow_pd_baseline.get(wd_idx, 5200))
+
         row_dict = {
             "日期": f"{d_str} ({wd})",
             "定價合理性判讀（為何高/低）": verdict_str,
             "較平常同週": vs_str,
             "住房率%": pc.get("occ_pct", 0.0),
+            "PD自有住房率%": pd_occ,
             "金旭剩房": pc.get("rem_rn", 0),
             "台北活動": events_map.get(d_str, ""),
         }
@@ -824,6 +879,8 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
     # ------------------------------------------------------------------
     with tab1:
         st.subheader("🚨 收益策略部定價疏漏自動掃描清單")
+        if dh["sm_stale"]:
+            st.warning(f"⚠️ 注意：目前 SiteMinder 掛牌快照停在 `{sm_asof}`（已逾 {dh['sm_age_h']:.0f} 小時），下方掛牌類項目僅供歷史參考，請同步最新快照後再用於對質。")
         if df_alerts.empty:
             st.success("✅ 目前掃描區間內未發現定價異常！")
         else:
@@ -868,21 +925,22 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                 st.code("\n".join(lines), language="text")
 
     # ------------------------------------------------------------------
-    # TAB 2: 42天定價合理性（為何高／為何低）— 乾淨直白，無複雜切換
+    # TAB 2: 42天定價合理性（為何高／為何低）— 乾淨直白，零過去日汙染
     # ------------------------------------------------------------------
     with tab2:
-        st.subheader(f"📅 未來 {n_inv_days} 天掛牌價合理性總表（標準房價不含早）")
+        st.subheader(f"📅 未來 {n_fut_inv_days} 天掛牌價合理性總表（標準房價不含早）")
+        if dh["sm_stale"]:
+            st.warning(f"⚠️ SiteMinder 掛牌價停在 `{sm_asof}`（過期 {dh['sm_age_h']/24:.1f} 天）；下方已自動剔除過去日期，住房率與剩房為金旭最新實況。")
         st.caption(
-            "直接呈現收益部於 SiteMinder 放出的標準牌告價與庫存 `$掛牌價 (OTA配額)`，並在最左側自動比對「同星期均價、金旭住房率、剩房數與台北活動」，一眼看懂這天為什麼高、為什麼低、合不合理。"
-            "（紅底＝房價倒掛；黃底＝跨階同價且雙雙有房）"
+            "直接呈現收益部於 SiteMinder 放出的標準牌告價與庫存 `$掛牌價 (OTA配額)`，並在最左側自動比對「同星期常態基準、金旭住房率、PD自有住房率與台北活動」。"
+            "（紅底＝雙有庫存同床型倒掛；淺藍底＝低階已滿・高階降價清倉；黃底＝同床型跨階同價）"
         )
-        if not inv_map:
-            st.info("尚未載入 SiteMinder 掛牌價快照。")
+        if df_rates_export.empty:
+            st.info("目前無未來有效 SiteMinder 掛牌價快照，下方自動切換呈現「金旭未來 35 天在手成交 ADR vs 全館住房率」永不斷線檢視。")
         else:
             def _style_rate_matrix(df_in):
                 styles = pd.DataFrame("", index=df_in.index, columns=df_in.columns)
-                dates_list = sorted(inv_map.keys())
-                for idx, d_str in enumerate(dates_list):
+                for idx, d_str in enumerate(fut_inv_dates):
                     if idx >= len(df_in):
                         break
                     rooms = inv_map[d_str].get("rooms", {})
@@ -891,43 +949,91 @@ def render_siteminder_audit(taipei_events_df=None, targets_df=None):
                             rh, ah = int(rooms[hi].get("r", 0)), int(rooms[hi].get("a", 0))
                             rl, al = int(rooms[lo].get("r", 0)), int(rooms[lo].get("a", 0))
                             if rl > rh > 0:
-                                if not (allow_nye_101 and d_str == "2026-12-31" and hi == "DT" and lo == "E"):
-                                    if al > 0:
-                                        styles.at[idx, lo] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
-                                        styles.at[idx, hi] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
-                                    else:
-                                        # 低階已完售(al=0)、高階降價清倉 → 柔和灰藍提示，不標刺眼紅底
-                                        styles.at[idx, hi] = "background-color: #e0f2fe; color: #0369a1; font-weight: 600;"
+                                if al > 0:
+                                    styles.at[idx, lo] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                                    styles.at[idx, hi] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                                else:
+                                    styles.at[idx, hi] = "background-color: #e0f2fe; color: #0369a1; font-weight: 600;"
                             elif rl == rh > 0 and ah > 0 and al > 0:
                                 styles.at[idx, lo] = "background-color: #fef3c7; color: #92400e; font-weight: 700;"
                                 styles.at[idx, hi] = "background-color: #fef3c7; color: #92400e; font-weight: 700;"
                 return styles
 
             st.dataframe(
-                df_rates_export.style.apply(_style_rate_matrix, axis=None).format({"住房率%": "{:.1f}%"}),
+                df_rates_export.style.apply(_style_rate_matrix, axis=None).format({
+                    "住房率%": "{:.1f}%",
+                    "PD自有住房率%": "{:.1f}%",
+                }),
                 use_container_width=True, hide_index=True, height=540,
             )
 
-            # 一張圖看懂「掛牌價高低 vs 住房率是否同步」
-            st.markdown("#### 📊 掛牌價高低 vs 金旭住房率同步檢視（價高但量低／量高但價低一眼現形）")
-            pd_series = [inv_map[d].get("rooms", {}).get("PD", {}).get("r", 0) for d in sorted(inv_map.keys())]
+        # 修復版圖表：過濾過去日、對齊 PD 自有住房率、加上同星期常態基準虛線、修正圖層順序與整數刻度（若 SM 過期則自動切換金旭即時 ADR 永不斷線！）
+        if not df_rates_export.empty and not dh["sm_stale"]:
+            st.markdown("#### 📊 尊爵雙人 PD 掛牌價 vs PD 自有住房率 ＆ 同星期常態基準（同口徑對齊）")
+            st.caption("💡 橘點高於『灰色同星期基準虛線』代表拉價、低於虛線代表讓價；背景藍柱為金旭 PD 自有住房率（已排除跨房型干擾與歷史過去日）。")
             fig_sync = go.Figure()
+            # 背景層 (yaxis)：PD 自有住房率藍柱（置於底層，絕不遮蓋橘線變灰！）
             fig_sync.add_trace(go.Bar(
-                x=df_rates_export["日期"], y=df_rates_export["住房率%"],
-                name="金旭住房率 (%)", marker_color="#93c5fd", opacity=0.75, yaxis="y2",
+                x=df_rates_export["日期"],
+                y=pd_occ_series,
+                name="金旭 PD 自有住房率 (%)",
+                marker_color="rgba(147, 197, 253, 0.55)",
+                yaxis="y",
+                customdata=df_rates_export["住房率%"],
+                hovertemplate="PD 自有住房率: %{y:.1f}% (全館 %{customdata:.1f}%)<extra></extra>",
             ))
+            # 前景層 1 (yaxis2)：同星期常態基準虛線（解決平假日 2 倍價差視覺誤導！）
             fig_sync.add_trace(go.Scatter(
-                x=df_rates_export["日期"], y=pd_series,
-                name="尊爵雙人 PD 掛牌價 (TWD)", mode="lines+markers",
+                x=df_rates_export["日期"],
+                y=pd_base_series,
+                name="PD 同星期常態基準價",
+                mode="lines",
+                line=dict(color="#64748b", width=1.8, dash="dot"),
+                yaxis="y2",
+            ))
+            # 前景層 2 (yaxis2)：PD 最新掛牌價鮮橘實線（最上層清晰呈現！）
+            fig_sync.add_trace(go.Scatter(
+                x=df_rates_export["日期"],
+                y=pd_rate_series,
+                name="尊爵雙人 PD 掛牌價 (TWD)",
+                mode="lines+markers",
                 line=dict(color="#f97316", width=3),
+                marker=dict(size=7, color="#ea580c"),
+                yaxis="y2",
             ))
             fig_sync.update_layout(
-                height=340, margin=dict(l=20, r=20, t=20, b=40),
-                legend=dict(orientation="h", y=1.12), hovermode="x unified",
-                yaxis=dict(title="PD 掛牌價 (TWD)"),
-                yaxis2=dict(title="住房率 (%)", overlaying="y", side="right", range=[0, 110]),
+                height=360,
+                margin=dict(l=20, r=20, t=20, b=40),
+                legend=dict(orientation="h", y=1.13),
+                hovermode="x unified",
+                yaxis=dict(title="PD 自有住房率 (%)", side="right", range=[0, 108], dtick=25, showgrid=False),
+                yaxis2=dict(title="PD 掛牌價 (TWD)", overlaying="y", side="left", rangemode="tozero"),
             )
             st.plotly_chart(fig_sync, use_container_width=True)
+        elif pace_daily:
+            st.markdown("#### 📊 金旭未來 35 天即時在手 ADR vs 全館住房率（永不斷線自動視角）")
+            df_fb_chart = pd.DataFrame(pace_daily[:35])
+            df_fb_chart["日期標籤"] = df_fb_chart["date"] + " (" + df_fb_chart["dow"] + ")"
+            fig_fb = go.Figure()
+            fig_fb.add_trace(go.Bar(
+                x=df_fb_chart["日期標籤"], y=df_fb_chart["occ_pct"],
+                name="全館在手住房率 (%)", marker_color="rgba(147, 197, 253, 0.55)", yaxis="y",
+            ))
+            fig_fb.add_trace(go.Scatter(
+                x=df_fb_chart["日期標籤"], y=df_fb_chart["stly_dow_adr"],
+                name="去年同期成交 ADR", mode="lines", line=dict(color="#64748b", width=1.8, dash="dot"), yaxis="y2",
+            ))
+            fig_fb.add_trace(go.Scatter(
+                x=df_fb_chart["日期標籤"], y=df_fb_chart["otb_adr"],
+                name="今年在手成交 ADR (TWD)", mode="lines+markers", line=dict(color="#2563eb", width=3), yaxis="y2",
+            ))
+            fig_fb.update_layout(
+                height=360, margin=dict(l=20, r=20, t=20, b=40),
+                legend=dict(orientation="h", y=1.13), hovermode="x unified",
+                yaxis=dict(title="住房率 (%)", side="right", range=[0, 108], dtick=25, showgrid=False),
+                yaxis2=dict(title="成交 ADR (TWD)", overlaying="y", side="left", rangemode="tozero"),
+            )
+            st.plotly_chart(fig_fb, use_container_width=True)
 
     # ------------------------------------------------------------------
     # TAB 3: 促銷折數反查 & 同產品「含早 vs 不含早」真實差價（經理核心關注！）
