@@ -1,7 +1,7 @@
 {
-  "last_attempt_at": "2026-11-27 12:24:00",
-  "status": "success",
-  "mode": "browser_live_readonly",
-  "detail": "SiteMinder 唯讀同步成功 (擷取 42 天: 2026-11-27 ~ 2027-01-07, 今日漏單=0)",
-  "days_captured": 42
+  "last_attempt_at": "2026-11-28 05:02:26",
+  "status": "skipped_no_cdp",
+  "mode": "default_chrome_unavailable: WebSocketTimeoutException",
+  "detail": "SiteMinder CDP 未連線 (default_chrome_unavailable: WebSocketTimeoutException)，保留現有快照不中斷排程。",
+  "days_captured": 0
 }
